@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { lettreNiche } from '../../../utils/prospectionStats';
 import useNichesProspection from '../../../hooks/useNichesProspection'; // V598 : niches du serveur (ajout, renommage, archivage)
-import { uploadToCloudinary } from '../../CloudinaryUploadButton';
+import { uploadToCloudinary, MESSAGE_PDF_LOURD as MSG_PDF, PDF_MAX_MO as MAX_PDF } from '../../CloudinaryUploadButton';
 import { validerFichierVideo, validerMetadonnees, tailleLisible, lireMetadonneesFichier } from '../../../utils/videoExport';
 import { EtatLecture, Pastille, Bouton, DOUX, TEXTE, BORD, champ, jour } from './ui';
 
@@ -52,7 +52,7 @@ const dureeCourte = (s) => {
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
 // Libellés COURTS des emplacements (la ligne d'un média reste lisible sur téléphone).
-const COURT = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Miniature' };
+const COURT = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Miniature', document: 'Document PDF' };
 const RATIO_DU_FORMAT = { '16_9': '16:9', '9_16': '9:16', '1_1': '1:1' };
 
 function erreurLisible(e, defaut) {
@@ -87,6 +87,9 @@ const Icone = ({ d, taille = 16 }) => (
 const CHEVRON = <path d="M9 6l6 6-6 6" />;
 const POINTS = <><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></>;
 const PLUS = <><path d="M12 5v14" /><path d="M5 12h14" /></>;
+const PDF_MAX_MO = MAX_PDF || 20;   // V625 : alignée sur le serveur (V625_PDF_MAX_MO)
+const MESSAGE_PDF_LOURD = MSG_PDF || `Ce PDF dépasse la taille maximale autorisée de ${PDF_MAX_MO} Mo.`;
+const DOCUMENT = <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M8 13h8" /><path d="M8 17h5" /></>;
 const CORBEILLE = <><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></>;
 
 const boutonIcone = {
@@ -335,6 +338,69 @@ function FormulaireOriginal({ niche, cible, API, onFini, onOuvrirEditeur }) {
 }
 
 /** V598 — petite fenêtre « Nom de la niche » (créer ou renommer). */
+/**
+ * V625 — LES DOCUMENTS PDF D'UNE NICHE (brochures). Une liste sobre : nom, taille, date,
+ * « Supprimer » (Corbeille V597). L'envoi passe par l'upload EXISTANT (asset `document`,
+ * contrôlé par le serveur), puis la route EXISTANTE `POST /prospection-medias`.
+ */
+export function DocumentsNiche({ API, niche, lettre, documents, enCours, onFini, onSupprimer }) {
+  const champRef = useRef(null);
+  const [etat, setEtat] = useState({ phase: '', pct: 0, msg: '' });
+  const choisir = async (ev) => {
+    const fichier = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!fichier) return;
+    if (fichier.type !== 'application/pdf') { setEtat({ phase: '', pct: 0, msg: 'Choisis un fichier PDF.' }); return; }
+    if (fichier.size > PDF_MAX_MO * 1024 * 1024) { setEtat({ phase: '', pct: 0, msg: MESSAGE_PDF_LOURD }); return; }
+    setEtat({ phase: 'envoi', pct: 0, msg: '' });
+    try {
+      const r = await uploadToCloudinary(fichier, { onProgress: (pct) => setEtat((p) => ({ ...p, pct: Math.round(pct) })) });
+      await axios.post(`${API}/prospection-medias`, { niche, format: 'document', url: r.url, version: 'PDF',
+                                                      fichier: { nom: fichier.name } });
+      setEtat({ phase: '', pct: 0, msg: '' });
+      onFini('Document PDF ajouté à la bibliothèque. Il n’est envoyé à personne.');
+    } catch (e) {
+      setEtat({ phase: '', pct: 0, msg: erreurLisible(e, (e && e.message) || "L'envoi du PDF n'a pas abouti.") });
+    }
+  };
+  const occupe = enCours || etat.phase !== '';
+  const ligne = { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 };
+  const carte = { border: `1px solid ${BORD}`, borderRadius: 10, padding: '8px 10px', minWidth: 0 };
+  return (
+    <div data-testid={`pm-documents-${lettre}`} style={{ marginTop: 10 }}>
+      {(documents || []).length > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: TEXTE, margin: '6px 0' }}>Documents PDF</div>}
+      {(documents || []).map((d) => (
+        <div key={d.id} data-testid="pm-document" style={{ ...carte, ...ligne, justifyContent: 'space-between', marginTop: 6 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
+            <span aria-hidden="true" style={{ color: DOUX, display: 'inline-flex' }}><Icone d={DOCUMENT} taille={18} /></span>
+            <div style={{ minWidth: 0 }}>
+              <a href={d.url} target="_blank" rel="noopener noreferrer" data-testid="pm-document-nom"
+                 style={{ fontSize: 12, fontWeight: 700, color: TEXTE, overflowWrap: 'anywhere' }}>
+                {(d.fichier && d.fichier.nom) || 'Document PDF'}
+              </a>
+              <div style={{ fontSize: 11, color: DOUX }}>
+                {['Document PDF', tailleLisible((d.fichier && d.fichier.taille) || 0), jour(d.created_at)].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          </div>
+          <MenuPlus testid={`pm-document-menu-${d.id}`} actions={[
+            { libelle: 'Supprimer', icone: CORBEILLE, danger: true, onClick: () => onSupprimer(d), testid: 'pm-document-supprimer' },
+          ]} />
+        </div>
+      ))}
+      <input ref={champRef} type="file" accept="application/pdf,.pdf" onChange={choisir} disabled={occupe}
+             style={{ display: 'none' }} data-testid={`pm-document-champ-${lettre}`} />
+      <button type="button" onClick={() => champRef.current && champRef.current.click()} disabled={occupe}
+              data-testid={`pm-document-ajouter-${lettre}`}
+              style={{ marginTop: 6, border: 'none', background: 'transparent', color: TEXTE, fontSize: 12, fontWeight: 700,
+                       cursor: 'pointer', padding: '4px 0' }}>
+        {etat.phase === 'envoi' ? `Envoi… ${etat.pct} %` : '+ Ajouter un PDF'}
+      </button>
+      {etat.msg && <div role="status" style={{ fontSize: 12, color: 'rgb(252,165,165)' }} data-testid={`pm-document-erreur-${lettre}`}>{etat.msg}</div>}
+    </div>
+  );
+}
+
 function FenetreNomNiche({ titre, initial = '', libelleOk, onOk, onAnnuler }) {
   const [nom, setNom] = useState(initial);
   const [envoi, setEnvoi] = useState(false);
@@ -405,11 +471,12 @@ export default function ProspectionMedias({ API }) {
   // Le public '' = toute la niche. Chaque public a ses propres emplacements.
   const parNiche = useMemo(() => {
     const m = {};
-    niches.forEach((n) => { m[n.cle] = { publics: {}, archives: [] }; });
+    niches.forEach((n) => { m[n.cle] = { publics: {}, archives: [], documents: [] }; });
     (medias || []).forEach((d) => {
       const g = m[d.niche];
       if (!g) return;
       if (d.statut === 'archivee') { g.archives.push(d); return; }
+      if (d.format === 'document') { g.documents.push(d); return; }   // V625 : hors emplacements vidéo
       const cid = d.cible_id || '';
       const pub = g.publics[cid] || (g.publics[cid] = { id: cid, cible: d.cible || null, actuels: {} });
       if (!pub.actuels[d.format]) pub.actuels[d.format] = d;
@@ -576,6 +643,9 @@ export default function ProspectionMedias({ API }) {
                       </div>
                     </div>
                   ))}
+                  <DocumentsNiche API={API} niche={n.cle} lettre={lettre} documents={g.documents} enCours={enCours}
+                    onFini={(m) => { setInfo(m); charger(); }}
+                    onSupprimer={(m) => setAConfirmer({ type: 'supprimer', media: m })} />
                   {ajout && ajout.niche === n.cle && (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Type d'ajout">

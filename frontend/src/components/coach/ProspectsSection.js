@@ -37,7 +37,7 @@ import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
 import PartenaireProspect from './PartenaireProspect';
 import FilConversation from './FilConversation'; // V619 — fil complet (projection serveur)
-import MediaReponse, { CarteMedia, referenceMedia } from './prospection/MediaReponse'; // V620 — 1 média par réponse
+import MediaReponse, { CarteMedia, referenceMedia, mediasDe } from './prospection/MediaReponse'; // V620 / V625 — plusieurs fichiers par réponse
 import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
 import useNichesProspection from '../../hooks/useNichesProspection'; // V599 : niches du serveur (prospection_niches)
 import { lettreNiche } from '../../utils/prospectionStats';
@@ -111,6 +111,46 @@ export const CATEGORIES = [
   { cle: 'fitness', libelle: 'Fitness' },
 ];
 
+/* V625 — LA CATÉGORIE D'UNE CONVERSATION = celle de SA fiche (renvoyée par le serveur,
+   `categorie`). Vide ou inconnue : « Non classé ». Le filtre utilise la même règle. PURE. */
+export const SANS_CATEGORIE = '__non_classe';
+export function libelleCategorie(cle) {
+  const c = CATEGORIES.find((x) => x.cle === cle);
+  return c ? c.libelle : 'Non classé';
+}
+export function cleCategorie(conv) {
+  const cle = conv && conv.categorie;
+  return CATEGORIES.some((x) => x.cle === cle) ? cle : SANS_CATEGORIE;
+}
+export function filtrerParCategorie(conversations, cle) {
+  if (!cle) return conversations || [];
+  return (conversations || []).filter((c) => cleCategorie(c) === cle);
+}
+/** Les catégories PRÉSENTES dans la liste, dans l'ordre de CATEGORIES, « Non classé » en dernier. PURE. */
+export function categoriesPresentes(conversations) {
+  const vues = {};
+  (conversations || []).forEach((c) => { vues[cleCategorie(c)] = (vues[cleCategorie(c)] || 0) + 1; });
+  return CATEGORIES.filter((c) => vues[c.cle]).map((c) => ({ cle: c.cle, libelle: c.libelle, nb: vues[c.cle] }))
+    .concat(vues[SANS_CATEGORIE] ? [{ cle: SANS_CATEGORIE, libelle: 'Non classé', nb: vues[SANS_CATEGORIE] }] : []);
+}
+
+/* V625 — environ DIX lignes visibles, défilement INTERNE : le détail de la
+   conversation ouverte apparaît juste sous la liste, sans descendre 50 lignes. */
+export const HAUTEUR_FILE_CONVERSATIONS = 'min(430px, 62vh)';
+
+function BadgeCategorie({ cle, testid }) {
+  return (
+    <span data-testid={testid} data-categorie={cle}
+          style={{ fontSize: '10px', fontWeight: 600, padding: '2px 8px', borderRadius: '999px',
+                   flex: '0 0 auto', color: TEXTE, whiteSpace: 'nowrap',
+                   background: cle === SANS_CATEGORIE ? 'rgba(255,255,255,0.06)' : `rgba(${RGB}, 0.12)`,
+                   border: `1px solid ${cle === SANS_CATEGORIE ? 'rgba(255,255,255,0.16)' : `rgba(${RGB}, 0.35)`}`,
+                   opacity: cle === SANS_CATEGORIE ? 0.75 : 1 }}>
+      {cle === SANS_CATEGORIE ? 'Non classé' : libelleCategorie(cle)}
+    </span>
+  );
+}
+
 /* Les sept statuts AMONT. `decouverte`, `actif` et `ambassadeur` n'y sont pas :
    ils appartiennent au partenaire (P2), pas au prospect.
    V595e — « Accepté » = collaboration réellement confirmée, posée À LA MAIN
@@ -145,7 +185,7 @@ const LIBELLE_EXECUTION = {
   AUTO: 'Automatique', ASSISTE: 'Assisté', MANUEL: 'Manuel', BLOQUE: 'Bloqué',
 };
 const LIBELLE_ETAT = {
-  preparee: 'Campagne préparée', approuvee: 'Campagne approuvée',
+  preparee: 'Brouillon / Campagne préparée — non envoyée', approuvee: 'Campagne approuvée',
   en_cours: 'En cours', terminee: 'Terminée', annulee: 'Annulée', brouillon: 'Brouillon',
 };
 const LIBELLE_STATUT_ACTION = {
@@ -387,6 +427,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      objet : la règle V305 interdit de reposer un objet neuf quand rien n'a
      changé, et une chaîne se compare sans risque. */
   const [filtreStatut, setFiltreStatut] = useState('');
+  const [filtreCategorie, setFiltreCategorie] = useState('');   // V625 : filtre d'écran, aucun appel serveur
 
   /* Les dépendances sont des CHAÎNES, jamais l'objet `filtres` — qui est neuf à
      chaque rendu et relancerait l'effet en boucle (règle absolue, incident V305). */
@@ -483,6 +524,10 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      inchangé. Une conversation est une VUE. */
   const conversations = (sectionReponses && sectionReponses.etat === SECTION.OK
     && sectionReponses.donnees && sectionReponses.donnees.conversations) || [];
+  // V625 : la file AFFICHÉE (filtre catégorie) ; compteurs, onglets et sélection restent sur `conversations`.
+  const conversationsVues = useMemo(() => filtrerParCategorie(conversations, filtreCategorie),
+    [conversations, filtreCategorie]);
+  const categoriesConv = useMemo(() => categoriesPresentes(conversations), [conversations]);
   /* LES COMPTEURS COMPTENT DES CONVERSATIONS, PAS DES MESSAGES. Le BDE HE-Arc
      a écrit deux fois : annoncer « 4 réponses » ferait chercher un quatrième
      interlocuteur qui n'existe pas. Ils sont calculés par le serveur sur la
@@ -696,14 +741,14 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     if (!id || !texte || carte.chargement) return;
     majCarte(id, { chargement: true, erreur: '' });
     try {
-      // V620 : le média voyage AVEC le texte. Clé absente = inchangé ; null = retiré.
+      // V620 / V625 : les fichiers voyagent AVEC le texte. Clé absente = inchangés ; [] = tous retirés.
       const corps = { reponse_proposee: texte };
-      if (carte.mediaModifie) corps.media = referenceMedia(carte.media);
+      if (carte.mediaModifie) corps.medias = (carte.medias || []).map(referenceMedia);
       const r = await axios.patch(
         `${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`, corps);
       majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || carte.brouillon,
                      chargement: false, edition: false, composerFerme: true, texte: '',
-                     media: null, mediaModifie: false });
+                     medias: null, mediaModifie: false });
       // §6 — « Enregistrer et verifier » enchaine sur l'apercu SERVEUR. Il
       // n'envoie toujours rien : l'ecran de confirmation reste le seul endroit
       // d'ou un e-mail peut partir.
@@ -755,6 +800,27 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     }
   }, [base, carteDe, majCarte]);
   preparerEnvoiRef.current = preparerEnvoi;
+
+  /* V625 — RETIRER / AJOUTER UN FICHIER DEPUIS L'APERÇU. Le brouillon est enregistré
+     (même route, même texte), puis l'aperçu est redemandé au SERVEUR : la nouvelle
+     empreinte remplace l'ancienne, rien ne part sans un nouveau « Confirmer l'envoi ». */
+  const modifierFichiersApercu = useCallback(async (id, liste) => {
+    const carte = carteDe(id);
+    const texte = ((carte.brouillon && carte.brouillon.reponse_proposee)
+      || (carte.apercu && carte.apercu.texte) || '').trim();
+    if (!id || !texte || carte.chargement) return;
+    majCarte(id, { chargement: true, erreur: '' });
+    try {
+      const r = await axios.patch(`${base}/prospect-inbound/${encodeURIComponent(id)}/brouillon`,
+        { reponse_proposee: texte, medias: (liste || []).map(referenceMedia) });
+      majCarte(id, { brouillon: (r && r.data && r.data.brouillon) || carte.brouillon });
+      await preparerEnvoiRef.current(id, { ignorerOccupe: true });
+    } catch (e) {
+      const detail = (e && e.response && e.response.data && e.response.data.detail)
+        || "Les fichiers n'ont pas pu être modifiés.";
+      majCarte(id, { chargement: false, erreur: String(detail) });
+    }
+  }, [base, carteDe, majCarte]);
 
   /* L'ENVOI RÉEL. Il porte l'empreinte du texte AFFICHÉ : si le brouillon a
      changé entre l'aperçu et la confirmation, le serveur refuse plutôt que
@@ -954,6 +1020,19 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     });
   };
 
+  /* V625 — « VOIR LA FICHE » depuis une conversation : la fiche EXISTANTE (route
+     existante GET /partner-prospects/{id}), ouverte dans le MÊME panneau que
+     l'onglet Prospects. Aucune fiche n'est créée, aucun second panneau. */
+  const voirFiche = async (prospectId) => {
+    if (!prospectId) return;
+    try {
+      const rep = await axios.get(`${base}/partner-prospects/${encodeURIComponent(prospectId)}`);
+      if (rep && rep.data && rep.data.id) ouvrir(rep.data);
+    } catch (err) {
+      setMessage({ type: 'erreur', texte: erreurLisible(err, 'Fiche introuvable.') });
+    }
+  };
+
   /* V599 — créer UN prospect (POST existant). Un doublon possible (409) est montré,
      jamais tranché : « Créer quand même » renvoie avec allow_duplicate. */
   const creerProspect = async (forcer) => {
@@ -1091,7 +1170,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
      laisse exclure ou corriger. Le premier appel est toujours une SIMULATION
      (`dry_run: true`) ; créer la campagne demande un second clic explicite.
      ------------------------------------------------------------------ */
-  const corpsPreparation = (simulation, cle) => {
+  const corpsPreparation = (simulation, cle, nouvelle) => {
     const corps = { dry_run: simulation };
     if (selection.length) {
       corps.prospect_ids = selection;
@@ -1099,6 +1178,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
       Object.keys(filtres).forEach((k) => { if (filtres[k]) corps[k] = filtres[k]; });
     }
     if (cle) corps.idempotency_key = cle;
+    /* V625 — « Préparer une autre campagne » est une demande EXPLICITE de
+       nouvelle campagne : sans `allow_new`, le serveur rendait la dernière
+       campagne ouverte (« déjà préparée ») au lieu de créer celle de l'aperçu.
+       La clé d'idempotence (l'id de CET aperçu) protège toujours le double clic. */
+    if (nouvelle) corps.allow_new = true;
     return corps;
   };
 
@@ -1108,7 +1192,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     try {
       const rep = await axios.post(`${base}/prospect-campaigns/prepare`, corpsPreparation(true));
       const d = (rep && rep.data) || {};
-      setCampagne(d.campaign ? { ...d.campaign, summary: d.summary, dry_run: true } : null);
+      setCampagne(d.campaign ? { ...d.campaign, summary: d.summary, dry_run: true,
+                                 // V625 : une campagne ouverte existe (serveur OU liste affichée) → « une autre ».
+                                 nouvelle_demandee: !!(d.campagne_ouverte || campagneOuverte) } : null);
       setActions(d.actions || []);
     } catch (err) {
       setCampagne(null);
@@ -1127,7 +1213,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     setMessageCampagne(null);
     try {
       const rep = await axios.post(`${base}/prospect-campaigns/prepare`,
-        corpsPreparation(false, campagne.id));
+        corpsPreparation(false, campagne.id, campagne.nouvelle_demandee));
       const d = (rep && rep.data) || {};
       if (d.campaign) {
         const lu = await axios.get(`${base}/prospect-campaigns/${d.campaign.id}`);
@@ -1315,9 +1401,12 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
               CONVERSATIONS, comme le reste de l'écran. Ils n'apparaissent que
               s'il y a plus d'un état à trier : sur trois réponses toutes à
               répondre, une barre de filtres serait du décor. */}
+          {/* V625 — le filtre CATÉGORIE (catégorie de la fiche), à côté des filtres de statut. */}
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center',
+                        marginBottom: conversations.length ? '10px' : 0 }}>
           {Object.keys(STATUT_COMMERCIAL).filter((c) => compteursConv[c] > 0).length > 1 && (
             <div data-testid="filtres-statut"
-                 style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                 style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {[{ cle: '', libelle: 'Toutes' }].concat(
                 Object.keys(STATUT_COMMERCIAL)
                   .filter((c) => compteursConv[c] > 0)
@@ -1339,6 +1428,18 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
               ))}
             </div>
           )}
+          {conversations.length > 0 && (
+            <select value={filtreCategorie} onChange={(e) => setFiltreCategorie(e.target.value)}
+                    aria-label="Catégorie de partenaire" data-testid="filtre-categorie-conversations"
+                    style={{ ...stylePetitBouton, background: filtreCategorie ? `rgba(${RGB}, 0.28)` : 'rgba(0,0,0,0.3)',
+                             fontWeight: filtreCategorie ? 700 : 500, maxWidth: '100%', minWidth: 0 }}>
+              <option value="">Toutes les catégories</option>
+              {categoriesConv.map((c) => (
+                <option key={c.cle} value={c.cle}>{c.libelle} ({c.nb})</option>
+              ))}
+            </select>
+          )}
+          </div>
 
           {!!ciblePerdue && (
             <div data-testid="cible-introuvable"
@@ -1363,11 +1464,20 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                d'œil ce qui reste à traiter. L'ordre vient du serveur
                (`pf_conversations`) — non lues d'abord, puis à répondre, puis à
                qualifier, puis en attente, puis clos. */}
-          {conversations.length > 0 && (
+          {conversations.length > 0 && filtreCategorie && !conversationsVues.length && (
+            <div data-testid="aucune-conversation-categorie"
+                 style={{ fontSize: '12px', opacity: 0.7, color: TEXTE, padding: '6px 0' }}>
+              Aucune conversation dans cette catégorie.
+            </div>
+          )}
+          {conversationsVues.length > 0 && (
             <div data-testid="file-conversations"
                  style={{ display: 'flex', flexDirection: 'column', gap: '4px',
+                          /* V625 — ~10 lignes visibles, défilement INTERNE : le détail suit la liste. */
+                          maxHeight: HAUTEUR_FILE_CONVERSATIONS, overflowY: 'auto',
+                          overscrollBehavior: 'contain', paddingRight: '2px',
                           marginBottom: filActif ? '12px' : '0' }}>
-              {conversations.map((conv) => {
+              {conversationsVues.map((conv) => {
                 const actif = conv.cle === filActif;
                 const etatConv = STATUT_COMMERCIAL[conv.statut_commercial]
                   || STATUT_COMMERCIAL.a_repondre;
@@ -1406,6 +1516,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                         </span>
                       ) : null}
                     </span>
+                    <BadgeCategorie cle={cleCategorie(conv)} testid="conversation-categorie" />
                     <span data-testid={`ligne-statut-${conv.statut_commercial}`}
                           style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
                                    padding: '2px 8px', borderRadius: '999px',
@@ -1496,6 +1607,19 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                               lineHeight: 1.25 }}>
                   {convActive.organisation || convActive.recipient_key
                     || 'Prospect à identifier'}
+                </div>
+                {/* V625 — la catégorie de la fiche, et la FICHE EXISTANTE (même panneau que l'onglet Prospects). */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '4px' }}>
+                  <BadgeCategorie cle={cleCategorie(convActive)} testid="conversation-categorie-entete" />
+                  {convActive.prospect_id ? (
+                    <button type="button" data-testid="voir-fiche"
+                            onClick={() => voirFiche(convActive.prospect_id)}
+                            style={{ border: 'none', background: 'transparent', padding: '2px 0', cursor: 'pointer',
+                                     fontSize: '11.5px', fontWeight: 600, textDecoration: 'underline',
+                                     color: `color-mix(in srgb, ${PRIMAIRE} 80%, white)` }}>
+                      Voir la fiche
+                    </button>
+                  ) : null}
                 </div>
                 <div title={r.from_email}
                      style={{ fontSize: '11px', opacity: 0.7, color: TEXTE,
@@ -1797,11 +1921,11 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             border: `1px solid rgba(${RGB}, 0.45)`, resize: 'vertical',
                             fontFamily: 'inherit',
                           }} />
-                        {/* V620 — UN média (bibliothèque Médias ou import existant), enregistré
-                            AVEC le texte ; retirer ne touche jamais au texte. */}
+                        {/* V620 / V625 — un ou PLUSIEURS fichiers (bibliothèque Médias ou import
+                            existant), enregistrés AVEC le texte ; retirer ne touche jamais au texte. */}
                         <MediaReponse API={base} desactive={occupe}
-                                      valeur={carte.mediaModifie ? carte.media : ((bro && bro.media) || null)}
-                                      onChange={(m) => majCarte(r.id, { media: m, mediaModifie: true })} />
+                                      valeur={carte.mediaModifie ? (carte.medias || []) : mediasDe(bro)}
+                                      onChange={(l) => majCarte(r.id, { medias: l, mediaModifie: true })} />
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap',
                                       marginTop: '7px' }}>
                           {/* §7-D/E — VIDE : desactive. EN COURS : desactive aussi,
@@ -1841,7 +1965,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                           <button type="button" data-testid="annuler-edition"
                                   onClick={() => majCarte(r.id, { edition: false, texte: '',
                                                                   composerFerme: true,
-                                                                  media: null, mediaModifie: false })}
+                                                                  medias: null, mediaModifie: false })}
                                   style={stylePetitBouton}>
                             Annuler
                           </button>
@@ -1861,9 +1985,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                         {bro.reponse_proposee}
                       </div>
                     ) : null}
-                    {!composerOuvert && bro && bro.media ? (
-                      <CarteMedia media={bro.media} testid="media-brouillon" />
-                    ) : null}
+                    {!composerOuvert && bro ? mediasDe(bro).map((m, i) => (
+                      <CarteMedia key={`${m.url}-${i}`} media={m} testid="media-brouillon" />
+                    )) : null}
                     {composerOuvert || bro ? null : (
                       <div data-testid="composer-replie"
                            style={{ fontSize: '12px', opacity: 0.75, color: TEXTE,
@@ -1908,7 +2032,7 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                           <button type="button" data-testid="modifier-brouillon"
                                   onClick={() => majCarte(r.id, {
                                     edition: true, texte: bro.reponse_proposee || '',
-                                    media: null, mediaModifie: false })}
+                                    medias: null, mediaModifie: false })}
                                   style={stylePetitBouton}>
                             Modifier
                           </button>
@@ -1960,10 +2084,19 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                                       borderRadius: '7px', background: 'rgba(0,0,0,0.30)' }}>
                           {carte.apercu.texte}
                         </div>
-                        {/* V620 — le média qui partira, et l'e-mail EXACT (HTML du serveur) sur demande. */}
-                        {carte.apercu.media ? (
+                        {/* V620 / V625 — TOUS les fichiers qui partiront (chacun retirable, et « Ajouter
+                            un autre fichier »), puis l'e-mail EXACT (HTML du serveur) sur demande. */}
+                        {mediasDe(carte.apercu).length ? (
+                          <div data-testid="apercu-fichiers" style={{ fontSize: '11px', fontWeight: 700, color: TEXTE,
+                                                                       opacity: 0.85, marginTop: '9px' }}>
+                            Fichiers joints ({mediasDe(carte.apercu).length})
+                          </div>
+                        ) : null}
+                        <MediaReponse API={base} desactive={occupe}
+                                      valeur={mediasDe(carte.apercu)}
+                                      onChange={(l) => modifierFichiersApercu(r.id, l)} />
+                        {mediasDe(carte.apercu).length ? (
                           <>
-                            <CarteMedia media={carte.apercu.media} testid="apercu-media" />
                             <details data-testid="apercu-email" style={{ marginTop: '7px' }}>
                               <summary style={{ fontSize: '11px', cursor: 'pointer', color: TEXTE, opacity: 0.8 }}>
                                 Voir l’e-mail tel qu’il partira

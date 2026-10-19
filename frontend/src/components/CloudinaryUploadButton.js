@@ -47,13 +47,17 @@ const API_BASE = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 // V415 : relevees en meme temps que celles du serveur (la contrainte des 16 Mo
 // par document MongoDB a disparu avec le passage au disque). Ces valeurs
 // DOIVENT rester alignees sur `max_sizes` d'api/server.py.
-const PLAFONDS_MO = { image: 25, video: 100, logo: 5, audio: 50 };
+const PLAFONDS_MO = { image: 25, video: 100, logo: 5, audio: 50, document: 20 };
+// V625 : le message exact du serveur (V625_MSG_PDF_LOURD), affiché AVANT l'envoi.
+export const PDF_MAX_MO = PLAFONDS_MO.document;
+export const MESSAGE_PDF_LOURD = `Ce PDF dépasse la taille maximale autorisée de ${PDF_MAX_MO} Mo.`;
 
 /** Type d'asset attendu par le serveur, deduit du fichier. */
 function typeAsset(file) {
   const mime = (file && file.type) || '';
   if (mime.indexOf('video/') === 0) return 'video';
   if (mime.indexOf('audio/') === 0) return 'audio';
+  if (mime === 'application/pdf') return 'document';   // V625 : brochure PDF (prospection)
   return 'image';
 }
 
@@ -188,7 +192,7 @@ async function v420EnvoiParMorceaux(file, asset, email, onProgress, signal) {
         // Un refus du serveur (taille, type) ne se reessaie pas : il se
         // reproduirait a l'identique. Seules les coupures reseau valent un essai.
         // V533: une annulation volontaire ne se reessaie jamais non plus.
-        if (/trop volumineux|invalide|Email coach|Envoi annulé/i.test(e.message || '')) throw e;
+        if (/trop volumineux|invalide|Email coach|Envoi annulé|PDF/i.test(e.message || '')) throw e;
         await new Promise((r) => setTimeout(r, 800 * (essai + 1)));
       }
     }
@@ -217,6 +221,7 @@ export async function uploadToCloudinary(file, opts = {}) {
   const asset = typeAsset(file);
   const plafond = PLAFONDS_MO[asset] || 5;
 
+  if (asset === 'document' && file.size > plafond * 1024 * 1024) throw new Error(MESSAGE_PDF_LOURD);
   if (file.size > plafond * 1024 * 1024) {
     const mb = (file.size / 1024 / 1024).toFixed(1);
     const quoi = asset === 'video' ? 'une vidéo' : (asset === 'audio' ? 'un audio' : 'une image');

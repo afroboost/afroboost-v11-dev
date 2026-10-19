@@ -7,23 +7,54 @@
  * L'écran ne transmet qu'une RÉFÉRENCE (`media_id` ou `fichier_url`) : le serveur
  * résout l'adresse, la miniature et le titre, et refuse ce qui n'est pas au coach.
  *
- * UN média au plus. Rien ne part d'ici : le média est enregistré AVEC le texte
- * (« Enregistrer »), puis affiché dans l'aperçu serveur avant « Confirmer l'envoi ».
+ * V625 — PLUSIEURS fichiers (vidéos, images, PDF ; 6 au plus), chacun retirable.
+ * Rien ne part d'ici : les fichiers sont enregistrés AVEC le texte (« Enregistrer »),
+ * puis affichés dans l'aperçu serveur avant « Confirmer l'envoi ». Dans l'e-mail, chaque
+ * fichier est une carte avec un lien (jamais une pièce jointe).
  * Lecture vidéo : jamais d'autoplay. Couleurs : var(--primary-color) / --primary-rgb.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../../SvgIcon';
-import { uploadToCloudinary } from '../../CloudinaryUploadButton';
+import { uploadToCloudinary, MESSAGE_PDF_LOURD as MSG_PDF, PDF_MAX_MO as MAX_PDF } from '../../CloudinaryUploadButton';
 import { instantApercu } from '../ChoixMedia';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
 const TEXTE = '#fff';
 const DOUX = 'rgba(255,255,255,0.68)';
-const COURT = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Image' };
+const COURT = { original: 'Original', '16_9': '16:9', '9_16': '9:16', '1_1': '1:1', miniature: 'Image', document: 'PDF' };
 const MIME_VIDEO = ['video/mp4', 'video/webm', 'video/quicktime'];
 const MIME_IMAGE = ['image/jpeg', 'image/png', 'image/webp'];
+const MIME_PDF = 'application/pdf';
+const PDF_MAX_MO = MAX_PDF || 20;   // V625 : alignée sur le serveur (V625_PDF_MAX_MO)
+const MESSAGE_PDF_LOURD = MSG_PDF || `Ce PDF dépasse la taille maximale autorisée de ${PDF_MAX_MO} Mo.`;
+/** V625 — même plafond que le serveur (V625_MEDIAS_MAX). */
+export const MAX_FICHIERS = 6;
+
+/** V625 — 1 572 864 -> « 1,5 Mo ». PURE. */
+export function tailleLisible(octets) {
+  const n = Number(octets);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} Ko`;
+  return `${(n / (1024 * 1024)).toFixed(1).replace('.', ',')} Mo`;
+}
+
+/** V625 — « 2026-10-19T… » -> « 19/10/2026 ». PURE. */
+export function dateLisible(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+
+/**
+ * V625 — LES fichiers d'un brouillon / d'un aperçu / d'un message du fil : la liste
+ * `medias` si elle existe, sinon l'ancien `media` seul (V620), sinon aucun. PURE.
+ */
+export function mediasDe(objet) {
+  const o = objet || {};
+  if (Array.isArray(o.medias)) return o.medias.filter((m) => m && urlSure(m.url));
+  return o.media && urlSure(o.media.url) ? [o.media] : [];
+}
 
 const bouton = (plein) => ({
   minHeight: '34px', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
@@ -68,23 +99,26 @@ export function elementsBibliotheque(medias, niches) {
   });
   return liste.map((m) => {
     const image = m.format === 'miniature';
+    const doc = m.format === 'document';   // V625 : brochure PDF
     const source = m.format === 'original' ? m.id : m.source_id;
     const f = m.fichier || {};
     return {
-      media_id: m.id, type: image ? 'image' : 'video', url: m.url,
-      miniature_url: image ? m.url : (miniatures[source] || null),
-      titre: titreMedia(f.nom || m.version), format: m.format, duree: f.duree || null,
+      media_id: m.id, type: doc ? 'document' : (image ? 'image' : 'video'), url: m.url,
+      miniature_url: doc ? null : (image ? m.url : (miniatures[source] || null)),
+      titre: titreMedia(f.nom || m.version), format: m.format, duree: doc ? null : (f.duree || null),
+      taille: doc ? (f.taille || null) : undefined, date: doc ? (m.created_at || null) : undefined,
       niche_nom: nomNiche[m.niche] || null, public: (m.cible && m.cible.nom) || null,
     };
   });
 }
 
-/** Filtre « Tous / Vidéos / Images » + recherche (titre, niche, public, format). PURE. */
+/** Filtre « Tous / Vidéos / Images / Documents » + recherche (titre, niche, public, format). PURE. */
 export function filtrerBibliotheque(elements, filtre, recherche) {
   const q = String(recherche || '').trim().toLowerCase();
   return (elements || []).filter((e) => {
     if (filtre === 'video' && e.type !== 'video') return false;
     if (filtre === 'image' && e.type !== 'image') return false;
+    if (filtre === 'document' && e.type !== 'document') return false;
     if (!q) return true;
     return [e.titre, e.niche_nom, e.public, COURT[e.format] || e.format]
       .some((v) => String(v || '').toLowerCase().indexOf(q) !== -1);
@@ -137,6 +171,16 @@ function IconeLecture({ taille = 34 }) {
 export function Vignette({ media, largeur = 96 }) {
   const src = urlSure(media && media.miniature_url);
   const h = Math.round(largeur * 9 / 16);
+  if (media && media.type === 'document') {   // V625 : un PDF n'a pas d'image, une icône document
+    return (
+      <span data-testid="vignette-document"
+            style={{ width: largeur, height: h, flex: '0 0 auto', borderRadius: '8px', display: 'flex',
+                     alignItems: 'center', justifyContent: 'center', color: TEXTE,
+                     background: `rgba(${RGB}, 0.18)`, border: `1px solid rgba(${RGB}, 0.4)` }}>
+        <SvgIcon name="fileText" size={Math.max(18, Math.round(largeur / 4))} />
+      </span>
+    );
+  }
   return (
     <span style={{ position: 'relative', width: largeur, height: h, flex: '0 0 auto', borderRadius: '8px', overflow: 'hidden',
                    background: 'rgba(0,0,0,0.55)', display: 'block' }}>
@@ -154,16 +198,19 @@ export function Vignette({ media, largeur = 96 }) {
 /** La carte d'un média joint / envoyé. `actions` = boutons en second rang. */
 export function CarteMedia({ media, libelle, testid = 'media-joint', actions = null, lien = false }) {
   if (!media || !urlSure(media.url)) return null;
-  const video = media.type !== 'image';
-  const details = [media.niche_nom, media.public, COURT[media.format], dureeLisible(media.duree)].filter(Boolean).join(' · ');
+  const doc = media.type === 'document';   // V625
+  const video = !doc && media.type !== 'image';
+  const details = doc
+    ? ['Document PDF', tailleLisible(media.taille), dateLisible(media.date)].filter(Boolean).join(' · ')
+    : [media.niche_nom, media.public, COURT[media.format], dureeLisible(media.duree)].filter(Boolean).join(' · ');
   return (
     <div data-testid={testid} data-type={media.type}
          style={{ marginTop: '8px', padding: '8px', borderRadius: '10px', background: 'rgba(0,0,0,0.25)',
                   border: `1px solid rgba(${RGB}, 0.4)`, minWidth: 0 }}>
       <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', color: DOUX, marginBottom: '6px',
                     display: 'flex', alignItems: 'center', gap: '5px' }}>
-        <SvgIcon name={video ? 'video' : 'image'} size={13} />
-        {libelle || (video ? 'VIDÉO JOINTE' : 'IMAGE JOINTE')}
+        <SvgIcon name={doc ? 'fileText' : (video ? 'video' : 'image')} size={13} />
+        {libelle || (doc ? 'DOCUMENT PDF JOINT' : (video ? 'VIDÉO JOINTE' : 'IMAGE JOINTE'))}
       </div>
       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', minWidth: 0 }}>
         <Vignette media={media} />
@@ -177,7 +224,7 @@ export function CarteMedia({ media, libelle, testid = 'media-joint', actions = n
             <a href={urlSure(media.url)} target="_blank" rel="noopener noreferrer" data-testid={`${testid}-voir`}
                style={{ fontSize: '11.5px', fontWeight: 600, color: 'color-mix(in srgb, var(--primary-color, #D91CD2) 80%, white)',
                         display: 'inline-block', marginTop: '4px' }}>
-              {video ? 'Voir la vidéo' : 'Voir l’image'}
+              {doc ? 'Voir / télécharger le document' : (video ? 'Voir la vidéo' : 'Voir l’image')}
             </a>
           ) : null}
         </div>
@@ -207,7 +254,7 @@ function Fenetre({ onFermer, children }) {
   );
 }
 
-function Bibliotheque({ API, onChoisir, actuel }) {
+function Bibliotheque({ API, onChoisir, choisis }) {
   const [etat, setEtat] = useState({ chargement: true, erreur: '', elements: [] });
   const [filtre, setFiltre] = useState('tous');
   const [recherche, setRecherche] = useState('');
@@ -227,7 +274,7 @@ function Bibliotheque({ API, onChoisir, actuel }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0, flex: '1 1 auto' }}>
       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-        {[['tous', 'Tous'], ['video', 'Vidéos'], ['image', 'Images']].map(([k, l]) => (
+        {[['tous', 'Tous'], ['video', 'Vidéos'], ['image', 'Images'], ['document', 'Documents']].map(([k, l]) => (
           <button key={k} type="button" data-testid={`media-filtre-${k}`} aria-pressed={filtre === k}
                   onClick={() => setFiltre(k)}
                   style={{ ...bouton(filtre === k), minHeight: '30px', padding: '4px 11px', borderRadius: '999px' }}>{l}</button>
@@ -248,7 +295,7 @@ function Bibliotheque({ API, onChoisir, actuel }) {
       ) : null}
       <div data-testid="media-liste" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '6px', overflowY: 'auto', minHeight: 0 }}>
         {visibles.map((e) => {
-          const choisi = actuel && actuel.media_id === e.media_id;
+          const choisi = (choisis || []).indexOf(e.media_id) !== -1;
           return (
             <div key={e.media_id} data-testid="media-element" data-type={e.type}
                  style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '7px', borderRadius: '10px', minWidth: 0,
@@ -258,10 +305,13 @@ function Bibliotheque({ API, onChoisir, actuel }) {
               <div style={{ minWidth: 0, flex: '1 1 auto' }}>
                 <div style={{ fontSize: '12.5px', fontWeight: 600, color: TEXTE, overflowWrap: 'anywhere' }}>{e.titre}</div>
                 <div style={{ fontSize: '11px', color: DOUX, marginTop: '2px' }}>
-                  {[e.public || e.niche_nom, COURT[e.format] || e.format, dureeLisible(e.duree)].filter(Boolean).join(' · ')}
+                  {e.type === 'document'
+                    ? ['Document PDF', tailleLisible(e.taille), dateLisible(e.date)].filter(Boolean).join(' · ')
+                    : [e.public || e.niche_nom, COURT[e.format] || e.format, dureeLisible(e.duree)].filter(Boolean).join(' · ')}
                 </div>
               </div>
-              <button type="button" data-testid="media-choisir" onClick={() => onChoisir(e)} style={{ ...bouton(true), flex: '0 0 auto' }}>
+              <button type="button" data-testid="media-choisir" disabled={choisi} onClick={() => onChoisir([e])}
+                      style={{ ...bouton(true), flex: '0 0 auto', opacity: choisi ? 0.6 : 1 }}>
                 {choisi ? 'Choisi' : 'Choisir'}
               </button>
             </div>
@@ -272,54 +322,90 @@ function Bibliotheque({ API, onChoisir, actuel }) {
   );
 }
 
-function Importer({ onChoisir }) {
+/** V625 — le type d'un fichier local, ou null s'il n'est pas pris en charge. PURE. */
+export function typeFichier(f) {
+  const t = (f && f.type) || '';
+  if (MIME_VIDEO.indexOf(t) !== -1) return 'video';
+  if (MIME_IMAGE.indexOf(t) !== -1) return 'image';
+  if (t === MIME_PDF) return 'document';
+  return null;
+}
+
+/** V625 — contrôle AVANT tout envoi : type, taille du PDF, nombre. Rend un message ou ''. PURE. */
+export function refusFichiers(fichiers, place) {
+  const liste = Array.from(fichiers || []);
+  if (!liste.length) return '';
+  if (liste.length > place) {
+    return place > 0 ? `Encore ${place} fichier${place > 1 ? 's' : ''} au plus pour cette réponse (${MAX_FICHIERS} au total).`
+      : `${MAX_FICHIERS} fichiers au plus par réponse.`;
+  }
+  if (liste.some((f) => !typeFichier(f))) return 'Choisis une vidéo MP4, WebM ou MOV, une image JPEG, PNG, WebP, ou un PDF.';
+  if (liste.some((f) => typeFichier(f) === 'document' && f.size > PDF_MAX_MO * 1024 * 1024)) return MESSAGE_PDF_LOURD;
+  return '';
+}
+
+function Importer({ onChoisir, place }) {
   const entree = useRef(null);
-  const [etat, setEtat] = useState({ phase: '', pct: 0, msg: '' });
+  const [etat, setEtat] = useState({ phase: '', pct: 0, msg: '', rang: 0, total: 0 });
   const surFichier = async (ev) => {
-    const f = ev.target.files && ev.target.files[0];
+    const fichiers = Array.from((ev.target.files) || []);
     ev.target.value = '';
-    if (!f) return;
-    const video = MIME_VIDEO.indexOf(f.type) !== -1;
-    if (!video && MIME_IMAGE.indexOf(f.type) === -1) {
-      setEtat({ phase: '', pct: 0, msg: 'Choisis une vidéo MP4, WebM ou MOV (ou une image JPEG, PNG, WebP).' });
+    if (!fichiers.length) return;
+    const refus = refusFichiers(fichiers, place);
+    if (refus) {
+      setEtat({ phase: '', pct: 0, msg: refus, rang: 0, total: 0 });
       return;
     }
+    const prets = [];
     try {
-      let mini = null;
-      if (video) { setEtat({ phase: 'lecture', pct: 0, msg: '' }); mini = await capturerMiniature(f); }
-      setEtat({ phase: 'envoi', pct: 0, msg: '' });
-      const r = await uploadToCloudinary(f, { onProgress: (p) => setEtat((s) => ({ ...s, pct: Math.round(p) })) });
-      let miniatureUrl = video ? null : r.url;
-      if (video && mini && mini.blob) {
-        try {
-          const jpg = new File([mini.blob], `${titreMedia(f.name).replace(/\s+/g, '_')}_miniature.jpg`, { type: 'image/jpeg' });
-          miniatureUrl = (await uploadToCloudinary(jpg)).url;
-        } catch (e) { miniatureUrl = null; /* la vidéo part sans miniature : carte ▶ seule */ }
+      for (let i = 0; i < fichiers.length; i += 1) {
+        const f = fichiers[i];
+        const type = typeFichier(f);
+        const video = type === 'video';
+        let mini = null;
+        if (video) { setEtat({ phase: 'lecture', pct: 0, msg: '', rang: i + 1, total: fichiers.length }); mini = await capturerMiniature(f); }
+        setEtat({ phase: 'envoi', pct: 0, msg: '', rang: i + 1, total: fichiers.length });
+        const r = await uploadToCloudinary(f, { onProgress: (p) => setEtat((s) => ({ ...s, pct: Math.round(p) })) });
+        let miniatureUrl = type === 'image' ? r.url : null;
+        if (video && mini && mini.blob) {
+          try {
+            const jpg = new File([mini.blob], `${titreMedia(f.name).replace(/\s+/g, '_')}_miniature.jpg`, { type: 'image/jpeg' });
+            miniatureUrl = (await uploadToCloudinary(jpg)).url;
+          } catch (e) { miniatureUrl = null; /* la vidéo part sans miniature : carte ▶ seule */ }
+        }
+        prets.push({ media_id: null, origine: 'import', type, url: r.url,
+                     miniature_url: miniatureUrl, titre: titreMedia(f.name),
+                     taille: type === 'document' ? f.size : undefined,
+                     duree: video && mini && Number.isFinite(mini.duree) ? Math.round(mini.duree * 10) / 10 : null });
       }
-      setEtat({ phase: '', pct: 0, msg: '' });
-      onChoisir({ media_id: null, origine: 'import', type: video ? 'video' : 'image', url: r.url,
-                  miniature_url: miniatureUrl, titre: titreMedia(f.name),
-                  duree: video && mini && Number.isFinite(mini.duree) ? Math.round(mini.duree * 10) / 10 : null });
+      setEtat({ phase: '', pct: 0, msg: '', rang: 0, total: 0 });
+      onChoisir(prets);
     } catch (e) {
       const d = e && e.response && e.response.data && e.response.data.detail;
-      setEtat({ phase: '', pct: 0, msg: typeof d === 'string' ? d : ((e && e.message) || "L'import n'a pas abouti.") });
+      setEtat({ phase: '', pct: 0, rang: 0, total: 0,
+                msg: typeof d === 'string' ? d : ((e && e.message) || "L'import n'a pas abouti.") });
+      if (prets.length) onChoisir(prets, true);   // ceux déjà envoyés restent joints
     }
   };
   const occupe = etat.phase !== '';
   return (
     <div style={{ display: 'grid', gap: '10px' }}>
       <div style={{ fontSize: '12.5px', color: DOUX, lineHeight: 1.5 }}>
-        Le fichier est envoyé comme dans l’onglet Médias (MP4, MOV, WebM ; ou une image). Il est joint à cette réponse,
+        Le fichier est envoyé comme dans l’onglet Médias : vidéo (MP4, MOV, WebM), image, ou PDF
+        ({PDF_MAX_MO} Mo au plus). Tu peux en choisir plusieurs. Ils sont joints à cette réponse,
         sans modifier ta bibliothèque.
       </div>
-      <input ref={entree} type="file" hidden data-testid="media-fichier"
-             accept={MIME_VIDEO.concat(MIME_IMAGE).join(',')} onChange={surFichier} />
+      <input ref={entree} type="file" hidden multiple data-testid="media-fichier"
+             accept={MIME_VIDEO.concat(MIME_IMAGE, [MIME_PDF]).join(',')} onChange={surFichier} />
       <div>
         <button type="button" data-testid="media-importer-video" disabled={occupe}
                 onClick={() => entree.current && entree.current.click()} style={{ ...bouton(true), opacity: occupe ? 0.6 : 1 }}>
-          <SvgIcon name="upload" size={14} /> Importer une vidéo
+          <SvgIcon name="upload" size={14} /> Importer une vidéo, une image ou un PDF
         </button>
       </div>
+      {etat.total > 1 && occupe ? (
+        <div data-testid="media-rang" style={{ fontSize: '12px', color: DOUX }}>Fichier {etat.rang} sur {etat.total}</div>
+      ) : null}
       {etat.phase === 'lecture' ? <div style={{ fontSize: '12px', color: DOUX }}>Lecture de la vidéo…</div> : null}
       {etat.phase === 'envoi' ? (
         <div data-testid="media-progres" style={{ height: '8px', borderRadius: '99px', background: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>
@@ -332,31 +418,47 @@ function Importer({ onChoisir }) {
 }
 
 /**
- * Le bouton « Ajouter un média » + la carte du média choisi (Changer / Retirer).
- * `valeur` : le média affiché (ou null) ; `onChange(media | null)`.
+ * V625 — les fichiers joints (une carte chacun, « Retirer ») + « Ajouter un média » /
+ * « Ajouter un autre fichier ». `valeur` : la liste (un ancien objet seul est accepté) ;
+ * `onChange(liste)` — jamais null, une liste vide quand tout est retiré.
  */
 export default function MediaReponse({ API, valeur, onChange, desactive = false }) {
   const [ouvert, setOuvert] = useState(false);
   const [onglet, setOnglet] = useState('bibliotheque');
-  const choisir = (m) => { onChange(m); setOuvert(false); };
+  const liste = Array.isArray(valeur) ? valeur.filter(Boolean) : (valeur ? [valeur] : []);
+  const place = MAX_FICHIERS - liste.length;
+  const ajouter = (nouveaux, garderOuvert) => {
+    const vus = {};
+    liste.forEach((m) => { vus[m.media_id || m.url] = true; });
+    const ajout = (nouveaux || []).filter((m) => m && !vus[m.media_id || m.url]);
+    onChange(liste.concat(ajout).slice(0, MAX_FICHIERS));
+    if (!garderOuvert) setOuvert(false);
+  };
+  const retirer = (i) => onChange(liste.filter((_, j) => j !== i));
   return (
     <div data-testid="media-reponse">
-      {valeur ? (
-        <CarteMedia media={valeur} actions={(
-          <>
-            <button type="button" data-testid="media-changer" disabled={desactive} onClick={() => setOuvert(true)} style={bouton(false)}>
-              <SvgIcon name="refresh" size={13} /> Changer
-            </button>
-            <button type="button" data-testid="media-retirer" disabled={desactive} onClick={() => onChange(null)} style={bouton(false)}>
-              <SvgIcon name="trash" size={13} /> Retirer
-            </button>
-          </>
-        )} />
-      ) : (
-        <button type="button" data-testid="ajouter-media" disabled={desactive} onClick={() => setOuvert(true)}
-                style={{ ...bouton(false), marginTop: '7px' }}>
-          <SvgIcon name="paperclip" size={14} /> Ajouter un média
+      {liste.length ? (
+        <div data-testid="medias-joints" style={{ display: 'grid', gap: '2px' }}>
+          {liste.map((m, i) => (
+            <CarteMedia key={`${m.media_id || m.url}-${i}`} media={m} actions={(
+              <button type="button" data-testid="media-retirer" disabled={desactive} onClick={() => retirer(i)}
+                      aria-label={`Retirer ${m.titre || 'ce fichier'}`} style={bouton(false)}>
+                <SvgIcon name="trash" size={13} /> Retirer
+              </button>
+            )} />
+          ))}
+        </div>
+      ) : null}
+      {place > 0 ? (
+        <button type="button" data-testid={liste.length ? 'ajouter-autre-fichier' : 'ajouter-media'} disabled={desactive}
+                onClick={() => setOuvert(true)} style={{ ...bouton(false), marginTop: '7px' }}>
+          <SvgIcon name={liste.length ? 'plus' : 'paperclip'} size={14} />
+          {liste.length ? ' Ajouter un autre fichier' : ' Ajouter un média'}
         </button>
+      ) : (
+        <div data-testid="medias-plein" style={{ fontSize: '11.5px', color: DOUX, marginTop: '6px' }}>
+          {MAX_FICHIERS} fichiers au plus par réponse.
+        </div>
       )}
       {ouvert ? (
         <Fenetre onFermer={() => setOuvert(false)}>
@@ -376,8 +478,8 @@ export default function MediaReponse({ API, valeur, onChange, desactive = false 
           </div>
           <div style={{ padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto', overflow: 'hidden' }}>
             {onglet === 'bibliotheque'
-              ? <Bibliotheque API={API} onChoisir={choisir} actuel={valeur} />
-              : <Importer onChoisir={choisir} />}
+              ? <Bibliotheque API={API} onChoisir={ajouter} choisis={liste.map((m) => m.media_id).filter(Boolean)} />
+              : <Importer onChoisir={ajouter} place={place} />}
           </div>
         </Fenetre>
       ) : null}

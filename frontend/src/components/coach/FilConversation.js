@@ -14,7 +14,7 @@
  */
 import React, { useState } from 'react';
 import { jourHeure } from '../../utils/prospectionFocus';
-import { CarteMedia } from './prospection/MediaReponse'; // V620 — le média EXACT envoyé (instantané serveur)
+import { CarteMedia, mediasDe } from './prospection/MediaReponse'; // V620 / V625 — les fichiers EXACTS envoyés (instantanés serveur)
 
 const PRIMAIRE_LISIBLE = 'color-mix(in srgb, var(--primary-color, #D91CD2) 80%, white)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
@@ -141,10 +141,17 @@ export function ElementFil({ e }) {
               : (sortant ? 'Texte non conservé au moment de l’envoi' : '(aucun contenu lisible pour ce message)')}
           </div>
         )}
-        {e.media ? (
-          <CarteMedia media={e.media} testid="fil-media" lien
-                      libelle={e.media.type === 'image' ? 'IMAGE ENVOYÉE' : 'VIDÉO ENVOYÉE'} />
+        {/* V625 — TOUS les fichiers réellement partis (`medias`), sinon l'ancien `media` seul (V620). */}
+        {mediasDe(e).length > 1 ? (
+          <div data-testid="fil-fichiers-envoyes" style={{ fontSize: '11px', fontWeight: 700, color: DOUX, marginTop: '7px' }}>
+            Fichiers envoyés ({mediasDe(e).length})
+          </div>
         ) : null}
+        {mediasDe(e).map((m, i) => (
+          <CarteMedia key={`${m.url}-${i}`} media={m} testid="fil-media" lien
+                      libelle={m.type === 'document' ? 'DOCUMENT PDF ENVOYÉ'
+                        : (m.type === 'image' ? 'IMAGE ENVOYÉE' : 'VIDÉO ENVOYÉE')} />
+        ))}
         {e.quoted ? (
           <details data-testid="fil-cite" style={{ marginTop: '5px' }}>
             <summary style={{ fontSize: '11px', cursor: 'pointer', color: DOUX }}>Voir le message cité</summary>

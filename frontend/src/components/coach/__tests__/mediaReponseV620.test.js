@@ -119,8 +119,11 @@ describe('V620 — bouton, bibliothèque, choix, retirer, changer', () => {
     expect($('media-joint').textContent).toMatch(/VIDÉO JOINTE/);
     expect($('media-joint-titre').textContent).toMatch(/AFROBOOST 9 ETUDIANTS 16x9/);
     expect($('media-joint').querySelector('img').getAttribute('src')).toBe(MINI);
-    expect($('ajouter-media')).toBeNull();   // 1 média max : plus de bouton « Ajouter »
-    expect(valeurs[0]).toMatchObject({ media_id: 'exp-1', type: 'video' });
+    // V625 : plusieurs fichiers — « Ajouter un média » devient « Ajouter un autre fichier ».
+    expect($('ajouter-media')).toBeNull();
+    expect($('ajouter-autre-fichier').textContent).toMatch(/Ajouter un autre fichier/);
+    expect(valeurs[0]).toHaveLength(1);
+    expect(valeurs[0][0]).toMatchObject({ media_id: 'exp-1', type: 'video' });
   });
 
   test('D : Retirer supprime le média (le parent garde son texte)', async () => {
@@ -129,17 +132,20 @@ describe('V620 — bouton, bibliothèque, choix, retirer, changer', () => {
     await monter(<Hote initial={{ media_id: 'exp-1', type: 'video', url: VIDEO, miniature_url: MINI, titre: 'Démo' }}
                       onVal={(m) => valeurs.push(m)} />);
     await cliquer($('media-retirer'));
-    expect(valeurs).toEqual([null]);
+    expect(valeurs).toEqual([[]]);   // V625 : une liste vide, jamais null
     expect($('media-joint')).toBeNull();
     expect($('ajouter-media')).not.toBeNull();
   });
 
-  test('E : Changer → un autre média remplace le premier (jamais deux)', async () => {
+  test('E (V625) : « Ajouter un autre fichier » → deux médias, chacun retirable', async () => {
     servirBibliotheque();
     await monter(<Hote initial={{ media_id: 'exp-1', type: 'video', url: VIDEO, miniature_url: MINI, titre: 'Démo' }} />);
-    await cliquer($('media-changer'));
+    await cliquer($('ajouter-autre-fichier'));
     const exp2 = $$('media-element').find((e) => /FESTIVAL/.test(e.textContent));
     await cliquer(exp2.querySelector('[data-testid="media-choisir"]'));
+    expect($$('media-joint')).toHaveLength(2);
+    expect($$('media-joint-titre')[1].textContent).toMatch(/FESTIVAL 16x9/);
+    await cliquer($$('media-retirer')[0]);
     expect($$('media-joint')).toHaveLength(1);
     expect($('media-joint-titre').textContent).toMatch(/FESTIVAL 16x9/);
   });
@@ -176,7 +182,8 @@ describe('V620 — bouton, bibliothèque, choix, retirer, changer', () => {
     await cliquer($('ajouter-media'));
     await cliquer($('media-onglet-importer'));
     const champ = $('media-fichier');
-    Object.defineProperty(champ, 'files', { value: [new File(['x'], 'a.pdf', { type: 'application/pdf' })], configurable: true });
+    // V625 : le PDF est désormais accepté ; un fichier texte reste refusé.
+    Object.defineProperty(champ, 'files', { value: [new File(['x'], 'a.txt', { type: 'text/plain' })], configurable: true });
     await act(async () => { champ.dispatchEvent(new Event('change', { bubbles: true })); });
     expect(uploadToCloudinary).not.toHaveBeenCalled();
     expect($('media-import-erreur').textContent).toMatch(/MP4/);

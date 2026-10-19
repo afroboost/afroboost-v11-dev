@@ -3925,7 +3925,9 @@ async def upload_coach_asset(
         "image": ["image/jpeg", "image/png", "image/webp", "image/gif"],
         "video": ["video/mp4", "video/webm", "video/quicktime"],
         "logo": ["image/jpeg", "image/png", "image/webp", "image/svg+xml"],
-        "audio": ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/aac", "audio/mp4"]
+        "audio": ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/aac", "audio/mp4"],
+        # V625 : brochure PDF des reponses partenaires. Type EXACT, signature verifiee plus bas.
+        "document": [V625_PDF_MIME],
     }
 
     if asset_type not in allowed_types:
@@ -3949,7 +3951,9 @@ async def upload_coach_asset(
     # l'envoi serait coupe avant de nous atteindre. 100 Mo est donc le maximum
     # utile, pas une valeur choisie au hasard.
     max_sizes = {"image": 25*1024*1024, "video": 100*1024*1024,
-                 "logo": 5*1024*1024, "audio": 50*1024*1024}
+                 "logo": 5*1024*1024, "audio": 50*1024*1024, "document": V625_PDF_MAX}
+    if asset_type == "document":
+        v625_controler_pdf(contents, len(contents))   # V625 : taille + signature %PDF-
     if len(contents) > max_sizes.get(asset_type, 5*1024*1024):
         raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max {max_sizes[asset_type]//1024//1024}MB)")
 
@@ -3960,7 +3964,8 @@ async def upload_coach_asset(
             "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
             "image/svg+xml": ".svg",
             "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav",
-            "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a"
+            "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/mp4": ".m4a",
+            V625_PDF_MIME: ".pdf",
         }
         ext = ext_map.get(file.content_type, ".bin")
 
@@ -4068,6 +4073,12 @@ async def upload_chunk(
         raise HTTPException(status_code=400, detail="Identifiant d'envoi invalide")
     if total_chunks < 1 or chunk_index < 0 or chunk_index >= total_chunks:
         raise HTTPException(status_code=400, detail="Indice de morceau invalide")
+    # V625 : un PDF arrive declare `document` + application/pdf, et rien d'autre. Ici le
+    # type vient du client : il n'est cru qu'apres la signature, controlee a l'assemblage.
+    if asset_type == "document" and content_type != V625_PDF_MIME:
+        raise HTTPException(status_code=400, detail="Seul un PDF est accepté comme document")
+    if content_type == V625_PDF_MIME and asset_type != "document":
+        raise HTTPException(status_code=400, detail="Un PDF s'envoie comme document")
 
     contents = await file.read()
     logger.info(f"[CHUNK-UPLOAD] morceau {chunk_index + 1}/{total_chunks} "
@@ -4118,7 +4129,8 @@ async def upload_chunk(
         # V420 : `.mov` et `.webm` MANQUAIENT. Un envoi de ce type recevait
         # l'extension `.bin`, et le frontend — qui reconnait une video a son
         # extension — ne l'affichait plus comme une video. Bug silencieux.
-        "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm"
+        "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm",
+        V625_PDF_MIME: ".pdf",
     }
     ext = ext_map.get(content_type, ".bin")
     file_id = uuid.uuid4().hex[:16]
@@ -4127,11 +4139,19 @@ async def upload_chunk(
     # Plafond applique sur le TOTAL assemble : sans lui, la decoupe en morceaux
     # permettrait de contourner la limite de `/coach/upload-asset`.
     plafond = {"image": 25*1024*1024, "video": 200*1024*1024,
-               "logo": 5*1024*1024, "audio": 50*1024*1024}.get(asset_type, 25*1024*1024)
+               "logo": 5*1024*1024, "audio": 50*1024*1024,
+               "document": V625_PDF_MAX}.get(asset_type, 25*1024*1024)
 
     if sur_disque:
         morceaux = sorted(n for n in os.listdir(dossier) if n.endswith(".part"))
         total = sum(os.path.getsize(os.path.join(dossier, n)) for n in morceaux)
+        if asset_type == "document":   # V625 : taille + signature AVANT l'assemblage
+            try:
+                with open(os.path.join(dossier, morceaux[0]), "rb") as _tete:
+                    v625_controler_pdf(_tete.read(8), total)
+            except HTTPException:
+                shutil.rmtree(dossier, ignore_errors=True)
+                raise
         if total > plafond:
             shutil.rmtree(dossier, ignore_errors=True)
             raise HTTPException(status_code=400,
@@ -4158,6 +4178,8 @@ async def upload_chunk(
             {"upload_id": upload_id}).sort("chunk_index", 1).to_list(length=total_chunks)
         file_bytes = b"".join(bytes(c["data"]) for c in chunks)
         await db.upload_chunks.delete_many({"upload_id": upload_id})
+        if asset_type == "document":
+            v625_controler_pdf(file_bytes, len(file_bytes))   # V625
         if len(file_bytes) > plafond:
             raise HTTPException(status_code=400,
                                 detail=f"Fichier trop volumineux (max {plafond//1024//1024} Mo)")
@@ -28133,6 +28155,17 @@ def p3s3_action_preparee(campagne_id: str, coach: str, fiches, maintenant: str) 
     message = next((f.get("j0_message") for f in fiches if (f.get("j0_message") or "").strip()), "")
     traduction = next((f.get("j0_fr_translation") for f in fiches
                        if (f.get("j0_fr_translation") or "").strip()), "")
+    # V625 : les relances DEJA redigees sur la fiche (j3_message / j7_message) sont
+    # copiees comme le J0 — meme regle : absent reste absent, rien n'est fabrique.
+    # Les copier n'active rien : une relance exige toujours l'approbation, le
+    # sceau `relances_validees` et les drapeaux P3_RELANCE_*.
+    relances = {}
+    for _etape in ("j3", "j7"):
+        _txt = next((f.get(_etape + "_message") for f in fiches
+                     if (f.get(_etape + "_message") or "").strip()), "")
+        if _txt:
+            relances["message_" + _etape] = _txt
+            relances["message_" + _etape + "_origine"] = "fiche"
     return {
         "id": str(uuid.uuid4()),
         "campaign_id": campagne_id,
@@ -28155,6 +28188,7 @@ def p3s3_action_preparee(campagne_id: str, coach: str, fiches, maintenant: str) 
         "message_j0": message,
         "message_j0_origine": "fiche" if message else "absent",
         "j0_fr_translation": traduction,
+        **relances,
         # `bloque` des la preparation quand aucun canal n'existe : inutile de
         # faire croire qu'une action est prete alors qu'elle est sans issue.
         "statut": "bloque" if canal["execution_type"] == "BLOQUE" else "pret",
@@ -33521,10 +33555,12 @@ def v621_fil_depuis(elements, message: dict, action: dict) -> list:
         if not str(texte or "").strip():
             continue
         media = e.get("media") or None
+        _tous = e.get("medias") or ([media] if media else [])   # V625 : tous les fichiers
         fil.append({"de": "partenaire" if typ == "partner_reply" else "afroboost", "type": typ,
                     "quand": e.get("date") or "", "texte": str(texte)[:V621_FIL_TEXTE_MAX],
                     "garanti": garanti,
                     "media": ({"type": media.get("type"), "titre": media.get("titre")} if media else None),
+                    "medias": [{"type": x.get("type"), "titre": x.get("titre")} for x in _tous if x],
                     "apres_message": bool(instant_msg) and pf_instant(e.get("date")) > instant_msg})
     return fil
 
@@ -33541,6 +33577,7 @@ async def v621_fil_generateur(message: dict, action: dict, plafond: int = 30) ->
         traces = [t for t in await db[P3AI4_COLLECTION].find(
             {"action_id": aid}, {"_id": 0, "id": 1, "approved_text": 1, "sent_at": 1, "created_at": 1,
                                  "updated_at": 1, "send_status": 1, "provider_status": 1, "media": 1,
+                                 "medias": 1,
                                  "suivi_livraison": 1}).to_list(plafond)
                   if t.get("send_status") == P3AI4_ENVOYE
                   and t.get("provider_status") not in ("failed", "bounced", "complained")]
@@ -33557,7 +33594,8 @@ def v621_deja_dit(fil, notes=None) -> dict:
     """Ce qu'Afroboost a DEJA dit / propose / envoye dans ce dossier. PURE."""
     nos = [x for x in (fil or []) if x.get("de") == "afroboost"]
     plat = p3ai_sans_accents(" ".join(x.get("texte") or "" for x in nos)).lower()
-    video_envoyee = any((x.get("media") or {}).get("type") == "video" for x in nos) or bool(
+    video_envoyee = any((m or {}).get("type") == "video"
+                        for x in nos for m in (x.get("medias") or [x.get("media")])) or bool(
         re.search(r"/api/files/\S+|youtu\.?be|vimeo\.com|\.mp4\b", plat))
     derniere = next((x.get("texte") or "" for x in reversed(nos)), "")
     return {
@@ -33718,8 +33756,9 @@ def v621_bloc_fil(c: dict) -> str:
             libelle += " (texte approuve, envoi exact non garanti)"
         if x.get("apres_message"):
             libelle += " [APRES le message auquel tu reponds]"
-        media = ("  [+ %s envoyee : %s]" % ("video" if (x["media"].get("type") == "video") else "image",
-                                           x["media"].get("titre") or "Afroboost")) if x.get("media") else ""
+        _noms = {"video": "video", "image": "image", "document": "document PDF"}   # V625
+        media = "".join("  [+ %s envoyee : %s]" % (_noms.get(m.get("type"), "image"), m.get("titre") or "Afroboost")
+                        for m in (x.get("medias") or ([x["media"]] if x.get("media") else [])) if m)
         lignes.append("- %s, %s : %s%s" % ((x.get("quand") or "")[:10], libelle,
                                            " ".join((x.get("texte") or "").split())[:V621_FIL_TEXTE_MAX], media))
     return "FIL PRECEDENT (du plus ancien au plus recent, tout ce qui a ete reellement echange) :\n" + "\n".join(lignes)
@@ -34315,8 +34354,16 @@ async def p3ai_modifier_brouillon(inbound_id: str, request: Request):
     # inchange ; null = retire ; sinon une reference RESOLUE ICI, en base, sur
     # les medias / fichiers du coach appelant — jamais une adresse du navigateur.
     champ_media = {}
-    if "media" in corps:
+    # V625 : `medias` (liste) = PLUSIEURS fichiers ; `media` (objet) reste accepte tel
+    # quel. Les deux champs sont ecrits ensemble : `media` = le premier, pour tout
+    # lecteur V620 ; `medias` fait foi (lecture : `v625_medias`).
+    if "medias" in corps:
+        _liste = await v625_resoudre_medias(corps.get("medias"), email)
+        champ_media["medias"] = _liste
+        champ_media["media"] = _liste[0] if _liste else None
+    elif "media" in corps:
         champ_media["media"] = await v620_resoudre_media(corps.get("media"), email)
+        champ_media["medias"] = [champ_media["media"]] if champ_media["media"] else []
 
     maintenant = datetime.now(timezone.utc).isoformat()
     # ─────────── REPONSE-MANUELLE : CETTE ROUTE CREE AUSSI, DESORMAIS ────────
@@ -35116,8 +35163,9 @@ class P3AI4FournisseurReponse:
                 "reply_to": _reply_to_vivant((envoi or {}).get("reply_to"), V336_REPLY_TO),
                 "headers": (envoi or {}).get("entetes") or {},
                 # V620 : sans media, texte et HTML strictement identiques a avant.
-                "text": v620_texte(message, (envoi or {}).get("media")),
-                "html": v620_corps_html(message, (envoi or {}).get("media")),
+                # V625 : plusieurs fichiers = une carte chacun (0 / 1 media : identique V620).
+                "text": v625_texte(message, v625_medias(envoi)),
+                "html": v625_corps_html(message, v625_medias(envoi)),
             },
             "options": {"idempotency_key": (envoi or {}).get("cle") or ""},
         }
@@ -35448,8 +35496,8 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     # L'EMPREINTE DE CE QUE LE COACH A LU. Sans elle, l'ecran pourrait afficher
     # un texte et le serveur en expedier un autre — un ecart invisible et
     # irrattrapable une fois l'e-mail parti.
-    media_joint = brouillon.get("media") or None          # V620
-    empreinte = v620_empreinte(texte, media_joint)
+    medias_joints = v625_medias(brouillon)                # V620 / V625 : 0, 1 ou plusieurs
+    empreinte = v625_empreinte(texte, medias_joints)
     attendue = str(corps.get("draft_hash") or "").strip()
     if not attendue:
         raise HTTPException(status_code=400, detail="Empreinte du brouillon requise")
@@ -35526,11 +35574,13 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
         "approved_text": texte,
         # V620 : LE MEDIA EXACT QUI PART (instantane), independant du brouillon et
         # de la bibliotheque : changer ou supprimer le media plus tard ne le touche pas.
-        "media": v620_instantane_envoi(media_joint, maintenant),
+        # V625 : TOUS les fichiers partis ; `media` = le premier (lecteurs V620).
+        "medias": v625_instantanes(medias_joints, maintenant),
         "approved_at": maintenant, "approved_by": email,
         "send_status": P3AI4_RESERVE, "provider": None, "provider_message_id": None,
         "sent_at": None, "error_code": None, "created_at": maintenant,
     }
+    trace["media"] = trace["medias"][0] if trace["medias"] else None
     # LA RESERVATION EST UNE INSERTION UNIQUE, donc atomique : deux requetes
     # concurrentes ne peuvent pas la gagner toutes les deux.
     try:
@@ -35541,7 +35591,7 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
                 {"id": cle, "send_status": reprise_de.get("send_status"),
                  "tentative": reprise_de.get("tentative"), "provider_status": reprise_de.get("provider_status")},
                 {"$set": dict({k: trace[k] for k in ("approved_text", "approved_at", "approved_by", "to_email",
-                                                     "subject", "intention", "media")},
+                                                     "subject", "intention", "media", "medias")},
                               send_status=P3AI4_RESERVE, tentative=tentative, provider_status=None,
                               provider_message_id=None, error_code=None, sent_at=None, updated_at=maintenant),
                  "$push": {"tentatives_precedentes": {
@@ -35573,6 +35623,7 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
         "entetes": p3ai4_entetes(message, action),
         "cle": cle if tentative == 1 else "%s-t%d" % (cle, tentative),
         "media": trace["media"],                            # V620
+        "medias": trace["medias"],                          # V625
     }
     fournisseur = P3AI4FournisseurReponse(envoi_autorise=autorise)
     resultat = await fournisseur.envoyer(envoi)
@@ -35649,12 +35700,13 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
     notes = await p3n_notes_du_dossier(message.get("action_id") or "")
     destinataire = p3ai4_destinataire(message, action)
     flags = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0}) or {}
-    media_joint = (brouillon or {}).get("media") or None     # V620
+    medias_joints = v625_medias(brouillon)                   # V620 / V625
     deja = await db[P3AI4_COLLECTION].find_one(
-        {"id": p3ai4_cle_envoi(message["id"], v620_empreinte(texte, media_joint))},
+        {"id": p3ai4_cle_envoi(message["id"], v625_empreinte(texte, medias_joints))},
         {"_id": 0, "send_status": 1, "sent_at": 1, "provider_status": 1, "error_code": 1,
          "provider_raison": 1, "tentative": 1})
-    _apercu_media = v620_instantane_envoi(media_joint, "")
+    _apercu_medias = v625_instantanes(medias_joints, "")
+    _apercu_media = _apercu_medias[0] if _apercu_medias else None
     return {
         "organisation": p3ai_organisation(action),
         "destinataire": destinataire,
@@ -35662,8 +35714,9 @@ async def p3ai4_apercu(inbound_id: str, request: Request):
         "texte": texte,
         # V620 : le media qui partirait, et l'e-mail HTML EXACT (meme fonction que l'envoi).
         "media": _apercu_media,
-        "html_email": v620_corps_html(texte, _apercu_media) if texte else "",
-        "draft_hash": v620_empreinte(texte, media_joint) if texte else "",
+        "medias": _apercu_medias,                             # V625 : tous les fichiers
+        "html_email": v625_corps_html(texte, _apercu_medias) if texte else "",
+        "draft_hash": v625_empreinte(texte, medias_joints) if texte else "",
         "langue": (brouillon or {}).get("langue"),
         "intention": (brouillon or {}).get("intention"),
         "validation_requise": bool((brouillon or {}).get("validation_requise")),
@@ -35838,6 +35891,33 @@ def pf_conversation(cle: str, messages, action, envoi, statuts, intentions) -> d
         "reponse_apres_dernier_message": bool(envoye_le and recu_le and envoye_le > recu_le),
         "rang": pf_rang(statut, non_lues > 0, intention),
     }
+
+
+async def v625_categories_des_conversations(conversations, actions: dict, email: str) -> None:
+    """V625 — LA CATEGORIE DE LA FICHE (et son id) sur chaque conversation. LECTURE SEULE.
+
+    La catégorie vient de la FICHE prospect actuelle (`partner_prospects.category`),
+    pas de la copie figée dans l'action : c'est elle que le coach corrige. UNE seule
+    requête `$in` pour toute la liste. Sans fiche rattachée : `None` (« Non classé »).
+    L'identifiant sert au lien « Voir la fiche » (route existante GET /partner-prospects/{id})."""
+    par_id, par_ref = {}, {}
+    for c in conversations or []:
+        a = actions.get(c.get("cle")) or actions.get(c.get("action_id") or "") or {}
+        c["prospect_id"], c["categorie"] = None, None
+        pid = next((x for x in (a.get("prospect_uuids") or []) if x), None)
+        ref = next((x for x in (a.get("prospect_ids") or []) if x), None)
+        if pid:
+            par_id.setdefault(pid, []).append(c)
+        elif ref:   # anciennes actions (avant prospect_uuids) : la reference de la fiche
+            par_ref.setdefault(ref, []).append(c)
+    if not par_id and not par_ref:
+        return
+    filtre = {"$or": [{"id": {"$in": sorted(par_id)}}, {"ref": {"$in": sorted(par_ref)}}]}
+    if not is_super_admin(email):
+        filtre["coach_id"] = email
+    async for f in db[P3S1_COLLECTION].find(filtre, {"_id": 0, "id": 1, "ref": 1, "category": 1}):
+        for c in (par_id.get(f.get("id")) or []) + (par_ref.get(f.get("ref")) or []):
+            c["prospect_id"], c["categorie"] = f.get("id"), (f.get("category") or None)
 
 
 def pf_conversations(messages, actions, envois, statuts, intentions) -> list:
@@ -36043,6 +36123,7 @@ def v619_fil(messages_recus, action, campagne, preuve, traces) -> list:
             "subject": t.get("subject") or "",
             "text": t.get("approved_text") or "",
             "media": v620_media_du_fil(t.get("media")),   # V620 : le media EXACT parti
+            "medias": v625_medias_du_fil(t),              # V625 : TOUS les fichiers partis
             "texte_garanti": True, "texte_source": "approved_text",
             "provider_message_id": t.get("provider_message_id"),
             "provider_status": t.get("provider_status"),
@@ -36127,7 +36208,7 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
              "suivi_livraison": 1, "delivered_at": 1,
              # V619 : LE texte parti (jamais le brouillon), et son identifiant Resend.
              "approved_text": 1, "provider_message_id": 1,
-             "media": 1}).to_list(PF_PORTEE_MAX):   # V620 : instantane du media envoye
+             "media": 1, "medias": 1}).to_list(PF_PORTEE_MAX):   # V620/V625 : instantanes envoyes
         cle = str(trace.get("action_id") or "").strip() \
             or ("inbound:%s" % str(trace.get("inbound_id") or ""))
         traces_par_cle.setdefault(cle, []).append(trace)
@@ -36171,6 +36252,10 @@ async def pf_charger(email: str, statuts: dict, filtre_statut: str = "") -> dict
         await v605_agenda_des_conversations(conversations)   # V605 : RDV + rappel visibles
     except Exception as _e605:  # noqa: BLE001
         logger.warning("[V605] agenda des conversations ignore : %s", type(_e605).__name__)
+    try:
+        await v625_categories_des_conversations(conversations, actions, email)
+    except Exception as _e624:  # noqa: BLE001
+        logger.warning("[V625] categories des conversations ignorees : %s", type(_e624).__name__)
     compteurs = pf_compteurs(conversations)
     if filtre_statut:
         conversations = [c for c in conversations
@@ -54506,6 +54591,9 @@ V595_NICHES = ("A", "B", "C", "D", "E", "F")
 V598_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # V596 : « original » (le fichier source, jamais réencodé) et « 1_1 » rejoignent la liste.
 V595_FORMATS = ("original", "16_9", "9_16", "1_1", "miniature")
+# V625 : « document » = une brochure PDF. Elle n'occupe aucun emplacement vidéo :
+# plusieurs PDF coexistent dans une niche, rien n'est archivé à l'ajout.
+V595_FORMATS = V595_FORMATS + ("document",)
 V595_STATUTS_MEDIA = ("en_cours", "a_verifier", "validee", "archivee")
 V595_CATEGORIES_LIEN = ("videos", "site", "reservation", "formulaires", "reseaux", "dossiers", "autres")
 V595_STATUTS_LIEN = ("actif", "a_verifier", "bloque", "archive")
@@ -54926,8 +55014,10 @@ async def v595_ajouter_media(request: Request):
         origine = "export" if str(corps.get("origine") or "").strip().lower() == "export" else "fichier"
     else:
         url, fichier_doc, origine = v595_url(corps.get("url")), None, "lien"
-    if origine == "export" and fmt in ("original", "miniature"):
+    if origine == "export" and fmt in ("original", "miniature", "document"):
         raise HTTPException(status_code=400, detail="Un export est forcément au format 16:9, 9:16 ou 1:1")
+    if fmt == "document" and origine != "fichier":   # V625 : un PDF est un fichier /api/files contrôlé
+        raise HTTPException(status_code=400, detail="Un document doit être un PDF envoyé depuis cet écran")
     source = None
     if corps.get("source_id") is not None or origine == "export":
         source = await v596_source(corps.get("source_id"), appelant, niche, obligatoire=(origine == "export"))
@@ -54953,7 +55043,7 @@ async def v595_ajouter_media(request: Request):
         cible = (orig or {}).get("cible")
     doc["cible"] = cible
     doc["cible_id"] = cible["id"] if cible else None
-    anciens = await db[V595_MEDIAS].find(
+    anciens = [] if fmt == "document" else await db[V595_MEDIAS].find(   # V625 : un PDF ne remplace rien
         {"coach_id": appelant, "niche": niche, "format": fmt, "cible_id": doc["cible_id"], "statut": {"$ne": "archivee"}},
         {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
     doc["remplace"] = [a["id"] for a in anciens] or None
@@ -54996,6 +55086,10 @@ async def v596_url_fichier(url: str, appelant: str, fmt: str):
     if (fiche.get("coach_email") or "").strip().lower() != (appelant or "").strip().lower():
         raise HTTPException(status_code=403, detail="Ce fichier ne vous appartient pas")
     attendu = V596_MIME_IMAGE if fmt == "miniature" else V596_MIME_VIDEO
+    if fmt == "document":   # V625 : un PDF passé par le contrôle de signature, et lui seul
+        attendu = (V625_PDF_MIME,)
+        if not (fiche.get("asset_type") == "document" and str(fiche.get("filename") or "").endswith(".pdf")):
+            raise HTTPException(status_code=400, detail="Ce PDF n'a pas été contrôlé à l'envoi")
     if (fiche.get("content_type") or "") not in attendu:
         raise HTTPException(status_code=400, detail="Type de fichier inattendu pour ce format")
     return url, fiche
@@ -55081,7 +55175,7 @@ async def v595_modifier_media(media_id: str, request: Request):
     champs = {}
     if "statut" in corps:
         statut = v595_choix(corps.get("statut"), V595_STATUTS_MEDIA, "Statut")
-        if media.get("statut") == "archivee" and statut != "archivee":
+        if media.get("statut") == "archivee" and statut != "archivee" and media.get("format") != "document":
             occupe = await db[V595_MEDIAS].count_documents(
                 {"coach_id": appelant, "niche": media.get("niche"), "format": media.get("format"),
                  "cible_id": media.get("cible_id"),
@@ -55099,7 +55193,7 @@ async def v595_modifier_media(media_id: str, request: Request):
         # V601 : le public visé se règle sur un média existant (aucun nouvel envoi de fichier).
         cible = v601_cible(corps.get("cible")) if corps.get("cible") else None
         cid = cible["id"] if cible else None
-        if media.get("statut") != "archivee" and cid != media.get("cible_id"):
+        if media.get("statut") != "archivee" and cid != media.get("cible_id") and media.get("format") != "document":
             occupe = await db[V595_MEDIAS].count_documents(
                 {"coach_id": appelant, "niche": media.get("niche"), "format": media.get("format"),
                  "cible_id": cid, "statut": {"$ne": "archivee"}, "id": {"$ne": identifiant}})
@@ -55315,13 +55409,18 @@ async def v620_fichier_du_coach(url, appelant: str, types_mime) -> dict:
         raise HTTPException(status_code=400, detail="Adresse de fichier invalide")
     fiche = await db.uploaded_files.find_one(
         {"file_id": m.group(1)}, {"_id": 0, "filename": 1, "coach_email": 1, "content_type": 1,
-                                  "original_name": 1})
+                                  "original_name": 1, "asset_type": 1, "size": 1})
     if not fiche or fiche.get("filename") != m.group(2):
         raise HTTPException(status_code=400, detail="Fichier introuvable")
     if (fiche.get("coach_email") or "").strip().lower() != (appelant or "").strip().lower():
         raise HTTPException(status_code=403, detail="Ce fichier ne vous appartient pas")
     if (fiche.get("content_type") or "") not in types_mime:
         raise HTTPException(status_code=400, detail="Type de fichier non pris en charge")
+    # V625 : un PDF n'est accepte que s'il est passe par le controle de signature
+    # (asset `document`, extension `.pdf` posee par le serveur apres `%PDF-`).
+    if fiche.get("content_type") == V625_PDF_MIME and not (
+            fiche.get("asset_type") == "document" and str(fiche.get("filename") or "").endswith(".pdf")):
+        raise HTTPException(status_code=400, detail="Ce PDF n'a pas été contrôlé à l'envoi")
     return fiche
 
 
@@ -55343,6 +55442,12 @@ async def v620_resoudre_media(valeur, appelant: str):
         niche = await db[V598_NICHES].find_one({"coach_id": appelant, "cle": m.get("niche")},
                                                {"_id": 0, "nom": 1})
         fichier = m.get("fichier") or {}
+        if m.get("format") == "document":   # V625 : brochure PDF de la bibliotheque
+            return {"media_id": m["id"], "origine": "bibliotheque", "type": "document", "url": url,
+                    "miniature_url": None, "titre": v620_titre(fichier.get("nom") or m.get("version")),
+                    "format": "document", "duree": None, "taille": int(fichier.get("taille") or 0) or None,
+                    "niche_nom": (niche or {}).get("nom"), "public": (m.get("cible") or {}).get("nom"),
+                    "choisi_at": instant}
         est_image = m.get("format") == "miniature"
         return {"media_id": m["id"], "origine": "bibliotheque",
                 "type": "image" if est_image else "video", "url": url,
@@ -55354,7 +55459,13 @@ async def v620_resoudre_media(valeur, appelant: str):
     url = str(valeur.get("fichier_url") or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="Média invalide")
-    fiche = await v620_fichier_du_coach(url, appelant, V596_MIME_VIDEO + V596_MIME_IMAGE)
+    fiche = await v620_fichier_du_coach(url, appelant, V596_MIME_VIDEO + V596_MIME_IMAGE + (V625_PDF_MIME,))
+    if fiche.get("content_type") == V625_PDF_MIME:   # V625
+        return {"media_id": None, "origine": "import", "type": "document", "url": url,
+                "miniature_url": None,
+                "titre": v620_titre(valeur.get("nom") or fiche.get("original_name") or fiche.get("filename")),
+                "format": None, "duree": None, "taille": int(fiche.get("size") or 0) or None,
+                "niche_nom": None, "public": None, "choisi_at": instant}
     est_image = (fiche.get("content_type") or "") in V596_MIME_IMAGE
     miniature = url if est_image else None
     if not est_image and valeur.get("miniature_url"):
@@ -55371,16 +55482,19 @@ async def v620_resoudre_media(valeur, appelant: str):
 
 def v620_instantane_envoi(media, maintenant: str):
     """Ce qui est fige dans la trace d'envoi (et montre dans l'apercu). PURE."""
-    if not isinstance(media, dict) or media.get("type") not in V620_TYPES or not v620_url_sure(media.get("url")):
+    if not isinstance(media, dict) or media.get("type") not in V625_TYPES or not v620_url_sure(media.get("url")):
         return None
     mini = v620_url_sure(media.get("miniature_url")) or None
-    return {"media_id": media.get("media_id"), "origine": media.get("origine"),
-            "type": media["type"], "titre": media.get("titre") or "Afroboost",
-            "url": media["url"], "url_absolue": v620_absolue(media["url"]),
-            "miniature_url": mini, "miniature_absolue": v620_absolue(mini) if mini else None,
-            "format": media.get("format"), "duree": media.get("duree"),
-            "niche_nom": media.get("niche_nom"), "public": media.get("public"),
-            "date": maintenant or None}
+    instant = {"media_id": media.get("media_id"), "origine": media.get("origine"),
+               "type": media["type"], "titre": media.get("titre") or "Afroboost",
+               "url": media["url"], "url_absolue": v620_absolue(media["url"]),
+               "miniature_url": mini, "miniature_absolue": v620_absolue(mini) if mini else None,
+               "format": media.get("format"), "duree": media.get("duree"),
+               "niche_nom": media.get("niche_nom"), "public": media.get("public"),
+               "date": maintenant or None}
+    if media["type"] == "document":   # V625 : la taille du PDF, figee avec le reste
+        instant["taille"] = media.get("taille")
+    return instant
 
 
 def v620_empreinte(texte, media) -> str:
@@ -55447,15 +55561,180 @@ def v620_corps_html(message: str, media) -> str:
 
 def v620_media_du_fil(media):
     """Ce que le fil V619 montre d'un media envoye (lecture). PURE."""
-    if not isinstance(media, dict) or media.get("type") not in V620_TYPES:
+    if not isinstance(media, dict) or media.get("type") not in V625_TYPES:
         return None
     url = v620_url_sure(media.get("url"))
     if not url:
         return None
-    return {"type": media["type"], "titre": media.get("titre") or "Afroboost", "url": url,
-            "miniature_url": v620_url_sure(media.get("miniature_url")) or None,
-            "media_id": media.get("media_id"), "origine": media.get("origine"),
-            "format": media.get("format"), "duree": media.get("duree"), "date": media.get("date")}
+    vu = {"type": media["type"], "titre": media.get("titre") or "Afroboost", "url": url,
+          "miniature_url": v620_url_sure(media.get("miniature_url")) or None,
+          "media_id": media.get("media_id"), "origine": media.get("origine"),
+          "format": media.get("format"), "duree": media.get("duree"), "date": media.get("date")}
+    if media["type"] == "document":   # V625
+        vu["taille"] = media.get("taille")
+    return vu
+
+# ===========================================================================
+# V625 — PLUSIEURS FICHIERS (VIDEO, IMAGE, PDF) DANS UNE REPONSE PARTENAIRE
+# ===========================================================================
+# PROLONGEMENT DE V620, PAS UN SECOND SYSTEME : memes collections
+# (`uploaded_files`, `prospection_medias`, `prospect_reply_drafts`,
+# `prospect_reply_sends`), meme service `/api/files`, meme empreinte.
+#
+# COMPATIBILITE STRICTE. L'ancien champ `media` (un objet) reste lu ; le nouveau
+# `medias` (une liste) le complete. Avec 0 ou 1 media video/image, empreinte,
+# texte et HTML sont EXACTEMENT ceux de V620 : aucune trace, aucune cle
+# d'idempotence existante n'est invalidee, et rien n'est migre en base.
+#
+# LIENS, PAS PIECES JOINTES (decision Bassi apres audit) : chaque fichier est une
+# carte avec un bouton vers `/api/files`. L'e-mail reste leger et le suivi Resend
+# (par identifiant d'e-mail) est inchange.
+#
+# LE PDF EST STRICTEMENT CONTROLE : type `application/pdf` ET signature `%PDF-`
+# lue sur le fichier, envoye comme asset `document`, extension `.pdf` posee par
+# le serveur seulement apres ce controle. 20 Mo au plus (voir V625_PDF_MAX_MO).
+V625_PDF_MIME = "application/pdf"
+# 20 Mo : une brochure legere pese 1 a 10 Mo ; 20 laisse de la marge sans inviter
+# a joindre un catalogue de 80 Mo qu'un partenaire ouvrirait sur son telephone.
+# Reste sous le plafond image existant (25 Mo) et passe aussi par l'envoi en morceaux.
+V625_PDF_MAX_MO = 20
+V625_PDF_MAX = V625_PDF_MAX_MO * 1024 * 1024
+V625_MSG_PDF_LOURD = "Ce PDF dépasse la taille maximale autorisée de %d Mo." % V625_PDF_MAX_MO
+V625_MEDIAS_MAX = 6
+V625_TYPES = V620_TYPES + ("document",)
+V625_LIBELLE_DOC = "Voir / télécharger le document"
+V625_ICONE = {"video": "&#127909;", "image": "&#128444;&#65039;", "document": "&#128196;"}
+
+
+def v625_controler_pdf(tete, taille: int) -> None:
+    """Taille puis signature d'un PDF. 400 lisible sinon. PURE (leve seulement)."""
+    if int(taille or 0) > V625_PDF_MAX:
+        raise HTTPException(status_code=400, detail=V625_MSG_PDF_LOURD)
+    if bytes(tete or b"")[:5] != b"%PDF-":
+        raise HTTPException(status_code=400, detail="Ce fichier n'est pas un PDF valide.")
+
+
+def v625_taille_lisible(octets) -> str:
+    """1 234 567 -> « 1,2 Mo ». PURE."""
+    try:
+        n = int(octets or 0)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if n < 1024 * 1024:
+        return "%d Ko" % max(1, round(n / 1024))
+    return ("%.1f Mo" % (n / (1024 * 1024))).replace(".", ",")
+
+
+def v625_medias(doc) -> list:
+    """Les medias d'un brouillon ou d'une trace : `medias` (V625), sinon l'ancien
+    `media` (V620), sinon aucun. LECTURE COMPATIBLE, aucune migration. PURE."""
+    d = doc if isinstance(doc, dict) else {}
+    liste = d.get("medias")
+    if isinstance(liste, list):
+        return [m for m in liste if isinstance(m, dict) and m.get("url")]
+    m = d.get("media")
+    return [m] if isinstance(m, dict) and m.get("url") else []
+
+
+def v625_empreinte(texte, medias) -> str:
+    """L'empreinte de CE QUI PART. 0 ou 1 media : EXACTEMENT `v620_empreinte`. PURE."""
+    liste = [m for m in (medias or []) if isinstance(m, dict) and m.get("url")]
+    if len(liste) <= 1:
+        return v620_empreinte(texte, liste[0] if liste else None)
+    return p3ai4_empreinte(str(texte or "") + "".join(
+        "\n\x1fV620|%s|%s|%s" % (m.get("type") or "", m.get("url") or "", m.get("miniature_url") or "")
+        for m in liste) + "\n\x1fV625|%d" % len(liste))
+
+
+def v625_instantanes(medias, maintenant: str) -> list:
+    """Les instantanes figes de chaque media (ordre conserve). PURE."""
+    return [i for i in (v620_instantane_envoi(m, maintenant) for m in (medias or [])) if i]
+
+
+def _v625_libelle(m: dict) -> str:
+    if m["type"] == "document":
+        return V625_LIBELLE_DOC
+    return V620_LIBELLE_VIDEO if m["type"] == "video" else V620_LIBELLE_IMAGE
+
+
+def v625_texte(message: str, medias) -> str:
+    """La version TEXTE. 0 media / 1 video-image : EXACTEMENT V620. PURE."""
+    liste = v625_instantanes(medias, "")
+    if not liste:
+        return message
+    if len(liste) == 1 and liste[0]["type"] != "document":
+        return v620_texte(message, liste[0])
+    lignes = ["%s — %s : %s" % (m["titre"], _v625_libelle(m), m["url_absolue"]) for m in liste]
+    return "%s\n\n%s" % (message or "", "\n".join(lignes))
+
+
+def v625_carte_document(m: dict) -> str:
+    """La carte d'un PDF : nom, taille, bouton. Jamais l'adresse en clair. PURE."""
+    import html as _h
+    lien = _h.escape(m["url_absolue"], quote=True)
+    details = " &middot; ".join(x for x in ("PDF", _h.escape(v625_taille_lisible(m.get("taille")))) if x)
+    return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            'style="margin:12px 0 4px;border-collapse:collapse;max-width:480px;width:100%;'
+            'border:1px solid #ddd;border-radius:10px;">'
+            '<tr><td style="padding:12px 14px 0;font-size:15px;font-weight:600;color:#111;">'
+            + V625_ICONE["document"] + '&nbsp; ' + _h.escape(m.get("titre") or "Document Afroboost") + '</td></tr>'
+            '<tr><td style="padding:3px 14px 0;font-size:12px;color:#666;">' + details + '</td></tr>'
+            '<tr><td style="padding:10px 14px 14px;"><a href="' + lien + '" target="_blank" rel="noopener" '
+            'style="display:inline-block;background:#111;color:#fff;text-decoration:none;'
+            'font-weight:600;font-size:14px;line-height:1.2;padding:10px 18px;border-radius:999px;">'
+            + _h.escape(V625_LIBELLE_DOC) + '</a></td></tr></table>')
+
+
+def v625_corps_html(message: str, medias) -> str:
+    """Le texte (inchange) PUIS une carte par fichier. 0 / 1 video-image : EXACTEMENT V620. PURE."""
+    import html as _h
+    liste = v625_instantanes(medias, "")
+    if not liste or (len(liste) == 1 and liste[0]["type"] != "document"):
+        return v620_corps_html(message, liste[0] if liste else None)
+    cartes = []
+    for m in liste:
+        if m["type"] == "document":
+            cartes.append(v625_carte_document(m))
+            continue
+        # Plusieurs fichiers : chaque carte V620 porte son titre, pour qu'on sache lequel on ouvre.
+        bouton = ""
+        if m["type"] == "image":   # la carte V620 d'une image est l'image seule : on ajoute son bouton
+            bouton = ('<div style="margin:8px 0 0;"><a href="' + _h.escape(m["url_absolue"], quote=True)
+                      + '" target="_blank" rel="noopener" style="display:inline-block;background:#111;color:#fff;'
+                      'text-decoration:none;font-weight:600;font-size:14px;line-height:1.2;padding:10px 18px;'
+                      'border-radius:999px;">' + _h.escape(V620_LIBELLE_IMAGE) + '</a></div>')
+        cartes.append('<div style="margin:18px 0 0;font-size:14px;font-weight:600;color:#111;">'
+                      + V625_ICONE[m["type"]] + '&nbsp; ' + _h.escape(m.get("titre") or "Afroboost") + '</div>'
+                      + v620_carte_html(m) + bouton)
+    base = p3s3d2_corps_html(message)
+    fin = "</div></body></html>"
+    return base[:-len(fin)] + "".join(cartes) + fin if base.endswith(fin) else base + "".join(cartes)
+
+
+def v625_medias_du_fil(doc) -> list:
+    """Ce que le fil montre de TOUS les fichiers reellement envoyes. PURE."""
+    return [x for x in (v620_media_du_fil(m) for m in v625_medias(doc)) if x]
+
+
+async def v625_resoudre_medias(valeurs, appelant: str) -> list:
+    """Liste de references du navigateur -> instantanes resolus en base (doublons retires)."""
+    if valeurs is None:
+        return []
+    if not isinstance(valeurs, list):
+        raise HTTPException(status_code=400, detail="Liste de médias invalide")
+    if len(valeurs) > V625_MEDIAS_MAX:
+        raise HTTPException(status_code=400,
+                            detail="%d fichiers au maximum par réponse" % V625_MEDIAS_MAX)
+    resolus, vus = [], set()
+    for v in valeurs:
+        m = await v620_resoudre_media(v, appelant)
+        if m and m["url"] not in vus:
+            vus.add(m["url"])
+            resolus.append(m)
+    return resolus
+
 
 
 # ===========================================================================

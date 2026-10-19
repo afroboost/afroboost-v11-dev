@@ -172,8 +172,9 @@ verifier("le bloc V596 ne lance ni ffmpeg ni subprocess",
          "ffmpeg" not in BLOC.lower().replace("aucun calcul", "") and "subprocess" not in BLOC
          and "os.system" not in BLOC and "create_subprocess" not in BLOC)
 verifier("le bloc V596 n'ouvre aucun fichier disque", "open(" not in BLOC and "os.path" not in BLOC)
-verifier("formats : original, 16_9, 9_16, 1_1, miniature",
-         S.V595_FORMATS == ("original", "16_9", "9_16", "1_1", "miniature"))
+# V625 : « document » (brochure PDF) s'ajoute EN FIN de liste ; les formats vidéo sont inchangés.
+verifier("formats : original, 16_9, 9_16, 1_1, miniature (+ document V625)",
+         S.V595_FORMATS == ("original", "16_9", "9_16", "1_1", "miniature", "document"))
 
 print("\n2. Original : un fichier du coach, « en cours »")
 url_orig = fichier("orig01", "video_orig01.mp4", "video/mp4", taille=22538851)
