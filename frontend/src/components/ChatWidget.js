@@ -7436,7 +7436,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
 
   const handleDeleteMessage = async (messageId) => {
     try {
-      await axios.put(`${API}/chat/messages/${messageId}/delete`);
+      // P0-B2 : le serveur n'accepte que l'AUTEUR — même preuve que pour lire (V349).
+      await axios.put(`${API}/chat/messages/${messageId}/delete`, null, { params: { participant_id: participantId || '' } });
       // Remove from local state or mark as deleted
       setMessages(prev => prev.map(m => m.id === messageId ? {...m, is_deleted: true, text: 'Message supprimé'} : m));
       setGroupMessages(prev => prev.map(m => m.id === messageId ? {...m, is_deleted: true, text: 'Message supprimé'} : m));

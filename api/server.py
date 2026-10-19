@@ -7750,44 +7750,14 @@ async def launch_campaign(campaign_id: str):
 @api_router.post("/webhooks/twilio/status")
 async def twilio_status_webhook(request: Request):
     """
-    Webhook Twilio pour les mises à jour de statut WhatsApp.
-    Twilio envoie: queued, sent, delivered, read, failed, undelivered
+    P0-B2 — DÉSACTIVÉ (410). Ancien webhook de statut Twilio, sans vérification de
+    signature : n'importe qui pouvait réécrire les statuts de remise des campagnes.
+    Preuve d'inutilité (19/10/2026) : WhatsApp part par Meta Cloud API (META_* prioritaires),
+    identifiants Twilio en base vides, les campagnes portent des identifiants Meta `wamid`,
+    aucun StatusCallback n'est posé par le code. Rollback = git revert.
     """
-    try:
-        form_data = await request.form()
-        message_sid = form_data.get("MessageSid", "")
-        message_status = form_data.get("MessageStatus", "")
-
-        if not message_sid or not message_status:
-            return {"ok": True}
-
-        logger.info(f"[TWILIO-WEBHOOK] SID={message_sid} Status={message_status}")
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-
-        # Chercher la campagne contenant ce SID dans ses résultats
-        update_fields = {}
-        if message_status == "delivered":
-            update_fields = {"results.$.deliveredAt": now_iso}
-        elif message_status == "read":
-            update_fields = {"results.$.readAt": now_iso, "results.$.deliveredAt": now_iso}
-        elif message_status in ("failed", "undelivered"):
-            update_fields = {"results.$.status": "failed", "results.$.error": f"Twilio: {message_status}"}
-
-        if update_fields:
-            result = await db.campaigns.update_one(
-                {"results.sid": message_sid},
-                {"$set": update_fields}
-            )
-            if result.modified_count > 0:
-                logger.info(f"[TWILIO-WEBHOOK] ✅ Campagne mise à jour pour SID={message_sid}: {message_status}")
-            else:
-                logger.debug(f"[TWILIO-WEBHOOK] Aucune campagne trouvée pour SID={message_sid}")
-
-        return {"ok": True}
-    except Exception as e:
-        logger.error(f"[TWILIO-WEBHOOK] Erreur: {e}")
-        return {"ok": True}  # Toujours retourner 200 à Twilio
+    logger.warning("[P0-B2] webhook Twilio désactivé appelé (410)")
+    raise HTTPException(status_code=410, detail="Webhook Twilio désactivé")
 
 @api_router.post("/campaigns/{campaign_id}/mark-sent")
 async def mark_campaign_sent(campaign_id: str, request: Request):
@@ -40390,11 +40360,17 @@ async def get_chat_session_by_token(link_token: str):
     return session
 
 @api_router.post("/chat/sessions")
-async def create_chat_session(session: ChatSessionCreate):
-    """Crée une nouvelle session de chat"""
+async def create_chat_session(session: ChatSessionCreate, request: Request):
+    """Crée une nouvelle session de chat.
+    P0-B2 : réservé au coach SIGNÉ (seuls appelants : dashboard et CRM), qui en devient
+    propriétaire. Les visiteurs ouvrent leur conversation par /chat/smart-entry (inchangé).
+    """
+    _p0b2_coach = await _v309_require_coach_or_admin(request)
     session_obj = ChatSession(**session.model_dump())
-    await db.chat_sessions.insert_one(session_obj.model_dump())
-    return session_obj.model_dump()
+    doc = session_obj.model_dump()
+    doc["coach_id"] = _p0b2_coach
+    await db.chat_sessions.insert_one(dict(doc))
+    return doc
 
 @api_router.put("/chat/sessions/{session_id}")
 async def update_chat_session(session_id: str, update: ChatSessionUpdate, request: Request):
@@ -40423,8 +40399,12 @@ async def update_chat_session(session_id: str, update: ChatSessionUpdate, reques
     return updated
 
 @api_router.post("/chat/sessions/{session_id}/add-participant")
-async def add_participant_to_session(session_id: str, participant_id: str):
-    """Ajoute un participant à une session existante"""
+async def add_participant_to_session(session_id: str, participant_id: str, request: Request):
+    """Ajoute un participant à une session existante.
+    P0-B2 : coach SIGNÉ propriétaire de la session (super-admin : toutes). Aucun appelant
+    front ; ajouter quelqu'un dans une conversation étrangère lui ouvrait sa lecture (V349).
+    """
+    await _p0b_session_du_coach(session_id, await _v309_require_coach_or_admin(request))
     session = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=404, detail="Session non trouvée")
@@ -41226,8 +41206,22 @@ async def v356_supprimer_media_maintenant(message_id: str, request: Request,
 
 
 @api_router.put("/chat/messages/{message_id}/delete")
-async def soft_delete_message(message_id: str):
-    """Suppression logique d'un message"""
+async def soft_delete_message(message_id: str, request: Request, participant_id: str = ""):
+    """Suppression logique d'un message.
+    P0-B2 : seul l'AUTEUR (ou le coach propriétaire / le super-admin) peut supprimer.
+    Voir `p0b2_peut_supprimer_message`. Un id deviné ne suffit plus.
+    """
+    _p0b2_msg = await db.chat_messages.find_one(
+        {"id": message_id}, {"_id": 0, "id": 1, "session_id": 1, "sender_id": 1, "sender_type": 1})
+    _p0b2_sess = None
+    if _p0b2_msg:
+        _p0b2_sess = await db.chat_sessions.find_one(
+            {"id": _p0b2_msg.get("session_id")},
+            {"_id": 0, "id": 1, "coach_id": 1, "participant_ids": 1, "mode": 1, "group_id": 1})
+    if not _p0b2_msg or not _p0b2_sess or not await p0b2_peut_supprimer_message(
+            request, _p0b2_msg, _p0b2_sess, participant_id):
+        logger.warning("[P0-B2] REFUS suppression du message %s", (message_id or "")[:12])
+        raise HTTPException(status_code=404, detail="Message non trouvé")
     await db.chat_messages.update_one(
         {"id": message_id},
         {"$set": {
@@ -42268,17 +42262,26 @@ async def mark_notifications_read(request: Request):
     - all_for_target: "coach" ou "client" pour marquer tous les messages non lus
     - session_id: Optionnel, pour limiter à une session
     """
+    # P0-B2 : coach SIGNÉ ; il ne touche QUE les messages de SES conversations
+    # (super-admin : toutes). Seul appelant : le polling du dashboard (erreurs ignorées).
+    _p0b2_coach = await _v309_require_coach_or_admin(request)
     body = await request.json()
     message_ids = body.get("message_ids", [])
     all_for_target = body.get("all_for_target")
     session_id = body.get("session_id")
+    if not isinstance(message_ids, list) or len(message_ids) > P0B2_MARK_READ_MAX:
+        raise HTTPException(status_code=400, detail="message_ids invalide")
+    message_ids = [m for m in message_ids if isinstance(m, str)]
+    if session_id is not None and not isinstance(session_id, str):
+        raise HTTPException(status_code=400, detail="session_id invalide")
+    _p0b2_portee = await p0b2_portee_notifications(_p0b2_coach)
     
     update_count = 0
     
     if message_ids:
         # Marquer des messages spécifiques
         result = await db.chat_messages.update_many(
-            {"id": {"$in": message_ids}},
+            {"id": {"$in": message_ids}, **_p0b2_portee},
             {"$set": {"notified": True}}
         )
         update_count = result.modified_count
@@ -42295,8 +42298,12 @@ async def mark_notifications_read(request: Request):
         else:
             query["sender_type"] = {"$in": ["ai", "coach"]}
         
+        query.update(_p0b2_portee)
         if session_id:
-            query["session_id"] = session_id
+            if "session_id" in query and session_id not in query["session_id"]["$in"]:
+                query["session_id"] = {"$in": []}
+            else:
+                query["session_id"] = session_id
         
         result = await db.chat_messages.update_many(
             query,
@@ -47626,6 +47633,19 @@ def e1b_seance_encore_au_planning(cours, instant, en_instant, jours) -> bool:
 
 # V183: Cron rappel 1h avant un cours réservé
 @api_router.get("/cron/reservation-reminders")
+async def cron_reservation_reminders_http(request: Request):
+    """P0-B2 — la porte HTTP du moteur de rappels. Elle était PUBLIQUE : n'importe qui
+    pouvait déclencher une passe d'envoi. Aucun appelant réel : les rappels partent de la
+    boucle interne RV3-B, qui appelle `cron_reservation_reminders()` DIRECTEMENT (inchangée).
+    Même règle que /cron/check-campaigns (V329/V330) : `Bearer CRON_SECRET` ou super-admin signé.
+    """
+    if not p0b2_appel_machine_autorise(request.headers.get("Authorization", ""), os.environ.get("CRON_SECRET", "")):
+        jwt_email = _v311_coach_email_from_jwt(request)
+        if not (jwt_email and is_super_admin(jwt_email)):
+            raise HTTPException(status_code=401, detail="Unauthorized - Cron access only")
+    return await cron_reservation_reminders()
+
+
 async def cron_reservation_reminders():
     """V183: Cron horaire — envoie un rappel 1h avant chaque cours réservé."""
     from datetime import timedelta as _td
@@ -56355,6 +56375,61 @@ async def _p0b_session_du_coach(session_id: str, email: str) -> dict:
     if not session or (not is_super_admin(email) and (session.get("coach_id") or "") != email):
         raise HTTPException(status_code=404, detail="Session non trouvée")
     return session
+
+
+# P0-B2 — routes reportées de P0-B (audit : docs/afroboost/securite/P0B2_AUDIT.md).
+P0B2_MARK_READ_MAX = 500
+P0B2_MODES_GROUPE = ("group", "community")
+
+
+def p0b2_appel_machine_autorise(entete_auth: str, secret: str) -> bool:
+    """Un appel machine porte `Bearer <CRON_SECRET>`. Sans secret posé : jamais."""
+    if not secret:
+        return False
+    return secrets.compare_digest((entete_auth or "").encode(), f"Bearer {secret}".encode())
+
+
+async def p0b2_peut_supprimer_message(request: Request, msg: dict, session: dict,
+                                      participant_id: str = "") -> bool:
+    """Qui peut supprimer CE message ?
+      1. le super-admin, le coach propriétaire de la conversation — identité SIGNÉE ;
+      2. l'AUTEUR visiteur : son `participant_id` (UUID non devinable, celui qu'il présente
+         déjà pour LIRE la conversation, V349) = `sender_id` du message ET membre de la
+         conversation. En GROUPE, les `sender_id` sont visibles de tous les membres :
+         ils ne prouvent rien, l'auteur doit présenter son jeton d'appareil abonné (V296).
+    """
+    email = _v311_coach_email_from_jwt(request)
+    if email and (is_super_admin(email) or (session.get("coach_id") or "").strip().lower() == email):
+        return True
+    if (msg.get("sender_type") or "") != "user":
+        return False
+    auteur = (msg.get("sender_id") or "").strip()
+    membres = session.get("participant_ids") or []
+    if not auteur or auteur not in membres:
+        return False
+    groupe = (session.get("mode") in P0B2_MODES_GROUPE) or bool(session.get("group_id"))
+    if not groupe and (participant_id or "").strip() == auteur:
+        return True
+    try:
+        from api.routes.shared import subscriber_from_request
+        jeton = subscriber_from_request(request)
+    except Exception:
+        jeton = None
+    if jeton and (jeton.get("email") or "").strip():
+        p = await db.chat_participants.find_one(
+            {"email": (jeton["email"] or "").strip().lower()}, {"_id": 0, "id": 1})
+        if p and p.get("id") == auteur:
+            return True
+    return False
+
+
+async def p0b2_portee_notifications(coach_email: str) -> dict:
+    """Filtre Mongo : les messages des conversations de CE coach (super-admin : aucun filtre)."""
+    if is_super_admin(coach_email):
+        return {}
+    docs = await db.chat_sessions.find({"coach_id": coach_email}, {"_id": 0, "id": 1}).to_list(None)
+    ids = [d["id"] for d in docs if d.get("id")]
+    return {"session_id": {"$in": ids}}
 
 
 @fastapi_app.middleware("http")
