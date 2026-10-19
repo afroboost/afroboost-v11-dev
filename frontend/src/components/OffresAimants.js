@@ -718,6 +718,8 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
   const groupe = useMemo(() => regrouperOffres(offres), [offres]);
   const [fiche, setFiche] = useState(null);
   const [toutes, setToutes] = useState(false);
+  // V626 : un lien `?offre=` vers une offre qui n'est plus proposée -> on le DIT (titre du panneau).
+  const [offreIndispo, setOffreIndispo] = useState(false);
 
   // Le bouton « Offres » de la barre de navigation ouvre le panneau : le
   // parent incrémente ce signal, on l'écoute.
@@ -753,7 +755,23 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
     } catch (e) { return; }
     if (!cible) return;
     const o = offres.find((x) => x && x.id === cible);
-    if (!o) return;
+    if (!o) {
+      // V626 — LIEN VERS UNE OFFRE MASQUÉE, ARCHIVÉE, EXPIRÉE OU INCONNUE. Avant : l'accueil
+      // s'affichait sans un mot. Le serveur (`GET /offers?offre=<id>`, mêmes filtres que
+      // la vitrine, offre privée comprise) CONFIRME d'abord l'absence : une liste locale
+      // incomplète (vitrine d'un coach) ne fait jamais afficher « indisponible » à tort.
+      lienProfondTraite.current = true;
+      const base = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
+      fetch(`${base}/offers?offre=${encodeURIComponent(cible)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((liste) => {
+          if (!Array.isArray(liste) || liste.some((x) => x && x.id === cible)) return;
+          setOffreIndispo(true);
+          setToutes(true);
+        })
+        .catch(() => { /* réseau : on ne dit rien plutôt que de dire faux */ });
+      return;
+    }
     lienProfondTraite.current = true;
     // DL-1 : ouverture EXPLICITE — jamais la bascule du clic manuel.
     if (reserver && prixUnitaire(o) <= 0) { onChoisir(o, { lienProfond: true }); return; }
@@ -775,9 +793,9 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
         mensuelRef={groupe.mensuelRef}
         analyser={analyser}
         estMobile={estMobile}
-        titre={titreToutes}
+        titre={offreIndispo ? 'Cette offre n’est plus disponible — voici les offres actuelles' : titreToutes}
         notes={notes}
-        onFermer={() => setToutes(false)}
+        onFermer={() => { setToutes(false); setOffreIndispo(false); }}
         onOuvrirFiche={(c) => { setToutes(false); setFiche(c); }}
       />
       {fiche ? (

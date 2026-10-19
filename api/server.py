@@ -21566,7 +21566,11 @@ async def share_offer_page(offer_id: str):
 
     FRONT = "https://afroboost.com"
     offer = await db.offers.find_one({"id": offer_id}, {"_id": 0})
-    if not offer:
+    # V626 — UNE OFFRE MASQUÉE OU ARCHIVÉE NE SE PRÉVISUALISE PAS. Cette page publiait
+    # nom, prix, description et image de N'IMPORTE QUELLE offre, masquée comprise.
+    # Même traitement qu'une offre inconnue. Une offre PRIVÉE (`link_only`) garde son
+    # aperçu : son lien est précisément le chemin voulu pour y accéder (V537).
+    if not offer or offer.get("visible") is False or offer.get("archived") is True:
         from starlette.responses import RedirectResponse as RR
         return RR(url=FRONT, status_code=302)
 

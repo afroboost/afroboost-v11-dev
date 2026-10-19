@@ -5,7 +5,7 @@ import React from 'react';
 // (ClockIcon/PinIcon/... ), d'ou le recours au jeu partage SvgIcon pour ces
 // deux traces uniquement. Les composants locaux restent la reference du fichier.
 import SvgIcon from '../SvgIcon';
-import { copyToClipboard } from '../../utils/clipboard';   // V537 — lien privé
+import { offrePartageable, copierLienOffre, partagerOffre } from '../../utils/partageOffre'; // V626 — partage de chaque offre
 
 const PINK = 'var(--primary-color, #D91CD2)';
 
@@ -306,22 +306,6 @@ export default function OfferCard({
                            background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.10)' }}>
               <SvgIcon name="link" size={11} /> Privée — sur lien
             </span>
-            <button
-              type="button"
-              data-testid={`offer-copy-link-${offer.id}`}
-              onClick={async (e) => {
-                e.stopPropagation();
-                const btn = e.currentTarget;
-                const r = await copyToClipboard(`${window.location.origin}/?offre=${offer.id}`);
-                const avant = btn.textContent;
-                btn.textContent = r && r.success ? 'Lien copié' : 'Copie impossible';
-                setTimeout(() => { btn.textContent = avant; }, 1800);
-              }}
-              className="text-xs px-2 py-0.5 rounded-full"
-              style={{ color: 'rgba(255,255,255,0.75)', background: 'transparent',
-                       border: '1px solid rgba(255,255,255,0.18)' }}>
-              Copier le lien privé
-            </button>
           </div>
         )}
         {/* V226: 📍 remplace par PinIcon — meme condition de masquage inchangee. */}
@@ -370,6 +354,49 @@ export default function OfferCard({
             {canDelete ? <TrashIcon color="#ef4444" /> : <LockIcon color="#666" />}
           </button>
         </div>
+
+        {/* V626 — CHAQUE OFFRE A SON LIEN : « Copier le lien » + « Partager », pour toute
+            offre que le lien `/?offre=<id>` sait ouvrir (visible, non archivée, pas un
+            produit), et seulement pour SES offres (même règle que Supprimer). Une offre
+            privée (V537) y passe aussi : ce lien est son seul accès. */}
+        {canDelete && offrePartageable(offer) && (
+          <div className="flex gap-2 mt-2" data-testid={`offer-partage-${offer.id}`}>
+            <button
+              type="button"
+              data-testid={`offer-copy-link-${offer.id}`}
+              onClick={async (e) => {
+                e.stopPropagation();
+                const btn = e.currentTarget;
+                const ok = await copierLienOffre(offer);
+                const etiquette = btn.querySelector('span');
+                const avant = etiquette.textContent;
+                etiquette.textContent = ok ? 'Lien copié !' : 'Copie impossible';
+                setTimeout(() => { etiquette.textContent = avant; }, 1800);
+              }}
+              className="flex-1 text-xs py-2 rounded-lg inline-flex items-center justify-center gap-1.5"
+              style={{ background: '#0a0a0f', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)', color: '#fff' }}>
+              <SvgIcon name="link" size={13} /><span>Copier le lien</span>
+            </button>
+            <button
+              type="button"
+              data-testid={`offer-share-${offer.id}`}
+              onClick={async (e) => {
+                e.stopPropagation();
+                const btn = e.currentTarget;
+                const r = await partagerOffre(offer);
+                const etiquette = btn.querySelector('span');
+                const avant = etiquette.textContent;
+                if (r && r.methode === 'copie') etiquette.textContent = 'Lien copié !';
+                else if (r && r.methode === 'whatsapp') etiquette.textContent = r.ok ? 'Lien copié — WhatsApp ouvert' : 'WhatsApp ouvert';
+                else return;
+                setTimeout(() => { etiquette.textContent = avant; }, 2200);
+              }}
+              className="flex-1 text-xs py-2 rounded-lg inline-flex items-center justify-center gap-1.5"
+              style={{ background: '#0a0a0f', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)', color: '#fff' }}>
+              <SvgIcon name="share" size={13} /><span>Partager</span>
+            </button>
+          </div>
+        )}
 
         {/* V224: reorganisation de l'ordre d'affichage (champ `position`) */}
         {/* V227: les fleches sont MASQUEES a partir de 768px (md:hidden), pas
