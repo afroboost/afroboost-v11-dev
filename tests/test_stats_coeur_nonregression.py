@@ -110,7 +110,9 @@ if REF:
         # LE MÊME jeu pour les deux (la clôture porte un identifiant aléatoire).
         s_ref, r_ref, b_ref = _appel(REF["analytics_routes"], F.ADMIN, p, jeu=json.loads(json.dumps(_J)))
         s_new, r_new, b_new = _appel(NOUVEAU, F.ADMIN, p, jeu=json.loads(json.dumps(_J)))
-        r_new = _sans_ajouts(r_new)
+        # `_sans_ajouts` n'existe qu'avec le commit qui change les chiffres (7ef0e299) :
+        # ce bloc reste valable si le propriétaire l'annule.
+        r_new = globals().get("_sans_ajouts", lambda _r: _r)(r_new)
         nom = "dates à normaliser + clôture présente %s" % p
         verifier("même réponse JSON — " + nom, s_ref == s_new == 200 and r_ref == r_new,
                  [k for k in (r_ref or {}) if (r_ref or {}).get(k) != (r_new or {}).get(k)][:5])
