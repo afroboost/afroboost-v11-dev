@@ -146,13 +146,19 @@ function replierSurLesCours(cours) {
 }
 
 const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFournies = null,
-                        libelleAction = 'Réserver', noteAction = 'Tu choisiras tes dates après la réservation, dans ton espace.' }) => {
+                        libelleAction = 'Réserver', noteAction = 'Tu choisiras tes dates après la réservation, dans ton espace.',
+                        // V626 — CONTEXTE D'UNE OFFRE (ex. essai gratuit). TOUS FACULTATIFS : absents,
+                        // le calendrier est STRICTEMENT celui d'avant (accueil « Sessions », invitations…).
+                        titre = null, instruction = null, etiquetteCreneau = null,
+                        selectionDirecte = false, libelleContinuer = 'Continuer ma réservation' }) => {
   const [mois, setMois] = useState(() => {
     const n = new Date();
     return new Date(n.getFullYear(), n.getMonth(), 1);
   });
   const [jourChoisi, setJourChoisi] = useState(null);
   const [detail, setDetail] = useState(null);
+  // V626 — sélection DIRECTE d'un créneau (sans écran de détail), seulement si `selectionDirecte`.
+  const [creneau, setCreneau] = useState(null);
   const boite = useRef(null);
   const positionY = useRef(0);
 
@@ -267,6 +273,14 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
     } else {
       setJourChoisi(null);
     }
+    // V626 : un jour à UN SEUL créneau se sélectionne seul ; plusieurs -> la personne choisit.
+    if (selectionDirecte && premiere) {
+      const memeJour = occurrences.filter((o) => cleJour(o.quand) === cleJour(premiere.quand));
+      setCreneau(memeJour.length === 1 ? memeJour[0] : null);
+    } else {
+      setCreneau(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, occurrences]);
 
   useEffect(() => {
@@ -334,7 +348,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0 }}>
-              {detail ? 'Détail de la session' : 'Sessions'}
+              {detail ? 'Détail de la session' : (titre || 'Sessions')}
             </h2>
             <button
               type="button"
@@ -353,6 +367,13 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
             </button>
           </div>
         </div>
+
+        {/* V626 : consigne du contexte (ex. « Choisis une date, puis un horaire. »). */}
+        {instruction && !detail ? (
+          <p data-testid="sessions-instruction" style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, margin: 0, padding: '10px 16px 0' }}>
+            {instruction}
+          </p>
+        ) : null}
 
         {/* Corps defilant */}
         <div className="sessions-scrollbar" style={{ overflowY: 'auto', padding: '14px 16px 20px', flex: 1 }}>
@@ -409,7 +430,13 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                       key={k}
                       type="button"
                       disabled={combien === 0}
-                      onClick={() => setJourChoisi(k)}
+                      onClick={() => {
+                        setJourChoisi(k);
+                        if (selectionDirecte) {
+                          const liste = parJour.get(k) || [];
+                          setCreneau(liste.length === 1 ? liste[0] : null);
+                        }
+                      }}
                       data-testid={combien > 0 ? `sessions-jour-${k}` : undefined}
                       aria-label={`${d.getDate()} ${MOIS[d.getMonth()]}${combien ? ` — ${combien} session${combien > 1 ? 's' : ''}` : ''}`}
                       style={{
@@ -442,6 +469,92 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                 })}
               </div>
 
+              {/* V626 — contexte d'une offre (essai gratuit) : consigne, créneaux sélectionnables,
+                  « Continuer ». Sans `selectionDirecte`, la liste d'origine (ci-dessous) est intacte. */}
+              {selectionDirecte ? (
+                <div data-testid="sessions-selection-directe">
+                  {duJour.length === 0 ? (
+                    <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
+                      Choisis un jour marqué d&rsquo;un point.
+                    </p>
+                  ) : (
+                    <>
+                      <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12.5, margin: '0 0 8px' }} data-testid="sessions-date-choisie">
+                        {(() => { const d = duJour[0].quand; return `${JOURS_LONGS[d.getDay()].charAt(0).toUpperCase()}${JOURS_LONGS[d.getDay()].slice(1)} ${d.getDate()} ${MOIS[d.getMonth()]}`; })()}
+                        {duJour.length > 1 ? ' — choisis un horaire' : ''}
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} role="radiogroup" aria-label="Horaires">
+                        {duJour.map((o, i) => {
+                          const actif = !!creneau && creneau.id === o.id && creneau.quand.getTime() === o.quand.getTime();
+                          return (
+                            <button
+                              key={`${o.id}-${o.quand.getTime()}`}
+                              type="button"
+                              role="radio"
+                              aria-checked={actif}
+                              onClick={() => setCreneau(o)}
+                              data-testid={`sessions-creneau-${i}`}
+                              className="card-gradient"
+                              style={{
+                                textAlign: 'left', borderRadius: 12, padding: '12px 14px', cursor: 'pointer', width: '100%',
+                                border: actif ? `2px solid ${ROSE}` : '1px solid rgba(255,255,255,0.1)',
+                                boxShadow: actif ? `0 0 0 3px rgba(${ROSE_RGB}, 0.18)` : 'none',
+                                display: 'flex', alignItems: 'center', gap: 12
+                              }}
+                            >
+                              <span aria-hidden="true" style={{
+                                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+                                border: `2px solid ${actif ? ROSE : 'rgba(255,255,255,0.35)'}`,
+                                background: actif ? ROSE : 'transparent', display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
+                              }}>
+                                {actif ? (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                ) : null}
+                              </span>
+                              <span style={{ flex: 1, minWidth: 0 }}>
+                                <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                                  <span style={{ color: ROSE, fontSize: 16, fontWeight: 800 }}>
+                                    {String(o.quand.getHours()).padStart(2, '0')}:{String(o.quand.getMinutes()).padStart(2, '0')}
+                                  </span>
+                                  {etiquetteCreneau ? (
+                                    <span data-testid={`sessions-creneau-etiquette-${i}`} style={{
+                                      fontSize: 11, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase',
+                                      color: ROSE, border: `1px solid rgba(${ROSE_RGB}, 0.45)`, borderRadius: 999, padding: '2px 8px'
+                                    }}>{etiquetteCreneau}</span>
+                                  ) : (
+                                    <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>{o.nom}</span>
+                                  )}
+                                </span>
+                                {o.lieu ? (
+                                  <span style={{ display: 'block', color: 'rgba(255,255,255,0.6)', fontSize: 12.5, marginTop: 3 }}>{o.lieu}</span>
+                                ) : null}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    disabled={!creneau}
+                    onClick={() => { const o = creneau; if (!o) return; fermer(); setTimeout(() => onReserve && onReserve(o), 60); }}
+                    className="btn-primary"
+                    data-testid="sessions-continuer"
+                    style={{
+                      width: '100%', marginTop: 14, padding: '13px 16px', borderRadius: 12, border: 'none',
+                      color: '#fff', fontSize: 15, fontWeight: 700, cursor: creneau ? 'pointer' : 'not-allowed',
+                      opacity: creneau ? 1 : 0.45
+                    }}
+                  >
+                    {libelleContinuer}
+                  </button>
+                  {noteAction ? (
+                    <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, textAlign: 'center', marginTop: 10 }}>{noteAction}</p>
+                  ) : null}
+                </div>
+              ) : (
+              <>
               {/* Sessions du jour choisi */}
               {duJour.length === 0 ? (
                 <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
@@ -483,6 +596,8 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                     </button>
                   ))}
                 </div>
+              )}
+              </>
               )}
             </>
           )}

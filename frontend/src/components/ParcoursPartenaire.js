@@ -22,7 +22,7 @@ import axios from 'axios';
 import SvgIcon from './SvgIcon';
 import SessionsModal, { normaliserAgenda } from './SessionsModal';
 import { LigneOffre, FicheOffre } from './OffresAimants';
-import { regrouperOffres } from '../utils/offresAimants';
+import { regrouperOffres, prixUnitaire } from '../utils/offresAimants';
 import useLargeurEcran from '../utils/useLargeurEcran';
 import { Etapes, ResumeSeance } from './parrainage/wizardCommun';
 import { verdictSeanceInvitation } from '../utils/invitationSeance';
@@ -98,6 +98,8 @@ export default function ParcoursPartenaire({ offre, offres, courses, analyserMed
   }, []);
 
   const seances = useMemo(() => seancesCompatibles(agenda, offre, courses), [agenda, offre, courses]);
+  // V626 : le prix vient de l'offre (jamais du nom du cours) ; 0 = essai gratuit.
+  const offreGratuite = !!offre && !(prixUnitaire(offre) > 0);
   const aucuneSeance = agenda !== null && seances.length === 0;
   const coursChoisi = seance ? (courses || []).find((c) => c && c.id === seance.course) : null;
   const resume = seance ? {
@@ -203,6 +205,16 @@ export default function ParcoursPartenaire({ offre, offres, courses, analyserMed
           onClose={() => setCalendrier(false)}
           occurrencesFournies={seances}
           libelleAction="Choisir cette séance"
+          // V626 — OFFRE GRATUITE (essai) : un titre qui dit ce qu'on réserve, « date puis horaire »,
+          // chaque créneau étiqueté « Essai gratuit » (jamais le nom commercial « Cours à l'unité »,
+          // qui laissait croire à un cours payant), sélection directe et « Continuer ma réservation ».
+          // Offre payante : rien de tout cela, le calendrier d'avant.
+          {...(offreGratuite ? {
+            titre: 'Réserve ton cours d’essai gratuit',
+            instruction: 'Choisis une date, puis un horaire.',
+            etiquetteCreneau: 'Essai gratuit',
+            selectionDirecte: true,
+          } : {})}
           noteAction="Rien n’est encore réservé : tu confirmeras ta place dans ton espace."
           onReserve={(occ) => {
             if (!occ || !occ.iso) return;

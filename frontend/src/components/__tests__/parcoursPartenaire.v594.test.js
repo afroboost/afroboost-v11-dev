@@ -80,8 +80,10 @@ test('étape 1 : Continuer bloqué tant qu’aucune séance n’est choisie ; le
   expect(document.querySelector('[data-testid="sessions-modal"]')).not.toBeNull();
   const jour = document.querySelector(`[data-testid="sessions-jour-${isoMinute(vendredi).slice(0, 10)}"]`);
   await act(async () => { jour.click(); });
-  await act(async () => { document.querySelector('[data-testid="sessions-occurrence-0"]').click(); });
-  await act(async () => { document.querySelector('[data-testid="sessions-reserver"]').click(); });
+  // V626 : offre d'essai gratuite -> créneau unique du jour sélectionné tout seul, puis
+  // « Continuer ma réservation » (plus d'écran de détail intermédiaire).
+  expect(document.querySelector('[data-testid="sessions-creneau-0"]').getAttribute('aria-checked')).toBe('true');
+  await act(async () => { document.querySelector('[data-testid="sessions-continuer"]').click(); });
   // SessionsModal se ferme puis transmet la séance 60 ms plus tard (comportement existant).
   await act(async () => { await new Promise((r) => setTimeout(r, 120)); });
   expect(onSeance).toHaveBeenCalledWith({ offre: 'o-essai', course: 'c1', occurrence: isoMinute(vendredi) });
