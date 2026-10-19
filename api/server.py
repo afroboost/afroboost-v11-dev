@@ -21143,12 +21143,13 @@ async def cancel_reservation_from_space(access_code: str, reservation_id: str, r
     if getattr(_v618c_suppr, "deleted_count", 1) == 0:
         # V618c : déjà annulée par une requête simultanée -> rien n'est re-crédité deux fois.
         raise HTTPException(status_code=404, detail="Réservation introuvable")
-    # V628 : une place d'événement annulée libère aussi sa réclamation.
-    try:
-        from api.routes.evenement_special import liberer_place as _v628_liberer
-        await _v628_liberer(db, reservation)
-    except Exception as _v628_err:  # noqa: BLE001 — la réservation est annulée ; `_deja` nettoie au besoin
-        logger.warning("[V628] réclamation de place non libérée (%s)", type(_v628_err).__name__)
+    # V628 : une place d'événement annulée libère aussi sa réclamation (réservation ordinaire : rien).
+    if reservation.get("evenement_place_cle"):
+        try:
+            from api.routes.evenement_special import liberer_place as _v628_liberer
+            await _v628_liberer(db, reservation)
+        except Exception as _v628_err:  # noqa: BLE001 — la réservation est annulée ; `_deja` nettoie au besoin
+            logger.warning("[V628] réclamation de place non libérée (%s)", type(_v628_err).__name__)
 
     # V610 : une place OFFERTE d'événement n'a débité aucune séance -> rien à rendre.
     # (La réclamation est libérée à la prochaine demande : `evenement_special._deja`.)
