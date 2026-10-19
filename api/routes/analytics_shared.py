@@ -696,21 +696,35 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
     """
     offres_par_id = offres_par_id or {}
     maintenant = maintenant or datetime.now()
-    ecartes = {"souscriptions_superseded": 0, "paiements_jumeaux": 0, "paiements_zero_sans_jumeau": 0,
-               "paiements_non_payes": 0}
+    ecartes = {"souscriptions_superseded": 0, "souscriptions_supprimees": 0, "droits_supprimes": 0,
+               "paiements_jumeaux": 0, "paiements_zero_sans_jumeau": 0, "paiements_non_payes": 0}
 
     fiches_par_code = {}
     for f in (fiches_codes or []):
         if isinstance(f, dict) and _texte(f.get("code")):
             fiches_par_code.setdefault(_texte(f.get("code")).upper(), []).append(f)
     subs_par_code = {}
+    codes_supprimes = set()
     for s in (subscriptions or []):
         if not isinstance(s, dict):
             continue
         if _texte(s.get("status")).lower() == "superseded":
             ecartes["souscriptions_superseded"] += 1
             continue
+        if _texte(s.get("status")).lower() == "deleted":
+            # STATS-1 : V618i — un abonnement supprimé est une PIERRE TOMBALE,
+            # gardée pour l'historique et exclue de tout le reste du site ; il
+            # n'est pas non plus un achat ici.
+            ecartes["souscriptions_supprimees"] += 1
+            codes_supprimes.add(_texte(s.get("code")).upper())
+            continue
         subs_par_code.setdefault(_texte(s.get("code")).upper(), []).append(s)
+    # Un code dont TOUS les abonnements sont supprimés ne renaît pas par sa
+    # seule fiche `discount_codes`.
+    for _c in codes_supprimes - set(subs_par_code):
+        if _c and _c in fiches_par_code:
+            fiches_par_code.pop(_c, None)
+            ecartes["droits_supprimes"] += 1
 
     paiements_par_session = {}
     pending = []

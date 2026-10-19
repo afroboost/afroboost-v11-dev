@@ -52,6 +52,22 @@ PARAMS = [
 ]
 
 
+# Le commit « fix: … (CHANGES coach numbers) » AJOUTE deux compteurs à
+# `achats.ecartes` (`souscriptions_supprimees`, `droits_supprimes`). Sur ce jeu
+# SANS piège ils valent 0 : on les vérifie puis on les retire avant de comparer
+# — tout le reste doit rester identique au commit de référence.
+CLES_AJOUTEES = ("souscriptions_supprimees", "droits_supprimes")
+
+
+def _sans_ajouts(r):
+    _e = ((r or {}).get("achats") or {}).get("ecartes")
+    if isinstance(_e, dict):
+        for k in CLES_AJOUTEES:
+            if k in _e:
+                verifier("compteur ajouté %s = 0 sur le jeu sans piège" % k, _e.pop(k) == 0)
+    return r
+
+
 def _appel(module, jwt, params, jeu=None):
     base = F.Base(jeu or F.jeu_de_base())
     F.installer_serveur(base, jwt)
@@ -70,6 +86,7 @@ if REF:
                 continue
             s_ref, r_ref, b_ref = _appel(REF["analytics_routes"], jwt, p)
             s_new, r_new, b_new = _appel(NOUVEAU, jwt, p)
+            r_new = _sans_ajouts(r_new)
             nom = "%s %s" % ("admin" if jwt == F.ADMIN else "coach", p)
             verifier("même statut — " + nom, s_ref == s_new == 200, (s_ref, s_new))
             verifier("même réponse JSON, valeur pour valeur — " + nom, r_ref == r_new,
