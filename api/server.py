@@ -581,7 +581,8 @@ async def v307_set_jwt_secret(request: Request):
     return {"status": "ok", "jwt_secret_set": jwt_secret_is_set(), "jwt_secret_len": len(secret), "source": "mongo"}
 
 @fastapi_app.get("/api/debug/network")
-async def debug_network():
+async def debug_network(request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : diagnostic interne, super-admin SIGNÉ
     """Debug endpoint to test raw TCP connectivity to MongoDB shards"""
     import socket
     import time
@@ -3505,7 +3506,8 @@ async def get_categories():
     ]
 
 @api_router.post("/categories")
-async def create_category(category: dict):
+async def create_category(category: dict, request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : route d'administration, super-admin SIGNÉ
     category["id"] = category.get("id") or str(uuid.uuid4())[:8]
     await db.categories.insert_one(category)
     return category
@@ -5094,7 +5096,8 @@ async def fix_publication_photos(request: Request):
 
 
 @api_router.post("/v290-fix-publication-photos")
-async def v290_fix_publication_photos():
+async def v290_fix_publication_photos(request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : migration, super-admin SIGNÉ
     """V290 : migration PUBLIQUE (one-shot) — remplit `author_photo` des
     publications existantes en cherchant la photo dans users, coach_profiles puis
     chat_participants.
@@ -5158,7 +5161,8 @@ async def v290_fix_publication_photos():
 
 
 @api_router.post("/v299-fix-legacy-profile-photos")
-async def v299_fix_legacy_profile_photos():
+async def v299_fix_legacy_profile_photos(request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : migration, super-admin SIGNÉ
     """V299 : migration PUBLIQUE (one-shot, idempotente) — remplace les photos de
     profil `data:image/...;base64,...` (vestiges lourds/périmés) par une photo
     Cloudinary trouvée pour le MÊME email (coach_profiles / users / chat_participants),
@@ -23208,7 +23212,8 @@ async def get_config():
     return config
 
 @api_router.put("/config")
-async def update_config(config_update: dict):
+async def update_config(config_update: dict, request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : route d'administration, super-admin SIGNÉ
     await db.config.update_one({"id": "app_config"}, {"$set": config_update}, upsert=True)
     return await db.config.find_one({"id": "app_config"}, {"_id": 0})
 
@@ -23415,7 +23420,8 @@ async def get_coach_subscription():
     return subscription
 
 @api_router.put("/coach-subscription")
-async def update_coach_subscription(update: CoachSubscriptionUpdate):
+async def update_coach_subscription(update: CoachSubscriptionUpdate, request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : route d'administration, super-admin SIGNÉ
     """
     Met à jour l'abonnement du coach
     TODO: Ajouter vérification Super Admin pour modifications sensibles
@@ -23523,7 +23529,8 @@ async def get_emailjs_config():
     return config
 
 @api_router.put("/emailjs-config")
-async def update_emailjs_config(config: EmailJSConfigUpdate):
+async def update_emailjs_config(config: EmailJSConfigUpdate, request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : route d'administration, super-admin SIGNÉ
     updates = {k: v for k, v in config.model_dump().items() if v is not None}
     updates["id"] = "emailjs_config"
     await db.emailjs_config.update_one({"id": "emailjs_config"}, {"$set": updates}, upsert=True)
@@ -26076,7 +26083,8 @@ async def create_whatsapp_template(data: dict, request: Request):
         return result
 
 @api_router.post("/ai-test")
-async def test_ai_response(data: dict):
+async def test_ai_response(data: dict, request: Request):
+    await _v309_require_coach_or_admin(request)  # P0-B : appel OpenAI payant, coach SIGNÉ
     """Test l'IA avec un message manuel"""
     import time
     start_time = time.time()
@@ -40389,7 +40397,8 @@ async def create_chat_session(session: ChatSessionCreate):
     return session_obj.model_dump()
 
 @api_router.put("/chat/sessions/{session_id}")
-async def update_chat_session(session_id: str, update: ChatSessionUpdate):
+async def update_chat_session(session_id: str, update: ChatSessionUpdate, request: Request):
+    await _p0b_session_du_coach(session_id, await _v309_require_coach_or_admin(request))  # P0-B
     """
     Met à jour une session de chat.
     Utilisé pour changer le mode (IA/Humain/Communautaire) ou supprimer logiquement.
@@ -40439,7 +40448,8 @@ async def add_participant_to_session(session_id: str, participant_id: str):
     return updated
 
 @api_router.post("/chat/sessions/{session_id}/toggle-ai")
-async def toggle_session_ai(session_id: str):
+async def toggle_session_ai(session_id: str, request: Request):
+    await _p0b_session_du_coach(session_id, await _v309_require_coach_or_admin(request))  # P0-B
     """
     Bascule l'état de l'IA pour une session.
     Si l'IA est active, elle devient inactive et inversement.
@@ -40970,7 +40980,8 @@ async def get_session_messages(session_id: str, request: Request,
 
 # V107.10: Restaurer les sessions supprimées par erreur lors de la fusion
 @api_router.post("/chat/sessions/restore-merged")
-async def restore_merged_sessions():
+async def restore_merged_sessions(request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : maintenance du chat, super-admin SIGNÉ
     """
     V107.10: Restaure toutes les sessions qui ont été merged par erreur
     (sessions de groupe, community, ou sessions avec group_id)
@@ -42187,45 +42198,65 @@ async def list_custom_emojis():
     return {"emojis": emojis, "count": len(emojis)}
 
 @api_router.post("/custom-emojis/upload")
-async def upload_custom_emoji(request: Request):
+async def upload_custom_emoji_fichier(request: Request):
     """
-    Upload un emoji personnalisé (pour le coach).
-    Accepte une image en base64 avec un nom.
+    Upload un emoji personnalisé (fichier image), réservé au super-admin.
+
+    P0-B (19/10/2026) — AVANT : aucune authentification, et le NOM et l'EXTENSION du
+    fichier venaient du corps (`name`, `extension`) → `../` permettait d'écrire où l'on
+    voulait dans le conteneur. APRÈS : super-admin signé ; le serveur choisit le nom
+    (UUID), le dossier (EMOJIS_DIR) et l'extension (déduite des OCTETS, jamais du client) ;
+    PNG/JPEG/WEBP/GIF seulement ; 512 Ko maximum ; tout nom/extension suspect = 400.
+    Aucun appelant dans le frontend (route conservée pour l'administration).
     """
     import base64
-    
-    body = await request.json()
-    name = body.get("name", "emoji")
-    image_data = body.get("image")  # base64 encoded
-    file_extension = body.get("extension", "png")
-    
-    if not image_data:
-        raise HTTPException(status_code=400, detail="Image data required")
-    
+    import binascii
+
+    await _p0b_exiger_super_admin(request)
     try:
-        # Décoder le base64
-        image_bytes = base64.b64decode(image_data.split(",")[-1] if "," in image_data else image_data)
-        
-        # Sauvegarder le fichier
-        filename = f"{name.replace(' ', '_').lower()}.{file_extension}"
-        filepath = EMOJIS_DIR / filename
-        
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    nom_brut = body.get("name", "emoji")
+    if not p0b_nom_sur(nom_brut):
+        raise HTTPException(status_code=400, detail="Nom invalide")
+    ext_demandee = str(body.get("extension") or "").strip().lower().lstrip(".")
+    if ext_demandee and ext_demandee not in P0B_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Type de fichier non autorisé")
+    image_data = body.get("image")
+    if not isinstance(image_data, str) or not image_data.strip():
+        raise HTTPException(status_code=400, detail="Image data required")
+    b64 = image_data.split(",", 1)[-1] if "," in image_data else image_data
+    if len(b64) > (P0B_EMOJI_MAX_OCTETS * 4) // 3 + 8:
+        raise HTTPException(status_code=413, detail="Image trop lourde (512 Ko maximum)")
+    try:
+        image_bytes = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Image illisible (base64 invalide)")
+    if len(image_bytes) > P0B_EMOJI_MAX_OCTETS:
+        raise HTTPException(status_code=413, detail="Image trop lourde (512 Ko maximum)")
+    ext = p0b_type_image(image_bytes)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Type de fichier non autorisé (PNG, JPEG, WEBP ou GIF)")
+    if ext_demandee and P0B_EXTENSIONS[ext_demandee] != ext:
+        raise HTTPException(status_code=400, detail="L'extension ne correspond pas au contenu")
+    filename = "%s.%s" % (uuid.uuid4().hex, ext)
+    dossier = EMOJIS_DIR.resolve()
+    filepath = (dossier / filename).resolve()
+    if filepath.parent != dossier:          # garde-fou (le nom est déjà généré par le serveur)
+        raise HTTPException(status_code=400, detail="Destination invalide")
+    try:
+        dossier.mkdir(parents=True, exist_ok=True)
         with open(filepath, "wb") as f:
             f.write(image_bytes)
-        
-        logger.info(f"[EMOJIS] Emoji uploadé: {filename}")
-        
-        return {
-            "success": True,
-            "emoji": {
-                "name": name,
-                "url": f"/api/emojis/{filename}",
-                "filename": filename
-            }
-        }
-    except Exception as e:
-        logger.error(f"[EMOJIS] Erreur upload: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except OSError as e:
+        logger.error("[EMOJIS] Erreur d'écriture : %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Enregistrement impossible")
+    logger.info("[EMOJIS] Emoji uploadé : %s", filename)
+    return {"success": True,
+            "emoji": {"name": p0b_nom_affichage(nom_brut), "url": f"/api/emojis/{filename}", "filename": filename}}
 
 @api_router.put("/notifications/mark-read")
 async def mark_notifications_read(request: Request):
@@ -44410,17 +44441,22 @@ async def upload_custom_emoji(request: Request):
         "category": "emotions"  # optionnel
     }
     """
+    _appelant = await _v309_require_coach_or_admin(request)  # P0-B : coach SIGNÉ
     body = await request.json()
-    name = body.get("name", "").strip()
-    image_data = body.get("image_data", "")
-    category = body.get("category", "custom")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    name = p0b_nom_affichage(body.get("name"))
+    image_data = body.get("image_data") if isinstance(body.get("image_data"), str) else ""
+    category = p0b_nom_affichage(body.get("category") or "custom") or "custom"
     
     if not name or not image_data:
         raise HTTPException(status_code=400, detail="name et image_data sont requis")
     
-    # Valider le format base64
-    if not image_data.startswith("data:image/"):
-        raise HTTPException(status_code=400, detail="Format d'image invalide. Utilisez base64 (data:image/...)")
+    # P0-B : seulement PNG / JPEG / WEBP / GIF en data-URL base64, taille bornée.
+    if not P0B_RE_DATA_URL.match(image_data[:64]):
+        raise HTTPException(status_code=400, detail="Format d'image invalide. Utilisez base64 (data:image/png|jpeg|webp|gif)")
+    if len(image_data) > P0B_EMOJI_DATAURL_MAX:
+        raise HTTPException(status_code=413, detail="Image trop lourde (500 Ko maximum)")
     
     emoji_obj = {
         "id": str(uuid.uuid4()),
@@ -44428,6 +44464,7 @@ async def upload_custom_emoji(request: Request):
         "image_data": image_data,
         "category": category,
         "active": True,
+        "coach_id": _appelant,   # P0-B : propriétaire (suppression réservée)
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
@@ -44438,9 +44475,12 @@ async def upload_custom_emoji(request: Request):
     return emoji_obj
 
 @api_router.delete("/chat/emojis/{emoji_id}")
-async def delete_custom_emoji(emoji_id: str):
+async def delete_custom_emoji(emoji_id: str, request: Request):
     """Supprime un emoji personnalisé"""
-    result = await db.custom_emojis.delete_one({"id": emoji_id})
+    # P0-B : coach SIGNÉ, et seulement SES emojis (le super-admin : tous). Sinon 404, sans oracle.
+    _appelant = await _v309_require_coach_or_admin(request)
+    _filtre = {"id": emoji_id} if is_super_admin(_appelant) else {"id": emoji_id, "coach_id": _appelant}
+    result = await db.custom_emojis.delete_one(_filtre)
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Emoji non trouvé")
     return {"success": True, "message": "Emoji supprimé"}
@@ -52536,8 +52576,9 @@ async def reservations_ended_for_review(request: Request):
 @api_router.post("/reviews/request")
 async def send_review_request(request: Request):
     """V88: Le coach envoie manuellement une demande d'avis aux participants d'un cours."""
+    # P0-B : le coach est celui du JWT SIGNÉ ; `coach_email` du corps n'est plus cru.
+    coach_email = await _v309_require_coach_or_admin(request)
     body = await request.json()
-    coach_email = (body.get("coach_email", "") or "").strip().lower()
     course_id = (body.get("course_id", "") or "").strip()
     course_name = (body.get("course_name", "") or "").strip()
 
@@ -54139,7 +54180,8 @@ async def v197b_get_quick_replies():
 
 
 @api_router.post("/v305-fix-quickreply-icons")
-async def v305_fix_quickreply_icons():
+async def v305_fix_quickreply_icons(request: Request):
+    await _p0b_exiger_super_admin(request)  # P0-B : migration, super-admin SIGNÉ
     """V305 : migration idempotente — écrit un champ `icon` (déduit de l'id/label) sur
     tous les documents bot_quick_replies qui n'en ont pas. Publique et sans entrée
     (enrichissement, aucune donnée supprimée)."""
@@ -56254,6 +56296,65 @@ async def _p0a_repli_autorise() -> bool:
         repli = False
     _p0a_cache.update(t=maintenant, repli=repli)
     return repli
+
+
+# ============================================================================
+# P0-B (19/10/2026) — ROUTES PUBLIQUES DANGEREUSES : AUTH SERVEUR + VALIDATION
+# ============================================================================
+P0B_EMOJI_MAX_OCTETS = 512 * 1024
+P0B_EMOJI_DATAURL_MAX = 700 * 1024          # data-URL base64 (≈ 512 Ko d'image)
+P0B_EXTENSIONS = {"png": "png", "jpg": "jpg", "jpeg": "jpg", "webp": "webp", "gif": "gif"}
+P0B_RE_DATA_URL = re.compile(r"^data:image/(png|jpeg|jpg|webp|gif);base64,")
+_P0B_RE_NOM = re.compile(r"^[\w\- .']{1,60}$", re.UNICODE)
+
+
+def p0b_type_image(octets: bytes) -> str:
+    """L'extension RÉELLE d'une image d'après ses premiers octets, ou ''. PURE."""
+    b = octets or b""
+    if b.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if b.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if b[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+
+def p0b_nom_sur(nom) -> bool:
+    """Un nom d'affichage sans chemin : pas de `/`, `\\`, `..`, ni chemin absolu. PURE."""
+    if not isinstance(nom, str):
+        return False
+    n = nom.strip()
+    if not n or ".." in n or "/" in n or "\\" in n or n.startswith("~") or ":" in n:
+        return False
+    return bool(_P0B_RE_NOM.match(n))
+
+
+def p0b_nom_affichage(nom) -> str:
+    """Nom affiché, nettoyé et borné (jamais un chemin). PURE."""
+    if not isinstance(nom, str):
+        return ""
+    n = re.sub(r"[\\/<>\x00-\x1f]", "", nom).replace("..", "").strip()
+    return n[:40]
+
+
+async def _p0b_exiger_super_admin(request: Request) -> str:
+    """Super-admin prouvé par JWT signé, sinon 403."""
+    from api.routes.shared import super_admin_signe as _p0b_sa
+    email = _p0b_sa(request)
+    if not email:
+        raise HTTPException(status_code=403, detail="Réservé au super-admin — reconnectez-vous")
+    return email
+
+
+async def _p0b_session_du_coach(session_id: str, email: str) -> dict:
+    """La session de chat appartient-elle à ce coach ? (super-admin : toutes). 404 sinon, sans oracle."""
+    session = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0, "id": 1, "coach_id": 1})
+    if not session or (not is_super_admin(email) and (session.get("coach_id") or "") != email):
+        raise HTTPException(status_code=404, detail="Session non trouvée")
+    return session
 
 
 @fastapi_app.middleware("http")
