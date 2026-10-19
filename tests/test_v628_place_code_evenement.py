@@ -348,11 +348,23 @@ async def principal():
             codes_429.append((await poster(cl, "INCONNU-%d" % _i, "brute@test.local", ip="10.7.7.7")).status_code)
         verifier("11 essais en rafale depuis une même connexion -> 429", 429 in codes_429, codes_429)
 
-        # 11b. Plafond GLOBAL d'échecs par événement : changer d'IP à chaque essai ne suffit plus
-        statuts = []
-        for _i in range(70):
-            statuts.append((await poster(cl, "ENUM-%d" % _i, "enum%d@test.local" % _i)).status_code)
-        verifier("11b 70 essais faux, une IP différente à chaque fois -> 429 global", 429 in statuts, statuts[-5:])
+        # 11b. Plafond GLOBAL d'échecs par événement : au-delà, les refus sont RALENTIS, jamais les codes valables
+        import time as _time
+        S._V628_ECHECS.clear()
+        S._V628_ECHECS[EVT] = [_time.monotonic()] * 60
+        _t0 = _time.monotonic()
+        r = await poster(cl, "ENUM-X", "enum@test.local")
+        verifier("11b au-delà du plafond, un code FAUX est ralenti (>= 2 s), même avec une IP neuve",
+                 r.status_code == 400 and _time.monotonic() - _t0 >= 1.9, (r.status_code, _time.monotonic() - _t0))
+        _t0 = _time.monotonic()
+        r = await poster(cl, CODES["OK3"], "pendant-attaque@test.local")
+        verifier("11c ... mais un code VALABLE passe tout de suite (aucun blocage des invitées)",
+                 r.status_code == 200 and _time.monotonic() - _t0 < 1.5, (r.status_code, _time.monotonic() - _t0))
+        avant = len(S._V628_ECHECS)
+        for _i in range(30):
+            await poster(cl, "X", "m%d@test.local" % _i, offre="offre-inventee-%d" % _i)
+        verifier("11d des identifiants d'offre inventés n'ajoutent rien en mémoire", len(S._V628_ECHECS) == avant,
+                 (avant, len(S._V628_ECHECS)))
         S._V628_ECHECS.clear()
 
         # 12. E-mails : confirmations parties vers le faux Resend uniquement
