@@ -2,17 +2,21 @@
 """STATS-1 — les PIÈGES DE CALCUL corrigés avant exposition au Cockpit.
 
   (a) prix plat sentinelle : une offre à TARIF PROGRESSIF porte `price: 0.0`
-      et se vend pourtant 10 à 25 CHF. `essai6_verdict` (preuve P3) la prenait
-      pour une gratuité, et le moteur chargeait les offres SANS
-      `progressive_pricing` : un billet payé devenait un « essai ».
+      et se vend pourtant 10 à 25 CHF. `essai6_verdict` (preuve P3) la prend
+      pour une gratuité. DÉCISION PROPRIÉTAIRE (19/10) : ce chantier NE
+      TOUCHE PAS la définition des essais (shared.py identique à origin/main),
+      qui pilote aussi relances, crédit rendu, présence et statut payant. Les
+      statistiques REFLÈTENT donc la définition en vigueur : le banc vérifie
+      qu'elles n'en inventent pas une autre (même verdict que la référence).
   (b) abonnements supprimés (`status: "deleted"`, V618i) : comptés comme des
       achats (CA, nouveaux abonnements).
   (c) fuseau : couvert par tests/test_stats_association.py §13.
 
-⚠️ CES CORRECTIONS CHANGENT DES CHIFFRES DE L'ÉCRAN COACH EXISTANT. Le banc le
-MONTRE : sur le même jeu piégé, la version de référence (8baf9b13, relue
-depuis git) et la version corrigée rendent des valeurs différentes, et la
-route machine rend les valeurs corrigées — identiques à l'écran coach corrigé.
+⚠️ LA CORRECTION (b) CHANGE DES CHIFFRES DE L'ÉCRAN COACH EXISTANT (CA,
+nouveaux abonnements) ; (a) n'en change aucun. Le banc le MONTRE : sur le même
+jeu piégé, la version de référence (8baf9b13, relue depuis git) et la version
+actuelle diffèrent sur (b) seulement, et la route machine rend les mêmes
+valeurs que l'écran coach.
 
 AUCUNE BASE RÉELLE, AUCUN RÉSEAU.
     python3 tests/test_stats_pieges.py
@@ -45,8 +49,8 @@ verifier("référence %s relue depuis git" % F.COMMIT_REFERENCE, REF is not None
 PROG = {"id": "o-prog", "name": "Afroboost Silent — billet", "price": 0.0, "progressive_pricing": True,
         "price_early_bird": 10, "price_standard": 15, "price_last_minute": 25,
         "countdown_date": "2026-09-26", "countdown_time": "18:30"}
-verifier("(a) offre progressive à prix plat 0 : PAS un essai (P3 ne prouve rien)",
-         not essai6_verdict(None, {"offer_id": "o-prog", "origine_paiement": "twint"}, PROG))
+verifier("(a) définition en vigueur : offre progressive à prix plat 0 = essai par P3 (limite connue, hors chantier)",
+         essai6_verdict(None, {"offer_id": "o-prog", "origine_paiement": "twint"}, PROG) is True)
 verifier("(a) offre NON progressive à 0 : reste un essai (P3 inchangée)",
          essai6_verdict(None, {"offer_id": "o-essai"}, {"price": 0}))
 verifier("(a) offre progressive mais forfait offert (P2) : reste un essai",
@@ -54,13 +58,14 @@ verifier("(a) offre progressive mais forfait offert (P2) : reste un essai",
 verifier("(a) offre progressive mais code gratuit (P1) : reste un essai",
          essai6_verdict({"payment_method": "free", "total_paid": 0}, {"offer_id": "o-prog"}, PROG))
 if REF:
-    verifier("(a) DISCRIMINANCE : la règle de référence classait ce billet payé comme essai",
-             REF["shared"].essai6_verdict(None, {"offer_id": "o-prog", "origine_paiement": "twint"}, PROG) is True)
+    verifier("(a) même verdict que la référence (définition des essais inchangée)",
+             REF["shared"].essai6_verdict(None, {"offer_id": "o-prog", "origine_paiement": "twint"}, PROG)
+             == essai6_verdict(None, {"offer_id": "o-prog", "origine_paiement": "twint"}, PROG))
 
 _b = F.Base({"subscriptions": [{"code": "AFR-PRG001", "offer_id": "o-prog", "origine_paiement": "twint"}],
              "discount_codes": [], "offers": [PROG]})
-verifier("(a) est_un_essai (avec base) lit progressive_pricing : billet payé -> pas un essai",
-         F.run(est_un_essai(_b, code="AFR-PRG001")) is False)
+verifier("(a) est_un_essai (avec base) : définition en vigueur inchangée (prix plat 0 -> essai)",
+         F.run(est_un_essai(_b, code="AFR-PRG001")) is True)
 _b2 = F.Base({"subscriptions": [{"code": "AFR-ESS009", "offer_id": "o-essai"}], "discount_codes": [],
               "offers": [{"id": "o-essai", "price": 0}]})
 verifier("(a) est_un_essai : la vraie offre d'essai à 0 reste un essai", F.run(est_un_essai(_b2, code="AFR-ESS009")) is True)
@@ -95,7 +100,7 @@ def cockpit(module, **params):
 
 P = dict(periode="mois", mois="2026-09", vue="association")
 NEW = cockpit(R, **P)
-verifier("(a) écran coach corrigé : 1 seul essai accordé (le vrai), pas 2", NEW["essais_funnel"]["accordes"] == 1,
+verifier("(a) écran coach : essais accordés selon la définition en vigueur (2)", NEW["essais_funnel"]["accordes"] == 2,
          NEW["essais_funnel"]["accordes"])
 verifier("(a) le billet progressif payé est un achat ordinaire de 15 CHF au CA",
          NEW["revenus"]["ca_encaisse"] == 295.0 + 15.0, NEW["revenus"]["ca_encaisse"])
@@ -107,15 +112,15 @@ verifier("(b) l'exclusion est COMPTÉE et visible (1 souscription supprimée, 1 
          NEW["achats"]["ecartes"])
 if REF:
     OLD = cockpit(REF["analytics_routes"], **P)
-    verifier("⚠️ CHANGEMENT écran coach — essais accordés : référence 2 -> corrigé 1",
-             OLD["essais_funnel"]["accordes"] == 2 and NEW["essais_funnel"]["accordes"] == 1,
+    verifier("AUCUN changement écran coach — essais accordés : référence 2 = actuel 2",
+             OLD["essais_funnel"]["accordes"] == 2 and NEW["essais_funnel"]["accordes"] == 2,
              (OLD["essais_funnel"]["accordes"], NEW["essais_funnel"]["accordes"]))
     verifier("⚠️ CHANGEMENT écran coach — CA prouvé : référence 410 (dont 100 d un abonnement supprimé) -> corrigé 310",
              OLD["revenus"]["ca_encaisse"] != NEW["revenus"]["ca_encaisse"], (OLD["revenus"]["ca_encaisse"], NEW["revenus"]["ca_encaisse"]))
     verifier("⚠️ CHANGEMENT écran coach — nouveaux abonnements : référence 4 -> corrigé 3",
              OLD["abonnements"]["nouveaux"]["total"] == 4 and NEW["abonnements"]["nouveaux"]["total"] == 3,
              (OLD["abonnements"]["nouveaux"]["total"], NEW["abonnements"]["nouveaux"]["total"]))
-    print("  [info] référence -> corrigé : essais %s -> %s ; CA %s -> %s ; nouveaux abonnements %s -> %s" % (
+    print("  [info] référence -> actuel : essais %s -> %s ; CA %s -> %s ; nouveaux abonnements %s -> %s" % (
         OLD["essais_funnel"]["accordes"], NEW["essais_funnel"]["accordes"], OLD["revenus"]["ca_encaisse"],
         NEW["revenus"]["ca_encaisse"], OLD["abonnements"]["nouveaux"]["total"], NEW["abonnements"]["nouveaux"]["total"]))
 
@@ -126,7 +131,7 @@ F.installer_serveur(F.Base(jeu_piege()), "")
 F.horloge_figee(R)
 _r = F.run(R.stats_association(F.Req({"Authorization": "Bearer cle-finances-de-test-9876543210-abcdef"}), mois="2026-09"))
 C = json.loads(_r.body)
-verifier("route machine : essais accordés = écran coach corrigé (1)", C["essais"]["accordes"] == NEW["essais_funnel"]["accordes"] == 1)
+verifier("route machine : essais accordés = écran coach (2)", C["essais"]["accordes"] == NEW["essais_funnel"]["accordes"] == 2)
 verifier("route machine : CA prouvé = écran coach corrigé (310)", C["revenus"]["ca_prouve"] == NEW["revenus"]["ca_encaisse"] == 310.0,
          C["revenus"].get("ca_prouve"))
 verifier("route machine : nouveaux abonnements = écran coach corrigé (3)", C["abonnements"]["nouveaux"] == 3)

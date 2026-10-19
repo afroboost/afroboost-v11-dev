@@ -2080,12 +2080,6 @@ def essai6_verdict(code_doc=None, forfait=None, offre=None) -> bool:
         return True
     if not isinstance(offre, dict):
         return False
-    # STATS-1 (piège du prix plat) : sur une offre à TARIF PROGRESSIF (V223),
-    # `price` vaut souvent 0.0 par convention — c'est une SENTINELLE, le vrai
-    # prix vit dans les paliers. Un billet payé de cette offre n'est pas un
-    # essai : le prix plat n'y prouve rien, seules P1 et P2 comptent.
-    if offre.get("progressive_pricing"):
-        return False
     try:
         return float(offre.get("price") or 0) == 0.0
     except (TypeError, ValueError):
@@ -2139,7 +2133,7 @@ async def est_un_essai(db, forfait=None, code: str = "") -> bool:
     if not _oid:
         return False
     try:
-        _o = await db["offers"].find_one({"id": _oid}, {"_id": 0, "price": 1, "progressive_pricing": 1})
+        _o = await db["offers"].find_one({"id": _oid}, {"_id": 0, "price": 1})
     except Exception as _err:  # noqa: BLE001
         logger.warning("[ESSAI-6] offre %s illisible: %s", _oid[:12], _err)
         return False

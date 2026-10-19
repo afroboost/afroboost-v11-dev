@@ -122,11 +122,7 @@ async def _lire_sources(db, perimetre: str) -> dict:
     fiches = await db.discount_codes.find(_q_codes, {"_id": 0}).to_list(20000)
     # Toutes les offres (catalogue court) : nom, prix, pack — la classification
     # « Pulse / abonnement / autre » en a besoin, pas seulement le prix.
-    # STATS-1 : `progressive_pricing` aussi — sans lui, `essai6_verdict` prend
-    # le prix plat 0.0 d'une offre à paliers pour une gratuité (billet payé
-    # compté comme essai).
-    offres = await db.offers.find({}, {"_id": 0, "id": 1, "name": 1, "price": 1, "pack_sessions": 1,
-                                       "progressive_pricing": 1}).to_list(1000)
+    offres = await db.offers.find({}, {"_id": 0, "id": 1, "name": 1, "price": 1, "pack_sessions": 1}).to_list(1000)
     _q_cartes = {"coach_id": perimetre} if perimetre else {}
     cartes = await db.memberships.find(_q_cartes, {"_id": 0, "email": 1, "date_debut": 1, "date_fin": 1,
                                                     "source": 1, "coach_id": 1, "subscription_id": 1}).to_list(20000)
