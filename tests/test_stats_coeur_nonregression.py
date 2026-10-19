@@ -79,6 +79,51 @@ def _appel(module, jwt, params, jeu=None):
         return e.status_code, None, base
 
 
+def jeu_dates_et_cloture():
+    """Le jeu de base + des DATES À NORMALISER (fuseau UTC, décalage explicite,
+    millisecondes, date seule refusée) + une CLÔTURE présente pour septembre."""
+    from api.routes.analytics_cloture import construire_snapshot
+    j = F.jeu_de_base()
+    j["reservations"] += [
+        F.resa("z1", "zoe@mail.invalid", "2026-09-23T16:30:00Z", "2026-09-20T08:00:00+00:00"),          # -> 18:30 Zurich
+        F.resa("z2", "zoe@mail.invalid", "2026-09-27T18:30:00+02:00", "2026-09-20T08:00:00Z", "c-dim", "Sunday"),
+        F.resa("z3", "yan@mail.invalid", "2026-09-30T16:30:00.000+00:00", "2026-09-29T08:00:00Z"),       # millisecondes
+        F.resa("z4", "yan@mail.invalid", "2026-09-30", "2026-09-29T08:00:00Z"),                          # date seule : écartée
+        F.resa("z5", "ugo@mail.invalid", "2026-10-25T00:30:00Z", "2026-10-20T08:00:00Z"),                # nuit du changement d'heure
+    ]
+    j["analytics_monthly_reports"] = [construire_snapshot(
+        {"periode": {"libelle": "Septembre 2026"}, "perimetre": {"libelle": "Ensemble"}, "activite": {"reservations": 99}},
+        datetime(2026, 9, 1), datetime(2026, 10, 1), "", F.ADMIN, datetime(2026, 10, 2, 9, 0))]
+    return j
+
+
+from datetime import datetime  # noqa: E402
+_J = jeu_dates_et_cloture()
+_occ = F.occurrence_iso
+verifier("normalisation réelle : « …16:30:00Z » -> 18:30 à Zurich", _occ("2026-09-23T16:30:00Z") == "2026-09-23T18:30:00")
+verifier("normalisation réelle : date seule refusée", _occ("2026-09-30") == "")
+
+if REF:
+    for p in [dict(periode="mois", mois="2026-09"), dict(periode="mois", mois="2026-09", vue="association"),
+              dict(periode="mois", mois="2026-10", vue="association"), dict(periode="annee", mois="2026-01", vue="association"),
+              dict(periode="perso", du="2026-09-20", au="2026-10-31", granularite="jour")]:
+        # LE MÊME jeu pour les deux (la clôture porte un identifiant aléatoire).
+        s_ref, r_ref, b_ref = _appel(REF["analytics_routes"], F.ADMIN, p, jeu=json.loads(json.dumps(_J)))
+        s_new, r_new, b_new = _appel(NOUVEAU, F.ADMIN, p, jeu=json.loads(json.dumps(_J)))
+        r_new = _sans_ajouts(r_new)
+        nom = "dates à normaliser + clôture présente %s" % p
+        verifier("même réponse JSON — " + nom, s_ref == s_new == 200 and r_ref == r_new,
+                 [k for k in (r_ref or {}) if (r_ref or {}).get(k) != (r_new or {}).get(k)][:5])
+        verifier("mêmes lectures — " + nom, b_ref.lectures == b_new.lectures)
+        if p.get("vue") == "association" and p.get("mois") == "2026-09":
+            verifier("la clôture présente est vue par les deux (existante, non clôturable)",
+                     (r_new["cloture"]["existante"] or {}).get("cle") == "2026-09:tous" and r_new["cloture"]["cloturable"] is False,
+                     r_new and r_new.get("cloture"))
+        if p.get("periode") == "perso":
+            verifier("les dates normalisées entrent bien dans le calcul (z1, z2, z3, z5 ; z4 écartée)",
+                     r_new["ecartees"]["sans_occurrence"] >= 1 and any(e["periode"] == "2026-09-23" for e in r_new["evolution"]),
+                     r_new and (r_new["ecartees"], [e["periode"] for e in r_new["evolution"]]))
+
 if REF:
     for p in PARAMS:
         for jwt in (F.ADMIN, F.COACH):

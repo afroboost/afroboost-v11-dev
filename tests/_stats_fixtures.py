@@ -192,10 +192,22 @@ class Base:
         return getattr(self, nom)
 
 
-def occurrence_iso(v):
-    from api.routes import analytics_shared as A
-    _d = A.parser_local(v)
-    return _d.strftime("%Y-%m-%dT%H:%M:%S") if _d else ""
+def _vrai_lot1_occurrence_iso():
+    """LA fonction du dépôt (`reservation_routes.lot1_occurrence_iso`), extraite
+    par AST sans importer le module (qui tire server.py) — pas une copie."""
+    import ast
+    import logging
+    from datetime import datetime as _dt_cls
+    _src = open(os.path.join(RACINE, "api", "routes", "reservation_routes.py"), encoding="utf-8").read()
+    for _n in ast.parse(_src).body:
+        if isinstance(_n, ast.FunctionDef) and _n.name == "lot1_occurrence_iso":
+            _ns = {"datetime": _dt_cls, "logger": logging.getLogger("lot1"), "LOT1_PREFIXE": "[LOT1]"}
+            exec(compile(ast.Module(body=[_n], type_ignores=[]), "<lot1_occurrence_iso>", "exec"), _ns)
+            return _ns["lot1_occurrence_iso"]
+    raise RuntimeError("lot1_occurrence_iso introuvable")
+
+
+occurrence_iso = _vrai_lot1_occurrence_iso()
 
 
 def installer_serveur(base, jwt_email=""):
