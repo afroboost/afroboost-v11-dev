@@ -106,13 +106,18 @@ async def principal():
              html.count('href="%s"' % cta.replace("&", "&amp;")) >= 2)
     verifier("le texte du bouton est inchangé", ">Réserver mon 1er cours gratuit</a>" in html)
 
-    print("\n2. VISITEURS NON PARTENAIRES : COMPORTEMENT ACTUEL")
+    # V622 (décision de Bassi, 19/10/2026) : les autres visiteurs ne passent plus
+    # par le chat. Ils vont au MÊME parcours (`parcours=essai`), même offre lue sur
+    # le lien d'essai ; leur origine suit à l'identique.
+    print("\n2. VISITEURS NON PARTENAIRES : LE MÊME PARCOURS, SANS DÉTOUR PAR LE CHAT (V622)")
     html, _ = await page({"utm_source": "instagram", "utm_medium": "social"})
     cta = cta_de(html)
-    verifier("Instagram -> tunnel actuel, UTM recopiés", cta.startswith("/?link=b83914b4-c5a&")
-             and "utm_source=instagram" in cta, cta)
+    verifier("Instagram -> parcours essai, UTM recopiés, jamais le mode partenaire",
+             cta.startswith("/?offre=o-essai&reserver=1&parcours=essai&")
+             and "utm_source=instagram" in cta and "utm_source=partenaire" not in cta and "link=" not in cta, cta)
     html, _ = await page({})
-    verifier("sans origine -> tunnel actuel, à l'identique", cta_de(html) == "/?link=b83914b4-c5a", cta_de(html))
+    verifier("sans origine -> parcours essai, sans aucune UTM inventée",
+             cta_de(html) == "/?offre=o-essai&reserver=1&parcours=essai", cta_de(html))
 
     print("\n3. REPLI SÛR : EN CAS DE DOUTE, LE TUNNEL")
     html, _ = await page(PARTENAIRE, LiensFactices(
@@ -124,9 +129,17 @@ async def principal():
     verifier("base muette -> tunnel, et la page s'affiche quand même",
              cta_de(html).startswith("/?link=b83914b4-c5a&") and "<html" in html.lower(), cta_de(html))
     verifier("la panne est journalisée", any("V594" in l for l in j.lignes), j.lignes[-3:])
+    # V622 : même repli pour les autres visiteurs — offre du lien payante ou absente -> le tunnel.
+    html, _ = await page({"utm_source": "instagram", "utm_medium": "social"}, LiensFactices(
+        {"end_actions": [{"type": "booking", "config": {"offer_id": "o-unite"}}]}))
+    verifier("V622 : non partenaire, offre du tunnel payante -> tunnel (jamais un achat)",
+             cta_de(html).startswith("/?link=b83914b4-c5a&"), cta_de(html))
+    html, _ = await page({}, LiensFactices(panne=True))
+    verifier("V622 : non partenaire, base muette -> tunnel, page affichée",
+             cta_de(html) == "/?link=b83914b4-c5a" and "<html" in html.lower(), cta_de(html))
     html, _ = await page({"utm_source": "partenaire\"><script>", "utm_content": "akoko"})
-    verifier("une source falsifiée n'ouvre pas le parcours (liste blanche M2-A)",
-             not cta_de(html).startswith("/?offre="), cta_de(html))
+    verifier("une source falsifiée n'ouvre pas le mode PARTENAIRE (liste blanche M2-A)",
+             "utm_source=partenaire" not in cta_de(html) and "parcours=essai" in cta_de(html), cta_de(html))
 
     print("\n4. PÉRIMÈTRE")
     fn = source_de("m1_page_essai_neuchatel")

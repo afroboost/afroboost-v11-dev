@@ -6336,7 +6336,8 @@ def lotb3s1_session_utilisable(session, charge, maintenant=None):
 M2A_SOURCES = ("google", "instagram", "tiktok", "youtube", "facebook",
                "whatsapp", "partenaire", "direct",
                "email", "newsletter", "sms", "qr", "flyer", "site",
-               "parrainage")  # V534 : Pass Duo (ami inscrit via une invitation)
+               "parrainage",  # V534 : Pass Duo (ami inscrit via une invitation)
+               "eventfrog")  # V622 : billetterie Eventfrog (liens d'événements vers la page d'essai)
 # `?ref=<slug>` = lien partenaire court, traduit dans le modèle M2-A.
 M2A_REF_SOURCE = "partenaire"
 M2A_REF_MEDIUM = "referral"

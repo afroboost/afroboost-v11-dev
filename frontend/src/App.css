@@ -1852,3 +1852,7 @@ body {
 @media (max-width: 480px) {
   .section-gradient.af-barre-haute-page { padding-top: max(2px, var(--af-bandeau, 0px)) !important; }
 }
+
+/* V622 — le bloc de présentation SEO, déplacé juste avant le pied de page : sa marge basse
+   (prévue quand il était le dernier élément) devient inutile. Le HTML serveur est inchangé. */
+#af-presentation-slot > #af-presentation { padding-bottom: 8px !important; }

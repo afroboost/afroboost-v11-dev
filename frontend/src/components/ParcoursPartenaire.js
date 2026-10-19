@@ -33,12 +33,14 @@ const API = `${process.env.REACT_APP_BACKEND_URL || ''}/api`;
 
 export const ETAPES_PARCOURS_PARTENAIRE = ['Séance', 'Coordonnées', 'Validation', 'Confirmation'];
 
-/** Le parcours ne s'ouvre que pour un lien d'essai venu d'un Partenaire. Pur. */
+/** Le parcours s'ouvre pour un lien d'essai venu d'un Partenaire (`utm_source=partenaire`)
+ *  ou, V622, depuis la page d'essai (`parcours=essai`) : MÊME parcours, mêmes écrans. Pur. */
 export function lireParcoursPartenaire(search) {
   let q;
   try { q = new URLSearchParams(search != null ? search : (window.location.search || '')); } catch (e) { return null; }
   const offre = String(q.get('offre') || '').trim();
-  if (!offre || q.get('reserver') !== '1' || q.get('utm_source') !== 'partenaire') return null;
+  const depuisPageEssai = q.get('parcours') === 'essai';
+  if (!offre || q.get('reserver') !== '1' || (q.get('utm_source') !== 'partenaire' && !depuisPageEssai)) return null;
   return { offre };
 }
 

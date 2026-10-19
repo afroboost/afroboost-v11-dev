@@ -57745,6 +57745,16 @@ async def m1_page_essai_neuchatel(request: Request):
             _v594_offre = await _v594_offre_du_tunnel_essai(_catalogue)
             if _v594_offre:
                 _lien = "/?offre=%s&amp;reserver=1&amp;%s" % (_m1_echapper(_v594_offre), _suffixe)
+        else:
+            # V622 — TOUT AUTRE VISITEUR VA AU MÊME PARCOURS, SANS DÉTOUR PAR LE CHAT.
+            # Même offre (celle du lien d'essai, lue par la même fonction), même
+            # composant (`ParcoursPartenaire`, ouvert par `parcours=essai`), même
+            # formulaire, même `/checkout/free`. L'origine éventuelle suit à
+            # l'identique. Offre introuvable ou payante -> le tunnel, comme avant.
+            _v622_offre = await _v594_offre_du_tunnel_essai(_catalogue)
+            if _v622_offre:
+                _lien = "/?offre=%s&amp;reserver=1&amp;parcours=essai%s" % (
+                    _m1_echapper(_v622_offre), ("&amp;" + _suffixe) if _suffixe else "")
     except Exception as _perr:  # noqa: BLE001 — en cas de doute : le tunnel, comme avant
         logger.warning("[V594] parcours Partenaire non résolu (%s)", type(_perr).__name__)
     _cta = ('<a class="cta" href="%s">Réserver mon 1er cours gratuit</a>' % _lien)
@@ -58001,23 +58011,9 @@ tu suis le rythme, tu transpires et tu avances à ton niveau.</p>
 %(cta)s
 </section>
 <section class="tarifs-s" id="tarifs">
-<h2>Les formules de la saison</h2>
+<h2>Les formules et les prix</h2>
 <p class="intro">Ton premier cours est offert. Ensuite, tu choisis la formule qui te ressemble.</p>
-%(tarifs)s
-<p class="note">%(note_tarifs)s</p>
-</section>
-%(comparaison_section)s
-<section>
-<h2>Pourquoi Afroboost, et pas une salle de fitness ?</h2>
-<p>Ce n’est pas la même chose. Une salle te donne des machines. Afroboost te donne <b>un coach, du cardio, de la danse afro, de la musique, un groupe et une communauté</b> — une heure vivante, guidée, où tu ne t’ennuies jamais. Ce n’est pas moins cher qu’un fitness : c’est différent.</p>
-</section>
-<section class="membre">
-<h2>Carte membre de l’association</h2>
-%(carte_membre)s
-</section>
-<section class="ete">
-<h2>Et l’été, Afroboost Silent</h2>
-%(ete)s
+<a class="cta cta-s" href="/?offres=toutes">Voir toutes les formules et les prix</a>
 </section>
 <section class="fin">
 <h2>Ton premier cours est offert</h2>

@@ -209,8 +209,9 @@ async def main():
     # Le casque n'a plus droit de cité QUE dans : le bloc Silent (été), la FAQ
     # « Et le casque audio ? » (qui dit justement « sans casque en salle »), et
     # le texte alternatif de la photo d'été (description, pas promesse).
-    _ete = page.split('<section class="ete">')[1].split("</section>")[0]
-    _sans_ete = page.replace(_ete, "")
+    # V622 : le bloc été (Silent) n'est plus sur cette page ; le casque ne peut
+    # donc plus apparaître que dans la FAQ « Et le casque audio ? » et l'alt photo.
+    _sans_ete = page
     _sans_ete = re.sub(r'alt="[^"]*"', "", _sans_ete)
     _sans_ete = re.sub(r'<script type="application/ld\+json">.*?</script>', "", _sans_ete, flags=re.S)
     _visible_faq = "Et le casque audio ?"
@@ -221,11 +222,10 @@ async def main():
                             "réservés aux séances d&#x27;été au bord du lac (Afroboost Silent) et aux événements spéciaux.", "")
     v("plus AUCUNE promesse de casque hors Silent / FAQ casque / alt photo",
       "casque" not in _reste.lower(), re.findall(r".{40}casque.{40}", _reste.lower())[:3])
-    v("bloc « Et l'été, Afroboost Silent » INTACT",
-      "<h2>Et l’été, Afroboost Silent</h2>" in page
-      and "les séances <b>Silent</b> au bord du lac, casque sur les oreilles" in page)
+    v("V622 : bloc « Et l'été, Afroboost Silent » retiré de CETTE page (décision de Bassi)",
+      "Et l’été, Afroboost Silent" not in page and 'class="ete"' not in page)
     v("phrases retirées : « Le casque est fourni »", "casque est fourni" not in page.lower())
-    v("« un casque, » retiré du comparatif", "de la musique, un groupe et une communauté" in page)
+    v("« un casque, » absent (la section comparative est retirée de la page en V622)", "un casque, un groupe" not in page)
     v("« avec la musique dans ton casque » retiré", "musique dans\nton casque" not in page and "dans ton casque" not in page)
     _faq = [b for b in (json.loads(x) for x in re.findall(r'application/ld\+json">(.*?)</script>', page, re.S))
             if isinstance(b, list)]

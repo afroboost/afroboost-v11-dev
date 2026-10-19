@@ -47,6 +47,7 @@ export const SOURCES = [
   'whatsapp', 'partenaire', 'direct',
   'email', 'newsletter', 'sms', 'qr', 'flyer', 'site',
   'parrainage', // V534 : Pass Duo (ami inscrit via une invitation)
+  'eventfrog', // V622 : billetterie Eventfrog (liens d'événements vers la page d'essai)
 ];
 
 /** `?ref=<slug>` = le lien partenaire court. Il est traduit, jamais stocké tel
@@ -101,6 +102,26 @@ export function attributionNormaliser(valeur) {
   return SOURCES.indexOf(jeton) === -1 ? '' : jeton;
 }
 
+/** V622 — LE VRAI CHEMIN D'ATTERRISSAGE. Les pages écrites par le serveur (la page d'essai,
+ *  « À propos ») recopient l'origine dans leur bouton, puis la vitrine l'enregistre sur « / ».
+ *  Le referrer, lui, dit d'où l'on vient : s'il est INTERNE et qu'il désigne l'une de ces
+ *  pages (liste fermée), c'est elle, l'atterrissage. Sinon : le chemin fourni, comme avant. */
+export const PAGES_ATTERRISSAGE = ['/cours-essai-gratuit-neuchatel', '/a-propos'];
+export function cheminAtterrissage(referrer, chemin) {
+  try {
+    const brut = (referrer === null || referrer === undefined ? '' : String(referrer)).trim();
+    if (!brut) return chemin;
+    const u = new URL(brut);
+    let hote = String(u.hostname || '').toLowerCase();
+    if (hote.indexOf('www.') === 0) hote = hote.slice(4);
+    const interne = HOTES_INTERNES.some((it) => hote === it || hote.slice(-(it.length + 1)) === '.' + it);
+    const page = String(u.pathname || '').replace(/\/+$/, '');
+    return interne && PAGES_ATTERRISSAGE.indexOf(page) !== -1 ? page : chemin;
+  } catch (e) {
+    return chemin;
+  }
+}
+
 /** (source, canal) deduits de l'HOTE du referrer — jamais de son URL. */
 export function attributionDuReferrer(referrer) {
   try {
@@ -148,6 +169,7 @@ function touche(source, medium, campaign, content, term, chemin) {
  */
 export function attributionDepuisUrl(recherche, referrer, chemin) {
   try {
+    chemin = cheminAtterrissage(referrer, chemin); // V622
     let params = { get: () => null };
     try {
       params = new URLSearchParams(recherche || '');

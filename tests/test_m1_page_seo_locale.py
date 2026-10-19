@@ -598,107 +598,46 @@ async def principal():
     verifier("79. `canonical` inchangee",
              '<link rel="canonical" href="%s%s"/>' % (URL, CHEMIN) in page)
 
-    # ═══ HIVER — la landing de conversion ═══
-    verifier("80. Les tarifs viennent de la base : Fondateurs 59, 8 mois 549, 2× 299, Mensuel 89, Flex 49, Étudiant 69, unité 30",
-             all(x in page for x in ("<h3>Fondateurs</h3>", "59 CHF<span> / mois</span>", "<h3>Saison hiver — 8 mois</h3>", "549 CHF<span> / saison</span>",
-                                     "<h3>Saison hiver — 2 paiements</h3>", "2 × 299 CHF<span></span>", "<h3>Mensuel Liberté</h3>", "89 CHF<span> / mois</span>",
-                                     "<h3>Flex 4</h3>", "49 CHF<span> / mois</span>", "<h3>Étudiant</h3>", "69 CHF<span> / mois</span>", "30 CHF<span></span>")), page.count("t-prix"))
-    verifier("81. Saison HIVER active : PULSE x10 (été) ABSENT des tarifs, mais nommé dans la section été",
-             '<h3>PULSE x10 cours</h3>' not in page and "PULSE x10 cours" in page.split('class="ete"')[-1])
-    verifier("82. Offre cachée, produit et événement : jamais dans les tarifs",
+    # ═══ V622 — PAGE D'ESSAI COURTE (décision de Bassi, 19/10/2026) ═══
+    # Les tarifs, le comparatif, la carte membre, « Pourquoi Afroboost » et le
+    # bloc été sont RETIRÉS DE CETTE PAGE seulement : ils vivent dans « Toutes
+    # les offres » (la fenêtre existante de la vitrine) et dans la base. La page
+    # n'affiche plus aucun prix : elle ne peut donc plus en afficher de faux.
+    _main = page.split("<main>")[1].split("</main>")[0]
+    verifier("V622-1. Tarifs, comparatif, carte membre, « Pourquoi » et été : retirés de CETTE page",
+             all(x not in page for x in ("<h3>Fondateurs</h3>", 'class="t-prix"', "Comparer les formules", "Pourquoi Afroboost, et pas",
+                                         "Carte membre de l’association", "l’été, Afroboost Silent", 'class="ete"', 'class="membre"')))
+    verifier("V622-2. Aucun prix recopié sur la page (les prix restent dans la fenêtre existante)",
+             "CHF" not in _main and "data-deadline=" not in page)
+    verifier("V622-3. « Voir toutes les formules et les prix » ouvre la fenêtre EXISTANTE (/?offres=toutes)",
+             '<a class="cta cta-s" href="/?offres=toutes">Voir toutes les formules et les prix</a>' in page)
+    verifier("82. Offre cachée, produit et événement : jamais sur la page",
              "Offre cachée" not in page and "<h3>T-shirt</h3>" not in page and "<h3>Silent Lakeside</h3>" not in page)
-    verifier("83. Équivalent par séance = estimation honnête depuis pack_sessions (59/8 -> 7.38, 49/4 -> 12.25, 549/64 -> 8.58, 598/64 -> 9.34)",
-             "dès env. 7.38 CHF/séance si tu viens 8 fois par mois" in page and "dès env. 12.25 CHF/séance" in page
-             and "env. 8.58 CHF/séance si tu viens 8 fois par mois sur la saison" in page and "dès env. 9.34 CHF/séance si tu viens 8 fois par mois" in page)
-    verifier("84. Rareté RÉELLE : 50 − 3 ventes (la superseded ne compte pas) = 47 places restantes sur 50",
-             "47 places restantes sur 50" in page)
-    verifier("85. Carte membre : À PART (100 CHF / an), option achetable, jamais un coût caché, avantages nommés",
-             "<h3>Carte membre association</h3>" in page and "100 CHF<span> / an</span>" in page
-             and "n’exigent aucune carte membre" in page and "avantages membres" in page
-             and 'href="/?offre=o-carte"' in page.split("t-membre")[-1].split("</article>")[0]
-             and "<h3>Carte membre association</h3>" not in page.split('class="tarifs"')[1].split("</div>")[0])
-    verifier("86. Mensuel = prélèvement automatique par carte, résiliable, accès jusqu'à la fin du mois payé ; plus de « sans prélèvement »",
-             "prélèvement automatique chaque mois par carte" in page and "fin du mois déjà payé" in page
-             and "sans prélèvement automatique" not in page)
-    verifier("87. Comparaison : une ligne par formule payante (7), 7 colonnes lues sur les documents",
-             page.count("<tr><th scope=\"row\">") == 7 and "<th>Paiement</th><th>Engagement</th><th>Séances</th><th>Économie</th><th>Pour qui</th>" in page)
-    # ═══ HIVER 2 — hiérarchie, badges, économie réelle, date limite ═══
-    _ordre = [page.find("<h3>%s</h3>" % n) for n in ("Fondateurs", "Saison hiver — 8 mois", "Saison hiver — 2 paiements", "Mensuel Liberté", "Flex 4", "Étudiant", "Cours à l&#x27;unité", "Cours d&#x27;essai gratuit")]
-    verifier("87b. Hiérarchie commerciale : Fondateurs > 8 mois > 2× > Mensuel > Flex 4 > Étudiant > unité > essai (malgré les positions)",
-             all(x >= 0 for x in _ordre) and _ordre == sorted(_ordre), str(_ordre))
-    # V528 : « Meilleur prix » n'est plus posé d'office sur la saison — V526 le CALCULE
-    # (coût/séance le plus bas parmi les offres affichées). Dans cette fixture Fondateurs
-    # (59/8 = 7.38) bat la saison (549/64 = 8.58) : la saison porte le texte factuel
-    # « Saison complète » et « Meilleur prix » n'apparaît nulle part.
-    verifier("87c. Badges : OFFRE LANCEMENT / SAISON COMPLÈTE (Fondateurs moins chère par séance → PAS « Meilleur prix ») / SAISON EN 2 FOIS / LE PLUS FLEXIBLE / ÉTUDIANT — un seul « plus flexible »",
-             'class="t-badge t-badge-lancement">Offre lancement<' in page and '>Meilleur prix<' not in page and '>Saison complète<' in page and '>Saison en 2 fois<' in page
-             and page.count(">Le plus flexible<") == 1 and page.split("<h3>Mensuel Liberté</h3>")[0].count(">Le plus flexible<") == 0
-             and page.count('t-badge-mensuel">Étudiant<') == 1 and page.split("<h3>Flex 4</h3>")[1].split("</article>")[0].count("t-badge") == 0)
+    # La logique tarifaire reste dans le code (calcul pur, inchangé) : on la garde sous banc.
     _ns87 = monter(db, j)
     _offres87 = [o for o in db.offers.docs if o.get("visible")]
     _saison_seule = [o for o in _offres87 if str(o.get("name", "")).startswith("Saison hiver — 8 mois")]
     verifier("87c2. `_m1_est_meilleur_prix` : la saison redevient « Meilleur prix » dès que Fondateurs n'est plus dans la liste (calcul, pas décor)",
              bool(_saison_seule) and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], [o for o in _offres87 if "Fondateurs" not in str(o.get("name", ""))]) is True
              and _ns87["_m1_est_meilleur_prix"](_saison_seule[0], _offres87) is False)
-    verifier("87d. Économie RÉELLE vs 8 × mensuel (712) : 8 mois 1× → 163 CHF ; 2× 299 → 114 CHF ; aucune sur les mensuels",
-             "Tu économises 163 CHF par rapport au mensuel" in page and "Tu économises 114 CHF par rapport au mensuel" in page
-             and page.count("Tu économises") == 2)
-    verifier("87e. Mode de paiement et engagement lus sur le document : 2× = deux paiements à 4 mois, 8 mois = 1 paiement, mensuel = prélèvement",
-             "2 paiements : à l’inscription, puis 4 mois plus tard" in page and "1 paiement (carte ou TWINT)" in page
-             and page.count("Prélèvement automatique chaque mois (carte)") >= 4 and "Saison de 8 mois" in page
-             and "Sans engagement — résiliable, accès jusqu’à la fin du mois payé" in page)
-    verifier("87f. Fondateurs : date limite RÉELLE servie (Zurich), identique pour tous, décompte inline qui la LIT (jamais un recalcul)",
-             'data-deadline="2099-09-30T23:59:00+02:00"' in page and "Jusqu’au 30 septembre 2099 à 23:59 (heure suisse)" in page
-             and page.count("data-deadline=") == 1 and "getAttribute('data-deadline')" in page and "Date.now()" in page
-             and "localStorage" not in page and "sessionStorage" not in page)
-    verifier("87g. Séances : mensuel « jusqu'à 8 / mois », 2× « 32 par échéance », 8 mois « 64 séances sur la saison », unité 1 séance",
-             "jusqu’à 8 séances / mois" in page and "(32 par échéance)" in page and "64 séances sur la saison (env. 8 / mois)" in page
-             and "jusqu’à 4 séances / mois" in page)
     verifier("88. Aucun horaire/jour/lieu en dur : les jours cités viennent du planning",
              "mercredi" not in page.lower().split("<main>")[0] and ("Les cours ont lieu le" in page))
     verifier("89. Barre CTA sticky mobile présente, masquée dès 641 px",
              '<div class="sticky">' in page and "@media(min-width:641px){.sticky{display:none}}" in page)
-    verifier("90. Sections dans l'ordre demandé", all(page.find(a) < page.find(b) for a, b in zip(
-        ("<h1>", "C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules de la saison", "Comparer les formules", "Pourquoi Afroboost", "Carte membre", "l’été, Afroboost Silent", 'class="fin"'),
-        ("C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules de la saison", "Comparer les formules", "Pourquoi Afroboost", "Carte membre", "l’été, Afroboost Silent", 'class="fin"', '<div class="sticky">'))))
+    verifier("90. Sections dans l'ordre (page courte V622)", all(0 <= page.find(a) < page.find(b) for a, b in zip(
+        ("<h1>", "C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules et les prix", 'class="fin"', "<h2>Contact</h2>"),
+        ("C’est quoi Afroboost", "Comment fonctionne", "Pour qui", "Tes questions", "Prochaines séances", "Les formules et les prix", 'class="fin"', "<h2>Contact</h2>", '<div class="sticky">'))))
     verifier("91. Aucun faux témoignage : section absente tant qu'aucun témoignage approuvé n'existe",
              'class="temoignages"' not in page)
     verifier("92. FAQ dans le HTML ET en JSON-LD FAQPage, un seul parcours",
              any(o.get("@type") == "FAQPage" for o in plats) and page.count('<details class="q">') == len(ns_faq))
-    verifier("93. Pas de faux compteur, pas de prix barré, pas de fausse urgence (le seul décompte lit une date réelle)",
-             "<s>" not in page and "<del>" not in page and "plus que" not in page.lower() and "dernières heures" not in page.lower()
-             and page.count("data-deadline=") == 1)
-    verifier("94. Lien de formule : ouvre l'offre sur la vitrine (?offre=<id>)", 'href="/?offre=o-fond"' in page)
+    verifier("93. Pas de faux compteur, pas de prix barré, pas de fausse urgence",
+             "<s>" not in page and "<del>" not in page and "plus que" not in page.lower() and "dernières heures" not in page.lower())
     # Témoignage RÉEL approuvé -> la section apparaît, prénom seul.
     db.comments.docs = [{"text": "J'ai adoré, je reviens !", "user_name": "Léa Dupont", "source": "participant_testimonial", "moderation_status": "approved", "consent_publication": True}]
     _, page_t = await rendre(db, j)
     verifier("95. Témoignage approuvé + consentement -> affiché, prénom seul (pas de nom de famille)",
              'class="temoignages"' in page_t and "— Léa</footer>" in page_t and "Dupont" not in page_t)
-    # Été actif : Pulse revient, les formules hiver disparaissent.
-    db.platform_settings.docs = [{"_id": "global", "saison_active": "ete"}]
-    _, page_e = await rendre(db, j)
-    verifier("96. Saison ÉTÉ : PULSE x10 dans les tarifs, Fondateurs/Mensuel/8 mois absents, permanentes présentes, aucune « économie »",
-             '<h3>PULSE x10 cours</h3>' in page_e and "<h3>Fondateurs</h3>" not in page_e and "<h3>Saison hiver — 8 mois</h3>" not in page_e
-             and "<h3>Mensuel Liberté</h3>" not in page_e and "<h3>Cours à l&#x27;unité</h3>" in page_e and "Tu économises" not in page_e
-             and "data-deadline=" not in page_e)
-    # Fondateurs épuisé -> disparaît de la page (rareté réelle).
-    db.platform_settings.docs = [{"_id": "global", "saison_active": "hiver"}]
-    db.subscriptions.docs = [{"offer_id": "o-fond", "status": "active"} for _ in range(50)]
-    _, page_f = await rendre(db, j)
-    verifier("97. 50 ventes réelles -> Fondateurs sort de la page, Mensuel reste, aucun décompte ne subsiste",
-             "<h3>Fondateurs</h3>" not in page_f and "<h3>Mensuel Liberté</h3>" in page_f and "data-deadline=" not in page_f)
-    # Date limite DÉPASSÉE (stock encore là) -> Fondateurs sort aussi : le premier des deux seuils atteint ferme l'offre.
-    db.subscriptions.docs = [{"offer_id": "o-fond", "status": "active"} for _ in range(3)]
-    db.offers.docs[1]["countdown_date"] = "2020-01-01"
-    _, page_d = await rendre(db, j)
-    verifier("97b. Date limite passée (47 places restantes) -> Fondateurs sort de la page, le reste de la hiérarchie tient",
-             "<h3>Fondateurs</h3>" not in page_d and "<h3>Saison hiver — 8 mois</h3>" in page_d and "data-deadline=" not in page_d)
-    db.offers.docs[1]["countdown_date"] = "2099-09-30"
-    # Sans mensuel de référence (été, ou catalogue sans mensuel) : aucune économie inventée.
-    db.offers.docs = [o for o in db.offers.docs if o.get("billing_mode") != "mensuel_auto"]
-    _, page_sm = await rendre(db, j)
-    verifier("97c. Sans mensuel de référence : la page n'invente aucune économie, les saisons restent",
-             "Tu économises" not in page_sm and "<h3>Saison hiver — 8 mois</h3>" in page_sm and "<h3>Saison hiver — 2 paiements</h3>" in page_sm)
 
     # --- pas de bourrage ---
     # Le bourrage se mesure sur le TEXTE VISIBLE, pas sur le document entier :

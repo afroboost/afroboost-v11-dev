@@ -5272,6 +5272,29 @@ function App() {
   // OFFRES AIMANTS : le bouton « Offres » de la barre ouvre le panneau « toutes
   // les offres » pour un visiteur ; ce compteur est le signal qu'il ecoute.
   const [signalToutesOffres, setSignalToutesOffres] = useState(0);
+  // V622 — `/?offres=toutes` (bouton « Voir toutes les formules et les prix » de la page
+  // d'essai) envoie CE MÊME signal, une fois, au montage : la fenêtre existante s'ouvre.
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('offres') === 'toutes') setSignalToutesOffres(n => n + 1);
+    } catch (e) { /* lien illisible : l'accueil s'affiche normalement */ }
+  }, []);
+  // V622 — LE PIED DE PAGE RESTE LE DERNIER BLOC. Le bloc de présentation SEO est écrit par
+  // le serveur APRÈS `#root` (HTML brut indexable, inchangé) : il s'affichait donc sous le
+  // pied de page. Cet emplacement vide, juste avant `<footer>`, l'accueille ; React n'y rend
+  // aucun enfant, il ne touche donc jamais au bloc. Au démontage, le bloc est rendu à sa
+  // place d'origine (après `#root`) pour ne jamais disparaître de la page.
+  const afPresentationSlot = useCallback((el) => {
+    const bloc = document.getElementById('af-presentation');
+    if (!el || !bloc) return undefined;
+    el.appendChild(bloc);
+    return () => {
+      const root = document.getElementById('root');
+      if (root && root.parentNode && bloc.parentNode !== root.parentNode) {
+        root.parentNode.insertBefore(bloc, root.nextSibling);
+      }
+    };
+  }, []);
   // « Sessions » ouvre une fenetre : la page de fond ne change pas d'un pixel.
   const [showSessionsModal, setShowSessionsModal] = useState(false);
 
@@ -10778,6 +10801,9 @@ function App() {
             )}
           </div>
         )}
+
+        {/* V622 : le bloc de présentation SEO (écrit par le serveur) vient se placer ici. */}
+        <div id="af-presentation-slot" ref={afPresentationSlot} />
 
         {/* V159: Footer — maquette utilisateur */}
         <footer style={{ marginTop: '60px', paddingBottom: '40px' }}>
