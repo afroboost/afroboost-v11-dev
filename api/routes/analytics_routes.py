@@ -547,6 +547,12 @@ def _stats_portee(request):
     _fin = _stats_cle_configuree(STATS_ENV_FINANCES)
     if not _freq and not _fin:
         return None, _stats_erreur(503, "stats_non_configurees", "Aucune clé de statistiques n'est posée sur ce serveur.")
+    if _freq and _fin and hmac.compare_digest(_freq.encode("utf-8"), _fin.encode("utf-8")):
+        # Deux clés IDENTIQUES : la clé « fréquentation » ouvrirait les finances.
+        # Configuration refusée, rien n'est servi tant qu'elle n'est pas corrigée.
+        logger.error("[STATS] %s et %s sont identiques : configuration refusée", STATS_ENV_FREQUENTATION, STATS_ENV_FINANCES)
+        return None, _stats_erreur(503, "configuration_invalide",
+                                   "Configuration invalide : les deux clés de statistiques doivent être différentes.")
     _auth = ((getattr(request, "headers", {}) or {}).get("Authorization")
              or (getattr(request, "headers", {}) or {}).get("authorization") or "").strip()
     _fournie = _auth.split(" ", 1)[1].strip() if _auth.lower().startswith("bearer ") else ""

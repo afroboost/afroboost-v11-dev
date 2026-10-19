@@ -90,6 +90,13 @@ r, c, _ = appel(None, entetes={"Authorization": "Basic " + CLE_FREQ}, mois="2026
 verifier("autre schéma que Bearer -> 401", r.status_code == 401, r.status_code)
 r, c, _ = appel(CLE_FREQ[:-1], mois="2026-09")
 verifier("clé tronquée -> 401", r.status_code == 401, r.status_code)
+_env(CLE_FIN, CLE_FIN)
+for _k in (CLE_FIN, CLE_FREQ, "n-importe-quoi"):
+    _reinit()
+    r, c, _ = appel(_k, mois="2026-09")
+    verifier("deux clés IDENTIQUES -> 503 configuration_invalide (avec %s)" % _k[:8],
+             r.status_code == 503 and c.get("error") == "configuration_invalide" and "revenus" not in c, (r.status_code, c))
+_reinit()
 _env(CLE_FREQ, None)
 r, c, _ = appel(CLE_FIN, mois="2026-09")
 verifier("clé finances alors que seule la fréquentation est posée -> 401", r.status_code == 401, r.status_code)
