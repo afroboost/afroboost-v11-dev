@@ -340,6 +340,22 @@ async def principal():
         verifier("10b5 aucune adresse e-mail dans le diagnostic", "titulaire@test.local" not in r.text)
         r = await cl.get("/api/evenements/%s/codes-diagnostic" % EVT)
         verifier("10b6 diagnostic sans jeton -> 403", r.status_code == 403, r.status_code)
+        # 10b7. Un coach partenaire propriétaire d'un événement ne voit QUE ses propres codes
+        await db.coaches.insert_one({"email": "partenaire@test.local", "name": "Partenaire test"})
+        await db.offers.update_one({"id": AUTRE_EVT}, {"$set": {"coach_id": "partenaire@test.local"}})
+        await db.discount_codes.insert_many([
+            _code("PART", [AUTRE_EVT, C_AUTRE], id="dc-part-a", code="PART-A-SIEN", coach_id="partenaire@test.local"),
+            _code("PART", [AUTRE_EVT, C_AUTRE], id="dc-part-b", code="ADMIN-SUR-SON-EVT", coach_id=COACH)])
+        from api.routes.auth_routes import generate_jwt_token as _gen
+        _jp = _gen("partenaire@test.local", "coach")
+        r = await cl.get("/api/evenements/%s/codes-diagnostic" % AUTRE_EVT, headers={"Authorization": "Bearer " + _jp})
+        _vus = [x["code"] for x in (r.json().get("codes") or [])] if r.status_code == 200 else []
+        verifier("10b7 coach partenaire : voit son code, JAMAIS celui d'un autre coach",
+                 r.status_code == 200 and "PART-A-SIEN" in _vus and "ADMIN-SUR-SON-EVT" not in _vus, (r.status_code, _vus))
+        r = await cl.get("/api/evenements/%s/codes-diagnostic" % EVT, headers={"Authorization": "Bearer " + _jp})
+        verifier("10b8 coach partenaire sur l'événement d'un autre -> 403", r.status_code == 403, r.status_code)
+        await db.discount_codes.delete_many({"id": {"$in": ["dc-part-a", "dc-part-b"]}})
+        await db.offers.update_one({"id": AUTRE_EVT}, {"$unset": {"coach_id": ""}})
 
         # 10c. Le code d'événement ne se « valide » pas ailleurs (connexion abonné, remise vitrine)
         r = await cl.post("/api/discount-codes/validate", json={"code": CODES["OK3"], "email": ""})

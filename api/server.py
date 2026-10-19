@@ -20991,7 +20991,10 @@ async def v628_codes_diagnostic(offer_id: str, request: Request):
     if not is_super_admin(_coach) and _coach != _proprio:
         raise HTTPException(status_code=403, detail="Accès réservé au coach de l'événement")
     _ids = list(_evt.ids_evenement(_offre))
-    _fiches = await db.discount_codes.find({"courses": {"$in": _ids}}, {"_id": 0}).sort("code", 1).to_list(200)
+    _q = {"courses": {"$in": _ids}}
+    if not is_super_admin(_coach):
+        _q["coach_id"] = _coach   # un coach ne voit que SES codes (jamais ceux d'un autre coach)
+    _fiches = await db.discount_codes.find(_q, {"_id": 0}).sort("code", 1).to_list(200)
     _par_code = {}
     for _f in _fiches:
         _par_code.setdefault(str(_f.get("code") or "").upper(), []).append(_f)
