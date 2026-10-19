@@ -120,11 +120,11 @@ if REF:
         NEW["revenus"]["ca_encaisse"], OLD["abonnements"]["nouveaux"]["total"], NEW["abonnements"]["nouveaux"]["total"]))
 
 # ═══ la route machine rend les chiffres corrigés, identiques à l'écran coach corrigé ═══
-os.environ[R.STATS_ENV_FINANCES] = "cle-finances-de-test-9876543210"
+os.environ[R.STATS_ENV_FINANCES] = "cle-finances-de-test-9876543210-abcdef"
 R._STATS_CACHE.clear(); R._STATS_DEBIT.clear()
 F.installer_serveur(F.Base(jeu_piege()), "")
 F.horloge_figee(R)
-_r = F.run(R.stats_association(F.Req({"Authorization": "Bearer cle-finances-de-test-9876543210"}), mois="2026-09"))
+_r = F.run(R.stats_association(F.Req({"Authorization": "Bearer cle-finances-de-test-9876543210-abcdef"}), mois="2026-09"))
 C = json.loads(_r.body)
 verifier("route machine : essais accordés = écran coach corrigé (1)", C["essais"]["accordes"] == NEW["essais_funnel"]["accordes"] == 1)
 verifier("route machine : CA prouvé = écran coach corrigé (310)", C["revenus"]["ca_prouve"] == NEW["revenus"]["ca_encaisse"] == 310.0,
