@@ -8081,6 +8081,10 @@ async def _v429_remise_serveur(code_promo: str, offer: dict, course_id: str, ema
     _cs = doc.get("courses") or []
     if course_id and _cs and course_id not in _cs:
         meta["quota_guard_result"] = "non_applicable"; return (None, 0.0), meta
+    # V628 : un code réservé à un événement ne donne aucune remise de paiement.
+    from api.routes.evenement_special import evenement_du_code as _v628_evt_code
+    if await _v628_evt_code(db, doc):
+        meta["quota_guard_result"] = "reserve_evenement"; return (None, 0.0), meta
     # V430 : le contrôle s'écrivait `if _ass and email and ...` — un e-mail ABSENT
     # désactivait donc la garde. Refus par défaut désormais. Sûr ici : les deux
     # appelants A2-1/A2-2 envoient toujours `customerEmail`, et `App.js:6237`
@@ -14687,9 +14691,14 @@ async def _bt_subscriber_credit(code: str):
         }
     dc = await db.discount_codes.find_one(
         {"code": code, "active": True},
-        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "expiresAt": 1}
+        {"_id": 0, "name": 1, "assignedEmail": 1, "maxUses": 1, "used": 1, "expiresAt": 1, "courses": 1}
     )
     if dc:
+        # V628 : un code réservé à un événement n'ouvre pas le Live.
+        from api.routes.evenement_special import evenement_du_code as _v628_evt_code
+        if await _v628_evt_code(db, dc):
+            logger.info(f"[V628] Acces live refuse pour {code} : code reserve a un evenement")
+            return None
         rem = int(dc.get("maxUses") or 0) - int(dc.get("used") or 0)
         # V402 : même règle sur le repli `discount_codes`. Sans elle, un code
         # expiré sans document `subscriptions` passerait encore par cette porte.
@@ -14724,6 +14733,9 @@ async def _bt_debit_subscriber(code: str):
     # SEANCES : le repli sur le code passe par la règle unique (fiche désignée,
     # plafond atomique). Aucune réservation ne porte ce mouvement : c'est le
     # seul débit SANS clé d'événement, et il est journalisé comme tel.
+    from api.routes.evenement_special import evenement_du_code_saisi as _v628_evt_saisi
+    if await _v628_evt_saisi(db, code):   # V628 : jamais un débit Live sur un code d'événement
+        return None
     from api.routes.shared import seances_consommer as _seances_consommer
     dc = await _seances_consommer(db, code, 1, reservation_id=None,
                                   source="boosttribe_access")
@@ -19268,6 +19280,10 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
     discount_for_mode = await db.discount_codes.find_one(
         {"code": {"$regex": f"^{re.escape(code_upper)}$", "$options": "i"}}, {"_id": 0}
     )
+    # V628 : un code réservé à un événement ne réserve aucun cours depuis l'espace.
+    from api.routes import evenement_special as _v628_evt
+    if discount_for_mode and await _v628_evt.evenement_du_code(db, discount_for_mode):
+        raise HTTPException(status_code=403, detail=_v628_evt.MSG_CODE_RESERVE_EVENEMENT)
     shared_mode = (discount_for_mode or {}).get("shared_sessions", True)
     # V610 : le jeton doit appartenir à un propriétaire connu de CE code (même règle que l'espace).
     if not _b3s13_tenant_accepte(_v610_charge, subscription, discount_for_mode):
@@ -20794,6 +20810,144 @@ async def v610_reserver_evenement_offert(access_code: str, offer_id: str, reques
             "reservation": {k: _resa.get(k) for k in ("id", "reservationCode", "courseId", "courseName", "datetime",
                                                       "offerId", "offerName", "price", "source")},
             "relais": _relais}
+
+
+# === V628 : PLACE D'ÉVÉNEMENT PAR CODE PROMO (invités, 0 CHF, sans Stripe) ===
+@api_router.post("/evenements/{offer_id}/place-code")
+async def v628_place_evenement_par_code(offer_id: str, request: Request):
+    """V628 — un code promo EXISTANT, réglé pour CET événement seul (100 %, quota, expiration),
+    donne une place à 0 CHF. Aucun Stripe, aucun TWINT, aucun code AFR-.
+
+    ROUTE PUBLIQUE (l'invité n'a pas de compte) : le code est le titre d'accès. Défenses :
+    débit par IP (429), aucune regex construite sur la saisie, code `assignedEmail` respecté.
+
+    ORDRE, POUR QU'AUCUN CLIC SIMULTANÉ NE PASSE DEUX FOIS :
+      1. lectures et refus (rien n'est écrit) ;
+      2. débit ATOMIQUE du code (`seances_consommer` : `used + 1 <= maxUses`, clé =
+         l'id de la réservation à venir) — deux clics, une seule unité ;
+      3. réservation par la réclamation unique `code:<offre>:<e-mail>` — une personne,
+         une place ; si elle existait déjà (ou en cas d'échec), le débit est RENDU."""
+    from api.routes import evenement_special as _evt
+    from api.routes.checkout_routes import _essai7_debit_ok as _v628_debit_ok
+    try:
+        _ip = (request.headers.get("CF-Connecting-IP")
+               or (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+               or (request.client.host if request.client else "")).strip()
+    except Exception:  # noqa: BLE001
+        _ip = ""
+    if _ip and not _v628_debit_ok("evtcode:" + _ip):
+        raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie dans un moment.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    _email = str(body.get("email") or "").strip().lower()[:254]
+    _prenom = str(body.get("prenom") or "").strip()[:40]
+    _nom_famille = str(body.get("nom") or "").strip()[:40]
+    _nom = (" ".join(x for x in (_prenom, _nom_famille) if x))[:80]
+    _whatsapp = re.sub(r"[^0-9+ ]", "", str(body.get("whatsapp") or ""))[:30].strip()
+    _saisie = str(body.get("code") or "").strip()[:64]
+    if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$", _email):
+        raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+    if not _prenom or not _nom_famille:
+        raise HTTPException(status_code=400, detail="Prénom et nom requis.")
+    if not _saisie:
+        raise HTTPException(status_code=400, detail="Code promo requis.")
+
+    _offre = await db.offers.find_one({"id": str(offer_id or "")[:64]}, {"_id": 0})
+    if not _offre or _offre.get("archived") is True or _offre.get("visible") is False \
+            or not _evt.reservation_auto(_offre):
+        raise HTTPException(status_code=404, detail="Événement introuvable")
+    _cours = await _evt.cours_de_l_evenement(db, _offre)
+    _occ = _evt.occurrence(_cours)
+    if not _occ:
+        raise HTTPException(status_code=404, detail="Événement introuvable")
+    if _evt.evenement_commence(_occ):
+        raise HTTPException(status_code=409, detail="L'événement a déjà commencé.")
+
+    # Conditions : même preuve que toute réservation (refus 409 si non acceptées).
+    _t1 = await t1_preuve(body.get("terms_accepted") is True, (_cours or {}).get("id") or "",
+                          (_cours or {}).get("coach_id") or _offre.get("coach_id") or "")
+
+    _fiche, _motif = await _evt.fiche_code_evenement(db, _saisie, _offre)
+    if not _fiche:
+        logger.info("[V628] code refusé (%s) — offre %s", _motif, str(_offre.get("id"))[:8])
+        raise HTTPException(status_code=400, detail=_evt.MSG_CODE_INVALIDE)
+    _cle = "code:%s:%s" % (_offre.get("id"), _email)
+
+    def _dto(_r, _deja=False):
+        # « Déjà inscrit » : RIEN de la réservation existante (ni billet, ni montant payé) —
+        # l'adresse saisie n'est pas prouvée. Seule la date publique de l'événement est redite.
+        if _deja:
+            return {"datetime": _occ}
+        return {k: (_r or {}).get(k) for k in ("id", "reservationCode", "courseId", "courseName", "datetime",
+                                                "offerId", "offerName", "price", "source")}
+
+    _refus = _evt.verifier_code_evenement(_fiche, _offre)
+    if _refus == _evt.MSG_CODE_UTILISE:
+        # La personne dont CE code a déjà donné la place le retape : on lui redit qu'elle est inscrite.
+        _deja_c, _ = await _evt._deja(db, _cle)
+        if _deja_c and str(_deja_c.get("promoCode") or "").upper() == str(_fiche.get("code") or "").upper():
+            return {"success": True, "deja_reserve": True, "prix": 0, "reservation": _dto(_deja_c, True)}
+    if _refus:
+        logger.info("[V628] code %s refusé : %s", str(_fiche.get("code"))[:24], _refus)
+        raise HTTPException(status_code=400 if _refus != _evt.MSG_CODE_UTILISE else 409, detail=_refus)
+    from api.routes.shared import email_autorise_pour_code as _v628_autorise
+    _ok, _pourquoi = await _v628_autorise(db, _fiche, _email)
+    if not _ok:
+        logger.info("[V628] code %s : adresse refusée (%s)", str(_fiche.get("code"))[:24], _pourquoi)
+        raise HTTPException(status_code=400, detail=_evt.MSG_CODE_INVALIDE)   # même refus qu'un code inconnu
+    _code = str(_fiche.get("code") or "").strip().upper()
+
+    # DÉJÀ INSCRIT (billet payé, place membre ou place par code) : on rend la place, sans débit.
+    _deja, _ = await _evt._deja(db, _cle)
+    if not _deja:
+        _deja = await db.reservations.find_one(
+            {"offerId": _offre.get("id"), "userEmail": _email, "status": {"$ne": "cancelled"}}, {"_id": 0})
+    if _deja:
+        return {"success": True, "deja_reserve": True, "prix": 0, "reservation": _dto(_deja, True)}
+    if await _evt.complet(db, _offre):
+        raise HTTPException(status_code=409, detail=_evt.MSG_COMPLET)
+
+    from api.routes.shared import seances_consommer as _v628_consommer, seances_restituer as _v628_rendre
+    _rid = str(uuid.uuid4())
+    _debit = await _v628_consommer(db, _code, 1, reservation_id=_rid, source="evenement_code")
+    if not _debit.get("debite"):
+        logger.info("[V628] code %s : débit refusé (%s)", _code[:24], _debit.get("motif"))
+        raise HTTPException(status_code=409, detail=_evt.MSG_CODE_UTILISE)
+    try:
+        _resa, _creee = await _evt.reserver(
+            db, cle=_cle, offre=_offre, cours=_cours, occ=_occ, email=_email, nom=_nom, prix=0,
+            source=_evt.SOURCE_CODE, code=_code, whatsapp=_whatsapp, reservation_id=_rid,
+            extra=dict(_t1, paiement="code_promo", code_fiche_id=_fiche.get("id"), userFirstName=_prenom,
+                       userLastName=_nom_famille))
+    except Exception:
+        # Ne rendre le code QUE si la réservation n'a pas été écrite (sinon 2e place possible).
+        if not await db.reservations.find_one({"id": _rid}, {"_id": 1}):
+            await _v628_rendre(db, _code, 1, reservation_id=_rid, source="evenement_code_echec")
+        raise
+    if not _creee:
+        # La réclamation existait (double clic de la MÊME personne) : son débit est rendu.
+        await _v628_rendre(db, _code, 1, reservation_id=_rid, source="evenement_code_doublon")
+        if not _resa:
+            raise HTTPException(status_code=409, detail="Ta réservation est en cours. Réessaie dans un instant.")
+        return {"success": True, "deja_reserve": True, "prix": 0, "reservation": _dto(_resa, True)}
+    try:
+        from api.routes.shared import notifier_reservation_creee as _rc_notifier
+        from api.routes.reservation_routes import _send_reservation_email as _v628_mail_cl
+        from api.routes.reservation_routes import _send_coach_reservation_email as _v628_mail_co
+        async def _v628_mail_client(_r):   # aucun forfait : pas de « séances restantes » dans l'e-mail
+            return bool(await _v628_mail_cl(_email, _nom, _r, None, user_lang=None,
+                                            user_whatsapp=_whatsapp))
+
+        asyncio.create_task(_rc_notifier(db, _resa, envoyer_email_client=_v628_mail_client,
+                                         envoyer_push_coach=send_push_by_email,
+                                         envoyer_email_coach=_v628_mail_co))
+    except Exception as _n_err:  # noqa: BLE001 — la place est prise, la notification suit ou non
+        logger.warning("[V628] notification non partie (%s)", type(_n_err).__name__)
+    logger.info("[V628] place par code %s -> réservation %s", _code[:24], _resa.get("reservationCode"))
+    return {"success": True, "deja_reserve": False, "prix": 0, "reservation": _dto(_resa)}
 
 
 @api_router.delete("/subscriber/space/{access_code}/cancel/{reservation_id}")

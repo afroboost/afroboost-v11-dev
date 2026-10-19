@@ -276,6 +276,7 @@ const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne
 const InvitationPublique = lazy(() => import("./components/InvitationPublique")); // V607 : /i/<jeton> (lien court)
 const InviterMesAmis = lazy(() => import("./components/InviterMesAmis")); // V607 : lien perso après un événement
 const AccesMembreEvenement = lazy(() => import("./components/AccesMembreEvenement")); // V610b : gratuité = espace membre
+const CodePromoEvenement = lazy(() => import("./components/CodePromoEvenement")); // V628 : place d'événement par code promo
 const RendezVousPublic = lazy(() => import("./components/RendezVousPublic")); // V605 : /rdv/<token>
 // Calendrier des sessions, en fenetre par-dessus la vitrine (jamais une page)
 import SessionsModal from "./components/SessionsModal";
@@ -3103,6 +3104,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 priceChf={v223UnitPrice(offer) * (v225IsDirectCheckout(offer) ? v225Qty : 1)}
                 disabled={checkoutBusy || v226BlockedByVariant}
               />
+              {/* V628 : invité avec un code promo -> place à 0 CHF (le billet public ne change pas). */}
+              {offer.evenement_reservation_auto ? (
+                <div onClick={(e) => e.stopPropagation()} style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end' }}
+                     data-testid={`offer-code-promo-${offer.id}`}>
+                  <Suspense fallback={null}><CodePromoEvenement offreId={offer.id} titre={offer.name} compact /></Suspense>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -10640,6 +10648,12 @@ function App() {
               {/* V610b : AVANT le paiement, pour TOUS (aucune déduction depuis l'e-mail saisi). */}
               {v528EtapeEmail.offer && v528EtapeEmail.offer.gratuit_membres && (
                 <div className="mb-4"><Suspense fallback={null}><AccesMembreEvenement libelle="Je suis membre" compact /></Suspense></div>
+              )}
+              {/* V628 : un invité avec un code promo ne paie pas — sa place se confirme ici. */}
+              {v528EtapeEmail.offer && v528EtapeEmail.offer.evenement_reservation_auto && (
+                <div className="mb-4" style={{ marginTop: -8 }}><Suspense fallback={null}>
+                  <CodePromoEvenement offreId={v528EtapeEmail.offer.id} titre={v528EtapeEmail.offer.name} compact />
+                </Suspense></div>
               )}
               <form noValidate onSubmit={(e) => {
                 e.preventDefault();

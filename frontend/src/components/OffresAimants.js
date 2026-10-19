@@ -30,6 +30,7 @@ import { stylesLecteur, normaliserRatio, ratioDepuisDimensions } from '../utils/
 import { mediaPrincipal } from '../utils/mediaOffre';
 import { trimDeLOffre, useTrimVideo } from '../utils/videoTrim';
 import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
+import CodePromoEvenement from './CodePromoEvenement'; // V628
 
 // V610 : « mercredi 28 octobre · 18h45 » — la date de l'événement (compte à rebours de l'offre).
 function v610QuandOffre(o) {
@@ -474,6 +475,10 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
         {offre && offre.gratuit_membres ? (
           /* V610b : même bloc pour tous, AVANT le bouton de paiement ; « Je suis membre » -> espace. */
           <div data-testid="fiche-gratuit-membres"><AccesMembreEvenement libelle="Je suis membre" compact /></div>
+        ) : null}
+        {offre && offre.evenement_reservation_auto ? (
+          /* V628 : invité avec un code promo -> place à 0 CHF ; le bouton de paiement reste le même. */
+          <div data-testid="fiche-code-promo"><CodePromoEvenement offreId={offre.id} titre={offre.name} compact /></div>
         ) : null}
         {!groupeSaison && fiche.economie ? <p style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: 'var(--eco-color, #8ef0b0)' }} data-testid="fiche-economie">{fiche.economie}</p> : null}
 

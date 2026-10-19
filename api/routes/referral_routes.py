@@ -643,6 +643,10 @@ async def _reserver_seance_duo(code, email, name, whatsapp, course, occurrence,
     _occ = _l1["datetime"]
     _t1 = await t1_preuve(accepte, _cid, "")
 
+    # V628 : un code réservé à un événement ne réserve aucune séance de Pass Duo.
+    from api.routes import evenement_special as _v628_evt
+    if await _v628_evt.evenement_du_code_saisi(db, code):
+        raise HTTPException(status_code=403, detail=_v628_evt.MSG_CODE_RESERVE_EVENEMENT)
     _sub = await lire_abonnement_par_code(db, code, _email or None)
     if not _sub:
         raise HTTPException(status_code=404, detail="Abonnement introuvable")
