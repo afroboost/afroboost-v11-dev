@@ -57,8 +57,11 @@ describe('carte d’offre du tableau de bord', () => {
   test('essai gratuit, offre payante, abonnement : les deux boutons', () => {
     for (const o of [base, { ...base, id: 'o-unite', name: 'Cours à l’unité', price: 30 }, { ...base, id: 'o-abo', name: 'Mensuel', price: 89, offer_type: 'subscription' }]) {
       const h = monter(o);
-      expect(h.querySelector(`[data-testid="offer-copy-link-${o.id}"]`).textContent).toContain('Copier le lien');
-      expect(h.querySelector(`[data-testid="offer-share-${o.id}"]`).textContent).toContain('Partager');
+      // V630 : icônes seules — le libellé est porté par aria-label + infobulle.
+      expect(h.querySelector(`[data-testid="offer-copy-link-${o.id}"]`).getAttribute('aria-label')).toBe('Copier le lien');
+      expect(h.querySelector(`[data-testid="offer-share-${o.id}"]`).getAttribute('aria-label')).toBe('Partager');
+      expect(h.querySelector(`[data-testid="offer-share-${o.id}"]`).getAttribute('data-infobulle')).toBe('Partager');
+      expect(h.querySelector(`[data-testid="offer-copy-link-${o.id}"] svg`)).not.toBeNull();
       act(() => root.unmount()); host.remove(); root = null; host = null;
     }
   });
@@ -84,7 +87,7 @@ describe('carte d’offre du tableau de bord', () => {
     expect(h.querySelector('[title="Dupliquer"]')).not.toBeNull();
     expect(h.querySelector('[title="Supprimer"]')).not.toBeNull();
   });
-  test('« Copier le lien » copie l’URL exacte et affiche « Lien copié ! »', async () => {
+  test('« Copier le lien » copie l’URL exacte et affiche « Lien copié »', async () => {
     const ecrire = jest.fn(() => Promise.resolve());
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: ecrire }, configurable: true });
     Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
@@ -92,6 +95,6 @@ describe('carte d’offre du tableau de bord', () => {
     const btn = h.querySelector('[data-testid="offer-copy-link-o-unite"]');
     await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 0)); });
     expect(ecrire).toHaveBeenCalledWith(`${window.location.origin}/?offre=o-unite`);
-    expect(btn.textContent).toContain('Lien copié !');
+    expect(h.querySelector('[data-testid="offer-partage-retour-o-unite"]').textContent).toBe('Lien copié'); // V630
   });
 });

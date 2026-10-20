@@ -31,7 +31,8 @@ import { mediaPrincipal } from '../utils/mediaOffre';
 import { trimDeLOffre, useTrimVideo } from '../utils/videoTrim';
 import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
 import CodePromoEvenement from './CodePromoEvenement'; // V628
-import { offrePartageable, copierLienOffre, partagerOffre } from '../utils/partageOffre'; // V629 : partage V626, côté vitrine
+import { offrePartageable } from '../utils/partageOffre'; // V629 : partage V626, côté vitrine
+import IconesPartageOffre from './IconesPartageOffre'; // V630 : deux petites icônes
 
 // V610 : « mercredi 28 octobre · 18h45 » — la date de l'événement (compte à rebours de l'offre).
 function v610QuandOffre(o) {
@@ -46,39 +47,6 @@ function v610QuandOffre(o) {
 
 const COULEUR = 'var(--primary-color, #D91CD2)';
 
-// V629 — « Partager » + « Copier le lien » sur la fiche PUBLIQUE d'une offre (V626 ne les avait
-// posés que dans le tableau de bord du coach). Mêmes fonctions (utils/partageOffre.js), même lien
-// stable `/?offre=<id>` ; aucun nouveau système. Retour visible 2 s, puis le libellé revient.
-function PartageFiche({ offre }) {
-  const [etat, setEtat] = useState('');
-  const retour = (texte) => { setEtat(texte); setTimeout(() => setEtat((prev) => (prev === texte ? '' : prev)), 2200); };
-  const bouton = { flex: 1, minHeight: 44, borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    gap: 6, fontSize: 14, fontWeight: 700, cursor: 'pointer', background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)', color: 'rgba(255,255,255,0.95)' };
-  return (
-    <div style={{ marginTop: 12 }} data-testid="fiche-partage">
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" style={bouton} data-testid="fiche-partager"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  const r = await partagerOffre(offre);
-                  if (r && r.methode === 'copie') retour('Lien copié');
-                  else if (r && r.methode === 'whatsapp') retour(r.ok ? 'Lien copié — WhatsApp ouvert' : 'WhatsApp ouvert');
-                }}>
-          <SvgIcon name="share" size={16} /> Partager
-        </button>
-        <button type="button" style={bouton} data-testid="fiche-copier-lien"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  retour((await copierLienOffre(offre)) ? 'Lien copié' : 'Copie impossible');
-                }}>
-          <SvgIcon name="link" size={16} /> Copier le lien
-        </button>
-      </div>
-      {etat ? <p role="status" data-testid="fiche-partage-retour" style={{ margin: '6px 0 0', fontSize: 13, textAlign: 'center', color: COULEUR }}>{etat}</p> : null}
-    </div>
-  );
-}
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
 const FOND_CARTE = 'linear-gradient(180deg, rgba(20,10,30,0.98) 0%, rgba(5,0,15,0.99) 100%)';
 
@@ -404,9 +372,12 @@ function Badge({ texte, fort }) {
         display: 'inline-block', fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase',
         padding: '3px 10px', borderRadius: 999,
         background: fort ? COULEUR : `rgba(${RGB}, 0.18)`,
-        color: '#fff', // V546: jamais la couleur de marque sur elle-même — cf. bloc ci-dessus
+        // V546: jamais la couleur de marque sur elle-même. V630 : sur l'aplat « fort », le texte
+        // suit la luminance de la couleur du coach (--on-primary) ; sur le voile « doux », clair teinté.
+        ...(fort ? { color: 'var(--on-primary, #fff)' } : {}),
         border: `1px solid rgba(${RGB}, 0.5)`,
       }}
+      className={fort ? undefined : 'af-badge-doux'}
     >
       {texte}
     </span>
@@ -515,7 +486,10 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
           /* V628 : invité avec un code promo -> place à 0 CHF ; le bouton de paiement reste le même. */
           <div data-testid="fiche-code-promo"><CodePromoEvenement offreId={offre.id} titre={offre.name} compact /></div>
         ) : null}
-        {offre && offrePartageable(offre) ? <PartageFiche offre={offre} /> : null}
+        {offre && offrePartageable(offre) ? (
+          <IconesPartageOffre offre={offre} idGroupe="fiche-partage" idPartager="fiche-partager" idCopier="fiche-copier-lien"
+                              idRetour="fiche-partage-retour" style={{ marginTop: 10 }} />
+        ) : null}
         {!groupeSaison && fiche.economie ? <p style={{ margin: '10px 0 0', fontSize: 14, fontWeight: 700, color: 'var(--eco-color, #8ef0b0)' }} data-testid="fiche-economie">{fiche.economie}</p> : null}
 
         {/* V526: sur mobile le bouton d'achat était ~340 px sous la ligne de flottaison
