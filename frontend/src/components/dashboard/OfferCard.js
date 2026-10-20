@@ -5,7 +5,8 @@ import React from 'react';
 // (ClockIcon/PinIcon/... ), d'ou le recours au jeu partage SvgIcon pour ces
 // deux traces uniquement. Les composants locaux restent la reference du fichier.
 import SvgIcon from '../SvgIcon';
-import { offrePartageable, copierLienOffre, partagerOffre } from '../../utils/partageOffre'; // V626 — partage de chaque offre
+import { offrePartageable } from '../../utils/partageOffre'; // V626 — partage de chaque offre
+import IconesPartageOffre from '../IconesPartageOffre'; // V630 : deux petites icônes
 
 const PINK = 'var(--primary-color, #D91CD2)';
 
@@ -360,42 +361,10 @@ export default function OfferCard({
             produit), et seulement pour SES offres (même règle que Supprimer). Une offre
             privée (V537) y passe aussi : ce lien est son seul accès. */}
         {canDelete && offrePartageable(offer) && (
-          <div className="flex gap-2 mt-2" data-testid={`offer-partage-${offer.id}`}>
-            <button
-              type="button"
-              data-testid={`offer-copy-link-${offer.id}`}
-              onClick={async (e) => {
-                e.stopPropagation();
-                const btn = e.currentTarget;
-                const ok = await copierLienOffre(offer);
-                const etiquette = btn.querySelector('span');
-                const avant = etiquette.textContent;
-                etiquette.textContent = ok ? 'Lien copié !' : 'Copie impossible';
-                setTimeout(() => { etiquette.textContent = avant; }, 1800);
-              }}
-              className="flex-1 text-xs py-2 rounded-lg inline-flex items-center justify-center gap-1.5"
-              style={{ background: '#0a0a0f', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)', color: '#fff' }}>
-              <SvgIcon name="link" size={13} /><span>Copier le lien</span>
-            </button>
-            <button
-              type="button"
-              data-testid={`offer-share-${offer.id}`}
-              onClick={async (e) => {
-                e.stopPropagation();
-                const btn = e.currentTarget;
-                const r = await partagerOffre(offer);
-                const etiquette = btn.querySelector('span');
-                const avant = etiquette.textContent;
-                if (r && r.methode === 'copie') etiquette.textContent = 'Lien copié !';
-                else if (r && r.methode === 'whatsapp') etiquette.textContent = r.ok ? 'Lien copié — WhatsApp ouvert' : 'WhatsApp ouvert';
-                else return;
-                setTimeout(() => { etiquette.textContent = avant; }, 2200);
-              }}
-              className="flex-1 text-xs py-2 rounded-lg inline-flex items-center justify-center gap-1.5"
-              style={{ background: '#0a0a0f', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)', color: '#fff' }}>
-              <SvgIcon name="share" size={13} /><span>Partager</span>
-            </button>
-          </div>
+          /* V630 : deux petites icônes au lieu de deux gros boutons (IconesPartageOffre). */
+          <IconesPartageOffre offre={offer} idGroupe={`offer-partage-${offer.id}`} idPartager={`offer-share-${offer.id}`}
+                              idCopier={`offer-copy-link-${offer.id}`} idRetour={`offer-partage-retour-${offer.id}`}
+                              style={{ marginTop: 6 }} />
         )}
 
         {/* V224: reorganisation de l'ordre d'affichage (champ `position`) */}

@@ -20,6 +20,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import SvgIcon from './SvgIcon';
 import { suivreInvitation } from '../utils/invitationSuivi';
 import { DemandeLienMembre } from './AccesMembreEvenement'; // V610b / V618L : une seule étape
+import CodePromoEvenement from './CodePromoEvenement'; // V628
 import AfroboostAudioPlayer from './AfroboostAudioPlayer'; // V610g
 import InviterMesAmis from './InviterMesAmis'; // V610i : après réservation confirmée
 import { attributionActuelle, invitationEnregistrer } from '../utils/attribution';
@@ -592,6 +593,13 @@ export default function InvitationPublique({ token, apercu }) {
                                    offreVisee={offreDeLInvitation(d)} jetonInvitation={enApercu ? '' : token} />
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {type === 'event_paid' && offreDeLInvitation(d) ? (
+          /* V628 : invité avec un code promo -> place à 0 CHF, sans paiement. */
+          <div data-testid="inv-pub-code-promo" style={{ margin: '-4px 0 12px', textAlign: 'center' }}>
+            <CodePromoEvenement offreId={offreDeLInvitation(d)} titre={d.offre_nom || d.title || ''} inerte={enApercu} compact />
           </div>
         ) : null}
 

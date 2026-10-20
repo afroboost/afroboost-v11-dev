@@ -36,6 +36,7 @@ PREFIXE = "[V610-EVT]"
 COLL_PLACES = "evenement_places"
 SOURCE_PAYANT = "paid_event_auto"
 SOURCE_MEMBRE = "member_free_event"
+SOURCE_CODE = "promo_code_event"   # V628 : place offerte par un code promo réservé à l'événement
 RE_JOUR = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RE_HEURE = re.compile(r"^(\d{1,2}):(\d{2})")
 
@@ -345,7 +346,7 @@ async def _deja(db, cle):
 
 
 async def reserver(db, *, cle, offre, cours, occ, email, nom, prix, source, code="", whatsapp="",
-                   subscription_id=None, extra=None):
+                   subscription_id=None, extra=None, reservation_id=None):
     """(reservation, creee). `creee=False` : la réclamation existait (rejeu / double
     clic) -> la réservation DÉJÀ créée est rendue, ou None si elle est en cours."""
     _resa, _existe = await _deja(db, cle)
@@ -361,7 +362,8 @@ async def reserver(db, *, cle, offre, cours, occ, email, nom, prix, source, code
             return _resa, False
         raise
     _email = str(email or "").strip().lower()
-    _id = str(uuid.uuid4())
+    # V628 : l'appelant peut fixer l'id (place par code : le débit du code porte la MÊME clé).
+    _id = str(reservation_id or "") or str(uuid.uuid4())
     _doc = {
         "id": _id,
         "reservationCode": "AF%s" % uuid.uuid4().hex[:8].upper(),
@@ -403,6 +405,19 @@ async def reserver(db, *, cle, offre, cours, occ, email, nom, prix, source, code
     logger.info("%s réservation %s (%s) — offre %s, %s", PREFIXE, _doc["reservationCode"], source,
                 str((offre or {}).get("id"))[:8], occ)
     return _doc, True
+
+
+async def liberer_place(db, reservation, session=None) -> bool:
+    """V628 — la réservation d'événement vient d'être SUPPRIMÉE : sa réclamation de place l'est
+    aussi (sinon la place resterait comptée et la même personne ne pourrait pas se réinscrire
+    sans repasser par `_deja`). Seule la réclamation de CETTE réservation est visée."""
+    _r = reservation or {}
+    _cle, _rid = _r.get("evenement_place_cle"), _r.get("id")
+    if not _cle or not _rid:
+        return False
+    _k = {"session": session} if session is not None else {}
+    _res = await db[COLL_PLACES].delete_one({"_id": _cle, "reservation_id": _rid}, **_k)
+    return bool(getattr(_res, "deleted_count", 0))
 
 
 # ── 1. APRÈS PAIEMENT (webhook) ─────────────────────────────────────────────────
@@ -508,3 +523,185 @@ async def evenements_offerts(db, email, coach_id=None, maintenant=None):
                         "complet": await complet(db, _o),
                         "jeton_invitation": (_jeton or {}).get("share_token") or ""})
     return _sortie
+
+
+# ── V628 : PLACE PAR CODE PROMO (ex. invités Hétaira, 28/10/2026) ───────────────
+# Un code promo EXISTANT (`discount_codes`) donne une place à 0 CHF à UN événement à
+# réservation automatique, et à lui seul. Rien de neuf côté codes : type 100 %, quota
+# `maxUses`, `used`, expiration, `assignedEmail` — tout est lu tel que le coach le règle.
+#
+# « RÉSERVÉ À CET ÉVÉNEMENT » = les articles autorisés du code (`courses`) sont TOUS des
+# identifiants de cet événement (son offre ou son cours daté), et il y en a au moins un.
+# Un code « tous les articles » n'est PAS un code d'événement : refusé ici (il n'a pas été
+# explicitement réglé pour lui). Un code d'événement, à l'inverse, est refusé par toutes
+# les autres portes (réservation de cours, espace, remise de paiement, Live, Pass Duo).
+MSG_CODE_INVALIDE = "Code promo invalide ou expiré."
+MSG_CODE_UTILISE = "Ce code promo a déjà été utilisé."
+MSG_CODE_RESERVE_EVENEMENT = ("Ce code promo est réservé à un événement : utilise-le depuis la page "
+                              "de l'événement (« J'ai un code promo »).")
+
+
+def _sans_accents(texte) -> str:
+    import unicodedata
+    _t = unicodedata.normalize("NFKD", str(texte or "").strip().upper())
+    return "".join(c for c in _t if not unicodedata.combining(c))
+
+
+def ids_evenement(offre) -> set:
+    """L'offre-événement et ses cours liés : les seuls articles qu'un code d'événement peut viser."""
+    _o = offre or {}
+    _ids = {str(x) for x in (_o.get("linked_course_ids") or []) if x}
+    if _o.get("id"):
+        _ids.add(str(_o.get("id")))
+    return _ids
+
+
+def code_reserve_a(code_doc, ids) -> bool:
+    _cs = {str(x) for x in ((code_doc or {}).get("courses") or []) if x}
+    return bool(_cs) and bool(ids) and _cs <= set(ids)
+
+
+def code_gratuit_total(code_doc) -> bool:
+    _t = str((code_doc or {}).get("type") or "")
+    try:
+        _v = float((code_doc or {}).get("value") or 0)
+    except (TypeError, ValueError):
+        _v = 0.0
+    return _t == "100%" or (_t == "%" and _v >= 100)
+
+
+async def evenement_du_code(db, code_doc):
+    """L'id de l'offre-événement à laquelle CE code est réservé, sinon None.
+    Une seule requête, et seulement si le code a des articles. Panne de lecture -> None
+    (journalisée) : les autres portes gardent alors leur comportement d'avant."""
+    _cs = [str(x) for x in ((code_doc or {}).get("courses") or []) if x]
+    if not _cs:
+        return None
+    try:
+        _cands = await db.offers.find(
+            {"offer_type": "event", "evenement_reservation_auto": True,
+             "$or": [{"id": {"$in": _cs}}, {"linked_course_ids": {"$in": _cs}}]},
+            {"_id": 0, "id": 1, "linked_course_ids": 1}).to_list(20)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s code d'événement illisible (%s)", PREFIXE, type(_err).__name__)
+        return None
+    for _o in _cands:
+        if code_reserve_a(code_doc, ids_evenement(_o)):
+            return _o.get("id")
+    return None
+
+
+async def evenement_du_code_saisi(db, code):
+    """Même question pour un code SAISI (chaîne) : lit ses fiches (insensible à la casse)."""
+    _c = str(code or "").strip()
+    if not _c:
+        return None
+    try:
+        _fiches = await db.discount_codes.find(
+            {"code": {"$regex": "^%s$" % re.escape(_c), "$options": "i"}},
+            {"_id": 0, "courses": 1}).to_list(20)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s code saisi illisible (%s)", PREFIXE, type(_err).__name__)
+        return None
+    for _f in _fiches:
+        _e = await evenement_du_code(db, _f)
+        if _e:
+            return _e
+    return None
+
+
+async def fiche_code_evenement(db, saisie, offre):
+    """(fiche, motif) — LA fiche `discount_codes` du code saisi pour CET événement.
+    Recherche exacte (casse ignorée) ; à défaut, parmi les seuls codes de l'événement,
+    une comparaison sans accents (« HETAIRA » = « HÉTAÏRA »). Jamais une regex construite
+    sur la saisie. Plusieurs fiches vivantes et aucune canonique -> refus (« ambigu »)."""
+    _s = str(saisie or "").strip()
+    if not _s or len(_s) > 64:
+        return None, "inconnu"
+    _proj = {"_id": 0}
+    _fiches = await db.discount_codes.find(
+        {"code": {"$regex": "^%s$" % re.escape(_s), "$options": "i"}}, _proj).to_list(20)
+    if not _fiches:
+        _ids = list(ids_evenement(offre))
+        _cible = _sans_accents(_s)
+        _fiches = [f for f in await db.discount_codes.find({"courses": {"$in": _ids}}, _proj).to_list(200)
+                   if _sans_accents(f.get("code")) == _cible]
+    if not _fiches:
+        return None, "inconnu"
+    from api.routes.shared import seances_fiche_cible
+    _id, _voie = seances_fiche_cible(_fiches)
+    if not _id:
+        return None, ("expire" if _voie == "code_mort" else _voie)
+    return next((f for f in _fiches if f.get("id") == _id), None), "ok"
+
+
+def proprietaire_evenement(offre, cours=None) -> str:
+    """Le coach de l'événement (offre, sinon cours) ; vide = plateforme (le super-admin)."""
+    return str((offre or {}).get("coach_id") or (cours or {}).get("coach_id") or "").strip().lower()
+
+
+def code_du_proprietaire(fiche, offre, cours=None) -> bool:
+    """V628 — un code ne vaut que pour un événement de SON coach. Événement de la plateforme
+    (aucun coach) : seuls les codes du super-admin, ou sans coach (anciens), y donnent accès.
+    Sans cette règle, un partenaire pourrait créer un code visant l'événement d'un autre."""
+    from api.routes.shared import is_super_admin, DEFAULT_COACH_ID
+    _code_coach = str((fiche or {}).get("coach_id") or "").strip().lower()
+    _proprio = proprietaire_evenement(offre, cours)
+    if _proprio and not is_super_admin(_proprio) and _proprio != str(DEFAULT_COACH_ID).lower():
+        return _code_coach == _proprio
+    return (not _code_coach) or is_super_admin(_code_coach) or _code_coach in ("bassi_default", str(DEFAULT_COACH_ID).lower())
+
+
+def verifier_code_evenement(fiche, offre, jour=None, cours=None):
+    """None si le code donne une place GRATUITE à cet événement, sinon le message de refus.
+    `jour` : jour calendaire suisse (AAAA-MM-JJ) ; l'expiration court jusqu'au soir inclus."""
+    _f = fiche or {}
+    if not _f or _f.get("active") is not True:
+        return MSG_CODE_INVALIDE
+    from api.routes.shared import v617_jour_local
+    _jour = jour or v617_jour_local()
+    _exp = str(_f.get("expiresAt") or "")[:10]
+    if _exp and _exp < _jour:
+        return MSG_CODE_INVALIDE
+    if not code_gratuit_total(_f):
+        return MSG_CODE_INVALIDE
+    if not code_reserve_a(_f, ids_evenement(offre)) or not code_du_proprietaire(_f, offre, cours):
+        # Même message qu'un code inconnu : la route publique ne confirme pas l'existence
+        # d'un code (AFR-, code d'un autre cours) qui ne la concerne pas.
+        return MSG_CODE_INVALIDE
+    try:
+        _max, _used = int(float(_f.get("maxUses") or 0)), int(float(_f.get("used") or 0))
+    except (TypeError, ValueError):
+        return MSG_CODE_INVALIDE
+    if _max <= 0 or _used >= _max:
+        return MSG_CODE_UTILISE   # la route le transforme en refus neutre (sauf pour sa titulaire)
+    return None
+
+
+def diagnostic_code(fiche, offre, cours=None, jour=None) -> dict:
+    """V628 — pour le COACH : ce code donnerait-il une place à cet événement, et sinon pourquoi.
+    Lecture pure, aucune écriture ; jamais l'adresse attribuée (seulement « attribué : oui/non »)."""
+    _f = fiche or {}
+    from api.routes.shared import v617_jour_local
+    _jour = jour or v617_jour_local()
+    _motifs = []
+    if _f.get("active") is not True:
+        _motifs.append("inactif")
+    _exp = str(_f.get("expiresAt") or "")[:10]
+    if _exp and _exp < _jour:
+        _motifs.append("expiré")
+    if not code_gratuit_total(_f):
+        _motifs.append("réduction inférieure à 100 %")
+    if not code_reserve_a(_f, ids_evenement(offre)):
+        _motifs.append("articles autorisés : pas uniquement cet événement")
+    if not code_du_proprietaire(_f, offre, cours):
+        _motifs.append("code d'un autre coach")
+    try:
+        _max, _used = int(float(_f.get("maxUses") or 0)), int(float(_f.get("used") or 0))
+    except (TypeError, ValueError):
+        _max, _used = 0, 0
+    if _max <= 0 or _used >= _max:
+        _motifs.append("déjà utilisé")
+    return {"code": _f.get("code"), "utilisable": not _motifs, "motifs": _motifs,
+            "utilisations": _used, "maximum": _max, "expiration": _exp or None,
+            "nb_articles": len(_f.get("courses") or []), "adresse_attribuee": bool(_f.get("assignedEmail"))}

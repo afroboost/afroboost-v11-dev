@@ -139,7 +139,10 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
             background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.18)',
             border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.45)',
             fontSize: 10.5, letterSpacing: '.06em', fontWeight: 700,
-          }}>{badge}</span>
+            /* V630 — sans couleur, le texte héritait du `body` (rgb(10,10,10)) : noir sur
+               voile sombre, contraste 1,09:1. Fond réel = voile de marque sur carte quasi
+               noire -> texte clair teinté de la marque (cf. .af-badge-doux, index.css). */
+          }} className="af-badge-doux" data-testid="accueil-offre-badge">{badge}</span>
         ) : null}
         <h3 style={TITRE}>{(offre.name || '').trim()}</h3>
         <p style={{ display: 'flex', alignItems: 'baseline', gap: 6, margin: '8px 0 0' }}>

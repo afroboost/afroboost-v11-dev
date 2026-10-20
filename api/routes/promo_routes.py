@@ -1169,6 +1169,12 @@ async def validate_discount_code(data: dict):
         if not code:
             return {"valid": False, "message": "Code inconnu ou invalide"}
 
+        # V628 : un code réservé à un événement ne se valide que sur la page de l'événement
+        # (ni connexion abonné, ni abonnement créé, ni remise ailleurs).
+        from api.routes.evenement_special import evenement_du_code_saisi as _v628_evt_saisi
+        if await _v628_evt_saisi(_db, code_str):
+            return {"valid": False, "message": "Code inconnu ou invalide"}
+
         # v106.9: Sanitize MongoDB doc — convert datetime/non-serializable to strings
         code = _sanitize_mongo_doc(code)
 

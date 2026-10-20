@@ -1286,8 +1286,15 @@ async def create_reservation(reservation: ReservationCreate, request: Request):
     if promo_code:
         _v430_doc = await db.discount_codes.find_one(
             {"code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"}, "active": True},
-            {"_id": 0, "code": 1, "assignedEmail": 1, "multi_member": 1},
+            {"_id": 0, "code": 1, "assignedEmail": 1, "multi_member": 1, "courses": 1},
         )
+        # V628 : un code réservé à un événement ne réserve que cet événement, par sa page.
+        # Toutes les fiches du code sont examinées (un doublon ne doit pas ouvrir la porte).
+        if _v430_doc:
+            from api.routes import evenement_special as _v628_evt
+            if await _v628_evt.evenement_du_code_saisi(db, promo_code):
+                logger.warning(f"[V628] Reservation refusee : code {promo_code} reserve a un evenement")
+                raise HTTPException(status_code=403, detail=_v628_evt.MSG_CODE_RESERVE_EVENEMENT)
         if _v430_doc:
             from api.routes.shared import (
                 email_autorise_pour_code as _v430_autorise,
@@ -1983,6 +1990,11 @@ async def delete_reservation(reservation_id: str, request: Request):
             if _b3_supprimee is None:
                 await _b3_ses.abort_transaction()
                 raise HTTPException(status_code=404, detail="Réservation introuvable")
+            # V628 : une place d'événement annulée libère aussi sa réclamation (même transaction).
+            # Une réservation ORDINAIRE n'a pas de `evenement_place_cle` : rien n'est importé ni exécuté.
+            if _b3_supprimee.get("evenement_place_cle"):
+                from api.routes.evenement_special import liberer_place as _v628_liberer
+                await _v628_liberer(db, _b3_supprimee, session=_b3_ses)
 
             # Les compteurs sont RELUS DANS la transaction : le plafond porte
             # sur l'état réellement engagé, pas sur une lecture d'avant.
@@ -3618,6 +3630,12 @@ async def _qr_scan_validate_inner(request: Request):
         discount = await db.discount_codes.find_one(
             {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}, "active": True}, {"_id": 0}
         )
+        _v628_code_evt = False
+        if discount:
+            from api.routes.evenement_special import evenement_du_code as _v628_evt_code
+            if await _v628_evt_code(db, discount):
+                # V628 : code d'événement -> sa réservation du jour (CAS E), jamais un débit de forfait.
+                discount, _v628_code_evt = None, True
         if discount:
             logger.info(f"[QR-V213] CAS C trouvé: discount code '{code}', multi_member={discount.get('multi_member')}, slug={member_slug_from_qr}")
             return await _validate_discount_code_presence(code, discount, member_slug_from_qr,
@@ -3627,7 +3645,7 @@ async def _qr_scan_validate_inner(request: Request):
         discount_any = await db.discount_codes.find_one(
             {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}, {"_id": 0}
         )
-        if discount_any:
+        if discount_any and not _v628_code_evt:
             logger.warning(f"[QR-V213] Discount code '{code}' trouvé mais inactif (active={discount_any.get('active')})")
             raise HTTPException(status_code=400, detail=f"Le code {code} est désactivé.")
 

@@ -30,6 +30,21 @@ export function applyPrimaryColor(hex) {
   if (!rgb) return;
   document.documentElement.style.setProperty('--primary-color', hex);
   document.documentElement.style.setProperty('--primary-rgb', rgb);
+  document.documentElement.style.setProperty('--on-primary', onPrimary(hex)); // V630
+}
+
+// V630 — couleur du texte posé SUR un aplat de la couleur de marque (badge « fort »).
+// Un coach peut choisir une couleur claire (jaune, rose pâle) : le blanc y devient
+// illisible. Le blanc reste la règle (identité de marque, ex. #D91CD2 = 4,11:1) tant
+// qu'il garde au moins 3:1 ; en dessous (couleur claire), texte quasi-noir.
+export function onPrimary(hex) {
+  const rgb = hexToRgbTriplet(hex);
+  if (!rgb) return '#fff';
+  const L = rgb.split(', ').map(Number).map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }).reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0);
+  return 1.05 / (L + 0.05) >= 3 ? '#fff' : '#0a0a0a';
 }
 
 // V295 — anti-FOUC (flash de l'ancienne couleur ~1 s au chargement).
@@ -45,6 +60,7 @@ export function persistThemeColors(concept) {
       colors['--primary-color'] = concept.primaryColor;
       const rgb = hexToRgbTriplet(concept.primaryColor);
       if (rgb) colors['--primary-rgb'] = rgb;
+      colors['--on-primary'] = onPrimary(concept.primaryColor); // V630 : anti-FOUC du texte sur aplat
       const glowBase = concept.glowColor || concept.primaryColor;
       if (glowBase) {
         colors['--glow-color'] = glowBase + '66';

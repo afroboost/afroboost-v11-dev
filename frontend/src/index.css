@@ -121,3 +121,43 @@ code {
         border-bottom-color: inherit;
     }
 }
+
+/* V630 — actions secondaires en petites icônes (Partager / Copier le lien).
+   Pas de fond ni de bordure ; infobulle au survol / focus clavier ; 44 px de zone
+   tactile sur écran tactile. La couleur suit la marque au survol. */
+.af-partage-icones { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.af-icone-action {
+    position: relative; width: 36px; height: 36px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; border-radius: 999px; cursor: pointer;
+    color: rgba(255, 255, 255, 0.72);
+    transition: color .15s ease, background-color .15s ease;
+}
+.af-icone-action:hover, .af-icone-action:focus-visible {
+    /* teinte claire de la marque : la couleur brute (ex. #9f2d70) tombe sous 3:1 sur fond noir */
+    color: #fff;
+    color: color-mix(in srgb, var(--primary-color, #D91CD2) 45%, #fff);
+    background: rgba(var(--primary-rgb, 217, 28, 210), 0.10);
+}
+.af-icone-action:focus-visible { outline: 2px solid rgba(var(--primary-rgb, 217, 28, 210), 0.6); outline-offset: 1px; }
+@media (pointer: coarse) { .af-icone-action { width: 44px; height: 44px; } }
+.af-icone-action::after {
+    content: attr(data-infobulle);
+    position: absolute; bottom: calc(100% + 6px); right: 0; transform: translateY(2px); /* calée à droite : les icônes sont au bord de la carte */
+    padding: 4px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none;
+    font-size: 12px; font-weight: 500; line-height: 1.3;
+    background: rgba(20, 20, 24, 0.96); color: #fff; border: 1px solid rgba(255, 255, 255, 0.12);
+    opacity: 0; transition: opacity .12s ease, transform .12s ease; z-index: 5;
+}
+@media (hover: hover) {
+    .af-icone-action:hover::after { opacity: 1; transform: translateY(0); }
+}
+.af-icone-action:focus-visible::after { opacity: 1; transform: translateY(0); }
+.af-partage-retour { margin-right: 6px; font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+
+/* V630 — badge « doux » (voile de marque sur carte sombre) : texte clair teinté de la
+   couleur du coach. Blanc d'abord = repli pour les navigateurs sans color-mix(). */
+.af-badge-doux {
+    color: #fff;
+    color: color-mix(in srgb, var(--primary-color, #D91CD2) 20%, #fff);
+}
