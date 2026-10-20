@@ -37,7 +37,10 @@ def cles_fin(o, ch=""):
     if isinstance(o, dict):
         for k, x in o.items():
             if k == "revenus" and x == {"disponible": False, "raison": "portee_finances_requise"}: continue
-            if FIN_KEYS.search(str(k)): out.append(ch + "." + k)
+            # STATS-3 : `releve_mensuel.champs.<champ>.valeur` est un COMPTAGE de participations
+            # imposé par le contrat du Cockpit (aucun montant) ; seul ce chemin exact est exempté.
+            if k == "valeur" and re.fullmatch(r"\.releve_mensuel\.champs\.[A-Za-z]+", ch): pass
+            elif FIN_KEYS.search(str(k)): out.append(ch + "." + k)
             out += cles_fin(x, ch + "." + k)
     elif isinstance(o, list):
         for i, x in enumerate(o): out += cles_fin(x, "%s[%d]" % (ch, i))

@@ -26,6 +26,7 @@ RÈGLES DE LA RÉPONSE.
 from datetime import timezone
 
 from api.routes.analytics_association import libelle_periode
+from api.routes.analytics_releve import releve_mensuel
 from api.routes.analytics_shared import NOMS_JOURS_JS, _cle_serie, _dans
 
 SCHEMA = "stats-association/1"
@@ -119,7 +120,7 @@ def evolution(faits, debut, fin, granularite):
 
 def construire_reponse(kpi, ctx, assoc, debut, fin, type_periode, granularite, portee, maintenant_local,
                        genere_le_iso, cloture=None, clotures_mois=None, fuseau_ok=True,
-                       avertissements_amont=None, cours_publics=None):
+                       avertissements_amont=None, cours_publics=None, releve_contexte=None):
     """La réponse `stats-association/1`, depuis des calculs DÉJÀ faits.
 
     `assoc` : la projection Association de la période (dynamique).
@@ -230,6 +231,19 @@ def construire_reponse(kpi, ctx, assoc, debut, fin, type_periode, granularite, p
             "qualite_montants": _q.get("montants") if source == SOURCE_DYNAMIQUE else (base.get("qualite") or {}).get("montants"),
         }
 
+    def _releve():
+        # STATS-3 : bloc ADDITIF, sans montant -> servi aux deux portées ; toujours DYNAMIQUE.
+        _rc = releve_contexte or {}
+        try:
+            return releve_mensuel(faits, debut, fin, type_periode, maintenant_local, fuseau_ok=fuseau_ok,
+                                  annulees=_rc.get("annulees"), cours_par_id=_rc.get("cours_par_id"),
+                                  offres=_rc.get("offres"), base_vide=bool(_rc.get("base_vide")),
+                                  lecture_incomplete=bool(_rc.get("lecture_incomplete")))
+        except Exception as _err:  # noqa: BLE001 — un relevé en panne n'emporte pas la réponse
+            av.append("Bloc « relevé mensuel » indisponible (%s)." % type(_err).__name__)
+            return {"disponible": False, "raison": RAISON_ERREUR,
+                    "mois": debut.strftime("%Y-%m") if type_periode == "mois" else None}
+
     frequentation = _bloc(_frequentation, av, "fréquentation")
     essais = _bloc(_essais, av, "essais")
     abonnements = _bloc(_abonnements, av, "abonnements")
@@ -261,6 +275,7 @@ def construire_reponse(kpi, ctx, assoc, debut, fin, type_periode, granularite, p
         "abonnements": abonnements,
         "evolution": evol,
         "revenus": revenus,
+        "releve_mensuel": _releve(),
         "qualite": qualite,
     }
 
@@ -277,6 +292,8 @@ def reponse_base_indisponible(debut, fin, type_periode, granularite, portee, gen
         "frequentation": indisponible(RAISON_BASE), "essais": indisponible(RAISON_BASE),
         "abonnements": indisponible(RAISON_BASE), "evolution": indisponible(RAISON_BASE),
         "revenus": indisponible(RAISON_BASE) if portee == PORTEE_FINANCES else indisponible(RAISON_PORTEE_FINANCES),
+        "releve_mensuel": {"disponible": False, "raison": RAISON_BASE,
+                           "mois": debut.strftime("%Y-%m") if type_periode == "mois" else None},
         "qualite": {"avertissements": av},
     }
 

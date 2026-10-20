@@ -42,6 +42,7 @@ from api.routes.analytics_cloture import (
     CLOTURE_COLLECTION, RAISON_DEJA_CLOTURE, assoc_depuis_snapshot, cle_cloture, construire_snapshot,
     est_cloturable, meta_snapshot, verifier_integrite,
 )
+from api.routes.analytics_releve import ids_annules
 from api.routes.analytics_stats import (
     AVERT_CLOTURE_ALTEREE, PORTEE_FINANCES, PORTEE_FREQUENTATION, RAISON_ERREUR, construire_reponse,
     genere_le as genere_le_stats, reponse_base_indisponible,
@@ -639,6 +640,7 @@ async def stats_association(request: Request, mois: str = "", annee: str = "", g
         _r = reponse_base_indisponible(debut, fin, _type, _g, portee, _genere, _fuseau_ok)
         for _b in ("frequentation", "essais", "abonnements", "evolution"):
             _r[_b] = {"disponible": False, "raison": RAISON_ERREUR}
+        _r["releve_mensuel"] = dict(_r["releve_mensuel"], raison=RAISON_ERREUR)
         if portee == PORTEE_FINANCES:
             _r["revenus"] = {"disponible": False, "raison": RAISON_ERREUR}
         _r["qualite"]["avertissements"] = [a for a in _r["qualite"]["avertissements"] if "base" not in a] + \
@@ -675,9 +677,24 @@ async def stats_association(request: Request, mois: str = "", annee: str = "", g
     except Exception as _err:  # noqa: BLE001 — sans catalogue, toutes les séances s'appellent « Séance »
         avert.append("Catalogue des cours illisible (%s) : séances non nommées." % type(_err).__name__)
         cours_publics = {}
+    # ── STATS-3 : ce que le relevé mensuel lit EN PLUS (lecture seule) : les dates
+    #    annulées des cours et la capacité RÉELLE des offres (V618M) ──
+    _releve_ctx = {"annulees": ids_annules(sources["reservations"]), "base_vide": not sources["reservations"]}
+    if _type == "mois":
+        try:
+            _releve_ctx["cours_par_id"] = {
+                str(_c["id"]): _c for _c in await db.courses.find({}, {"_id": 0, "id": 1, "dates_annulees": 1}).to_list(5000)
+                if _c.get("id")}
+            _releve_ctx["offres"] = await db.offers.find(
+                {"capacite_limitee": True},
+                {"_id": 0, "id": 1, "linked_course_ids": 1, "capacite_limitee": 1, "capacite_max": 1}).to_list(1000)
+        except Exception as _err:  # noqa: BLE001 — sans ces lectures, le relevé n'est pas fiable : il le dit
+            avert.append("Relevé mensuel : lectures complémentaires impossibles (%s)." % type(_err).__name__)
+            _releve_ctx["lecture_incomplete"] = True
     reponse = construire_reponse(kpi, ctx, assoc, debut, fin, _type, _g, portee, maintenant, _genere,
                                  cloture=cloture, clotures_mois=clotures_mois, fuseau_ok=_fuseau_ok,
-                                 avertissements_amont=avert, cours_publics=cours_publics)
+                                 avertissements_amont=avert, cours_publics=cours_publics,
+                                 releve_contexte=_releve_ctx)
     _fuites = verifier_anonymat(reponse)
     if _fuites:
         logger.error("[STATS] réponse refusée : donnée personnelle détectée %s", _fuites[:3])
