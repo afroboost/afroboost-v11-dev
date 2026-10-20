@@ -9,7 +9,8 @@
       statistiques REFLÈTENT donc la définition en vigueur : le banc vérifie
       qu'elles n'en inventent pas une autre (même verdict que la référence).
   (b) abonnements supprimés (`status: "deleted"`, V618i) : comptés comme des
-      achats (CA, nouveaux abonnements).
+      achats (nouveaux abonnements). Décision du 20/10 : ils ne sont plus des
+      ACHATS, mais l'argent réellement ENCAISSÉ (montant prouvé) reste au CA.
   (c) fuseau : couvert par tests/test_stats_association.py §13.
 
 ⚠️ LA CORRECTION (b) CHANGE DES CHIFFRES DE L'ÉCRAN COACH EXISTANT (CA,
@@ -103,8 +104,16 @@ NEW = cockpit(R, **P)
 verifier("(a) écran coach : essais accordés selon la définition en vigueur (2)", NEW["essais_funnel"]["accordes"] == 2,
          NEW["essais_funnel"]["accordes"])
 verifier("(a) le billet progressif payé est un achat ordinaire de 15 CHF au CA",
-         NEW["revenus"]["ca_encaisse"] == 295.0 + 15.0, NEW["revenus"]["ca_encaisse"])
-verifier("(b) l'abonnement supprimé n'est PAS au CA (pas de +100 CHF)", NEW["revenus"]["ca_encaisse"] == 310.0)
+         NEW["revenus"]["ca_encaisse"] - NEW["revenus"]["encaisse_abonnements_supprimes"]["montant"] == 295.0 + 15.0,
+         NEW["revenus"]["ca_encaisse"])
+verifier("(b) l'encaissement PROUVÉ de l'abonnement supprimé reste au CA (310 + 100 = 410)",
+         NEW["revenus"]["ca_encaisse"] == 410.0, NEW["revenus"]["ca_encaisse"])
+verifier("(b) … montré à part, hors achats (1 encaissement, 100 CHF)",
+         NEW["revenus"]["encaisse_abonnements_supprimes"] == {"nombre": 1, "montant": 100.0},
+         NEW["revenus"].get("encaisse_abonnements_supprimes"))
+verifier("(b) … sans gonfler le nombre d'achats payés ni le panier moyen",
+         NEW["revenus"]["panier_moyen"] == round(310.0 / NEW["revenus"]["transactions_payees"], 2),
+         (NEW["revenus"]["transactions_payees"], NEW["revenus"]["panier_moyen"]))
 verifier("(b) … ni parmi les nouveaux abonnements (2 + le billet = 3, pas 4)", NEW["abonnements"]["nouveaux"]["total"] == 3,
          NEW["abonnements"]["nouveaux"])
 verifier("(b) l'exclusion est COMPTÉE et visible (1 souscription supprimée, 1 droit non ressuscité par sa fiche)",
@@ -115,8 +124,9 @@ if REF:
     verifier("AUCUN changement écran coach — essais accordés : référence 2 = actuel 2",
              OLD["essais_funnel"]["accordes"] == 2 and NEW["essais_funnel"]["accordes"] == 2,
              (OLD["essais_funnel"]["accordes"], NEW["essais_funnel"]["accordes"]))
-    verifier("⚠️ CHANGEMENT écran coach — CA prouvé : référence 410 (dont 100 d un abonnement supprimé) -> corrigé 310",
-             OLD["revenus"]["ca_encaisse"] != NEW["revenus"]["ca_encaisse"], (OLD["revenus"]["ca_encaisse"], NEW["revenus"]["ca_encaisse"]))
+    verifier("AUCUN changement écran coach — CA prouvé : référence 410 = actuel 410 (l'argent encaissé reste)",
+             OLD["revenus"]["ca_encaisse"] == NEW["revenus"]["ca_encaisse"] == 410.0,
+             (OLD["revenus"]["ca_encaisse"], NEW["revenus"]["ca_encaisse"]))
     verifier("⚠️ CHANGEMENT écran coach — nouveaux abonnements : référence 4 -> corrigé 3",
              OLD["abonnements"]["nouveaux"]["total"] == 4 and NEW["abonnements"]["nouveaux"]["total"] == 3,
              (OLD["abonnements"]["nouveaux"]["total"], NEW["abonnements"]["nouveaux"]["total"]))
@@ -132,10 +142,26 @@ F.horloge_figee(R)
 _r = F.run(R.stats_association(F.Req({"Authorization": "Bearer cle-finances-de-test-9876543210-abcdef"}), mois="2026-09"))
 C = json.loads(_r.body)
 verifier("route machine : essais accordés = écran coach (2)", C["essais"]["accordes"] == NEW["essais_funnel"]["accordes"] == 2)
-verifier("route machine : CA prouvé = écran coach corrigé (310)", C["revenus"]["ca_prouve"] == NEW["revenus"]["ca_encaisse"] == 310.0,
+verifier("route machine : CA prouvé = écran coach (410)", C["revenus"]["ca_prouve"] == NEW["revenus"]["ca_encaisse"] == 410.0,
          C["revenus"].get("ca_prouve"))
 verifier("route machine : nouveaux abonnements = écran coach corrigé (3)", C["abonnements"]["nouveaux"] == 3)
 verifier("route machine : aucune trace du code supprimé ni des adresses", "AFR-" not in json.dumps(C) and "@" not in json.dumps(C))
+
+# ═══ STATS-2 : abonnement supprimé — preuve exigée, transaction jumelle non ressuscitée ═══
+_sub_tx = {"id": "s-del-tx", "code": "AFR-DTX001", "coach_id": F.COACH, "status": "deleted",
+           "created_at": "2026-09-14T09:00:00+00:00", "offer_name": "Cours à l'unité"}
+_fiche_tx = {"code": "AFR-DTX001", "coach_id": F.COACH, "session_id": "cs_del_tx", "active": True}
+_tx = {"id": "tx-del", "session_id": "cs_del_tx", "payment_status": "paid", "amount_total": 4500,
+       "created_at": "2026-09-14T09:00:00+00:00", "coach_id": F.COACH}
+_sub_decl = {"id": "s-del-decl", "code": "AFR-DDC001", "coach_id": F.COACH, "status": "deleted",
+             "created_at": "2026-09-15T09:00:00+00:00", "price": 80}
+_r2 = A.construire_achats([_sub_tx, _sub_decl], [_fiche_tx], [_tx])
+verifier("STATS-2 : la transaction Stripe d'un abonnement supprimé reste au CA, une seule fois",
+         [e["montant"] for e in _r2["encaissements_supprimes"]] == [45.0], _r2["encaissements_supprimes"])
+verifier("STATS-2 : … et ne revient PAS comme un achat (« paiement » isolé)",
+         _r2["achats"] == [] and _r2["ecartes"]["paiements_jumeaux"] == 1, (_r2["achats"], _r2["ecartes"]))
+verifier("STATS-2 : un montant seulement DÉCLARÉ (non prouvé) n'entre jamais au CA",
+         all(e["code"] != "AFR-DDC001" for e in _r2["encaissements_supprimes"]), _r2["encaissements_supprimes"])
 
 ok = sum(1 for _, c, _ in RESULTATS if c)
 for nom, cond, detail in RESULTATS:

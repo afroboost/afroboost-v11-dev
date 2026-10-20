@@ -65,6 +65,12 @@ def _sans_ajouts(r):
         for k in CLES_AJOUTEES:
             if k in _e:
                 verifier("compteur ajouté %s = 0 sur le jeu sans piège" % k, _e.pop(k) == 0)
+    # STATS-2 (20/10) : `revenus.encaisse_abonnements_supprimes` est AJOUTÉ ;
+    # sans abonnement supprimé il vaut {0, 0} et rien d'autre ne bouge.
+    _rev = (r or {}).get("revenus")
+    if isinstance(_rev, dict) and "encaisse_abonnements_supprimes" in _rev:
+        verifier("encaissements d'abonnements supprimés = 0 sur le jeu sans piège",
+                 _rev.pop("encaisse_abonnements_supprimes") == {"nombre": 0, "montant": 0})
     return r
 
 

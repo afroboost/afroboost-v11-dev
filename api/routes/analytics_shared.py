@@ -705,6 +705,7 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             fiches_par_code.setdefault(_texte(f.get("code")).upper(), []).append(f)
     subs_par_code = {}
     codes_supprimes = set()
+    subs_supprimees_par_code = {}
     for s in (subscriptions or []):
         if not isinstance(s, dict):
             continue
@@ -717,13 +718,15 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             # n'est pas non plus un achat ici.
             ecartes["souscriptions_supprimees"] += 1
             codes_supprimes.add(_texte(s.get("code")).upper())
+            subs_supprimees_par_code.setdefault(_texte(s.get("code")).upper(), []).append(s)
             continue
         subs_par_code.setdefault(_texte(s.get("code")).upper(), []).append(s)
     # Un code dont TOUS les abonnements sont supprimés ne renaît pas par sa
     # seule fiche `discount_codes`.
+    fiches_supprimees = {}
     for _c in codes_supprimes - set(subs_par_code):
         if _c and _c in fiches_par_code:
-            fiches_par_code.pop(_c, None)
+            fiches_supprimees[_c] = fiches_par_code.pop(_c, None)
             ecartes["droits_supprimes"] += 1
 
     paiements_par_session = {}
@@ -828,6 +831,40 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
             "attribution_last": attribution_last(*subs, fiche, paiement or {}),
         })
 
+    # STATS-2 (décision du 20/10) : un abonnement supprimé n'est pas un ACHAT,
+    # mais l'argent réellement ENCAISSÉ pour lui l'a bien été. Son montant
+    # PROUVÉ (jamais un montant déclaré) reste dans le CA, hors de tout
+    # compteur d'achats. Sa transaction jumelle est marquée portée : elle ne
+    # revient pas comme un « paiement » isolé (donc comme un achat).
+    encaissements_supprimes = []
+    for code in sorted(set(subs_supprimees_par_code) - set(subs_par_code)):
+        fiche = choisir_fiche_code(fiches_supprimees.get(code))
+        subs = sorted(subs_supprimees_par_code[code],
+                      key=lambda s: (0 if (b_normaliser_origine(s.get("origine_paiement"))
+                                           and _nombre(s.get("montant_encaisse")) is not None) else 1,
+                                     _texte(s.get("created_at"))))
+        principal = subs[0]
+        for _k in ("session_id", "transaction_id"):
+            if _texte(fiche.get(_k)):
+                sessions_portees.add(_texte(fiche.get(_k)))
+        paiement = paiements_par_session.get(_texte(fiche.get("session_id"))) \
+            or paiements_par_session.get(_texte(fiche.get("transaction_id")))
+        fin = a_finance_du_droit(principal, fiche or None)
+        if not fin.get("montant_prouve") and paiement:
+            _m_tx, _p_tx = a_montant_transaction(paiement)
+            if _p_tx and _nombre(_m_tx) is not None:
+                fin.update(montant=_nombre(_m_tx), montant_prouve=True, montant_source="transaction",
+                           origine_paiement=fin.get("origine_paiement") or "stripe", gratuit=(_nombre(_m_tx) == 0))
+        montant = _nombre(fin.get("montant"))
+        if not (fin.get("montant_prouve") and montant is not None and montant > 0):
+            continue
+        moyen, canal, _q = moyen_de_paiement(fin, paiement)
+        dates = [d for d in (parser_utc(s.get("created_at")) for s in subs) if d]
+        date_dt = min(dates) if dates else parser_utc(fiche.get("created_at") or fiche.get("createdAt"))
+        encaissements_supprimes.append({"code": code, "date_dt": date_dt, "montant": montant,
+                                        "moyen": moyen, "canal": canal,
+                                        "coach_id": _texte(principal.get("coach_id") or fiche.get("coach_id")).lower()})
+
     for sid, p in paiements_par_session.items():
         if sid and sid in sessions_portees:
             ecartes["paiements_jumeaux"] += 1
@@ -873,6 +910,7 @@ def construire_achats(subscriptions, fiches_codes, paiements, offres_par_id=None
     return {
         "achats": achats,
         "en_attente": en_attente,
+        "encaissements_supprimes": encaissements_supprimes,
         "ecartes": ecartes,
         "qualite": {
             "droits_multi_fiches": sum(1 for a in achats if a["fiches"] > 1),
@@ -910,7 +948,7 @@ def _mediane(vals):
 
 
 def calculer_kpi_finance(achats, en_attente, memberships, faits, debut, fin, granularite="jour",
-                         maintenant=None, cours_filtre="") -> dict:
+                         maintenant=None, cours_filtre="", encaissements_hors_achats=None) -> dict:
     """Les KPI de la phase 2 : revenus, abonnements, essais & conversion.
 
     Tout est GLOBAL période/coach — sauf « valeur par cours », calculée sur les
@@ -928,7 +966,11 @@ def calculer_kpi_finance(achats, en_attente, memberships, faits, debut, fin, gra
     inconnus = [a for a in periode if a["qualite"] == QUALITE_INCONNU]
     payants = [a for a in fiables if (a["montant"] or 0) > 0]
     gratuits = [a for a in fiables if a["gratuit"]]
-    ca = _somme(a["montant"] for a in payants)
+    # STATS-2 : encaissements prouvés d'abonnements supprimés — dans le CA,
+    # jamais dans un compteur d'achats ni dans le panier moyen.
+    hors = [e for e in (encaissements_hors_achats or []) if isinstance(e, dict) and _dans_dt(e.get("date_dt"), debut, fin)]
+    ca_achats = _somme(a["montant"] for a in payants)
+    ca = _somme([ca_achats] + [e["montant"] for e in hors])
     acheteurs = {a["participant_key"] for a in payants if a["participant_key"]}
     par_moyen = {m: {"nombre": 0, "montant": 0.0} for m in MOYENS}
     for a in fiables:
@@ -938,6 +980,11 @@ def calculer_kpi_finance(achats, en_attente, memberships, faits, debut, fin, gra
     for a in fiables:
         par_canal[a["canal"]]["nombre"] += 1
         par_canal[a["canal"]]["montant"] = round(par_canal[a["canal"]]["montant"] + (a["montant"] or 0), 2)
+    for e in hors:  # montants seulement : ce ne sont pas des achats
+        if e.get("moyen") in par_moyen:
+            par_moyen[e["moyen"]]["montant"] = round(par_moyen[e["moyen"]]["montant"] + e["montant"], 2)
+        if e.get("canal") in par_canal:
+            par_canal[e["canal"]]["montant"] = round(par_canal[e["canal"]]["montant"] + e["montant"], 2)
     attente = [x for x in (en_attente or []) if _dans_dt(x.get("date_dt"), debut, fin)]
     serie = {}
     for a in fiables:
@@ -945,6 +992,10 @@ def calculer_kpi_finance(achats, en_attente, memberships, faits, debut, fin, gra
         s = serie.setdefault(c, {"periode": c, "ca": 0.0, "achats": 0})
         s["ca"] = round(s["ca"] + (a["montant"] or 0), 2)
         s["achats"] += 1
+    for e in hors:
+        c = _cle_serie(e["date_dt"], granularite)
+        s = serie.setdefault(c, {"periode": c, "ca": 0.0, "achats": 0})
+        s["ca"] = round(s["ca"] + e["montant"], 2)
     par_cours = {}
     faits_p = [f for f in (faits or []) if f.get("occurrence_dt") is not None and _dans(f, debut, fin)]
     for f in faits_p:
@@ -976,9 +1027,10 @@ def calculer_kpi_finance(achats, en_attente, memberships, faits, debut, fin, gra
         "ca_manuel": par_canal["manuel"]["montant"],
         "transactions_payees": len(payants),
         "gratuits": len(gratuits),
-        "panier_moyen": round(ca / len(payants), 2) if payants else None,
+        "panier_moyen": round(ca_achats / len(payants), 2) if payants else None,
         "acheteurs_uniques": len(acheteurs),
-        "revenu_par_participant": round(ca / len(acheteurs), 2) if acheteurs else None,
+        "revenu_par_participant": round(ca_achats / len(acheteurs), 2) if acheteurs else None,
+        "encaisse_abonnements_supprimes": {"nombre": len(hors), "montant": _somme(e["montant"] for e in hors)},
         "declare_non_prouve": {"nombre": len(partiels), "montant": _somme((a["montant"] or 0) for a in partiels)},
         "montant_inconnu": len(inconnus),
         "en_attente": {"nombre": len(attente), "montant_declare": _somme((x["montant"] or 0) for x in attente)},

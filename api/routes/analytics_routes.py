@@ -197,7 +197,8 @@ def _coeur_kpi(sources: dict, perimetre: str, debut, fin, granularite: str, cour
         or str(f.get("code") or "").strip().upper() in {str(x.get("code") or "").strip().upper() for x in _subs_perim}]
     _achats = construire_achats(_subs_perim, _fiches_perim, paiements, offres_par_id, maintenant)
     _fin = calculer_kpi_finance(_achats["achats"], _achats["en_attente"], cartes, faits, debut, fin, _g,
-                                maintenant, cours_filtre=_cid)
+                                maintenant, cours_filtre=_cid,
+                                encaissements_hors_achats=_achats.get("encaissements_supprimes"))
     kpi.update(_fin)
     kpi["achats"] = {"ecartes": _achats["ecartes"], "qualite": _achats["qualite"], "total": len(_achats["achats"])}
     # TRACKING 2B : ACQUISITION — PAR SOURCE. Même faits, mêmes achats, mêmes
@@ -225,7 +226,8 @@ def _projection_association(kpi: dict, ctx: dict, debut, fin, libelle: str, main
     def _kpi_de(_d, _f):
         _k = calculer_kpi(faits, _d, _f, "mois")
         _k.update(calculer_kpi_finance(_achats["achats"], _achats["en_attente"], cartes, faits, _d, _f,
-                                       "mois", maintenant, cours_filtre=_cid))
+                                       "mois", maintenant, cours_filtre=_cid,
+                                       encaissements_hors_achats=_achats.get("encaissements_supprimes")))
         return _k
     _pd, _pf = periode_precedente(debut, fin)
     _prec = _kpi_de(_pd, _pf)
