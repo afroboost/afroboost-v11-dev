@@ -56890,6 +56890,11 @@ init_abonnement_actuel_db(db)
 from api.routes.ambassadeur_routes import router as ambassadeur_router, init_db as init_ambassadeur_db, assurer_index as v610o_ambassadeur_index  # noqa: E402
 fastapi_app.include_router(ambassadeur_router)
 init_ambassadeur_db(db)
+# P4-RELAIS : passerelle LECTURE SEULE vers afroboosteur.com (prospects/campagnes/
+# conversations), gardee par AFROBOOSTEUR_RELAY_SECRET, inerte sans lui (503).
+from api.routes.afroboosteur_relais import router as afroboosteur_relais_router, init_db as init_afroboosteur_relais_db  # noqa: E402
+fastapi_app.include_router(afroboosteur_relais_router)
+init_afroboosteur_relais_db(db)
 
 # v15.0: Include multi-vendor payment routes
 fastapi_app.include_router(payment_config_router)
