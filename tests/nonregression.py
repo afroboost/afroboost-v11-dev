@@ -3090,6 +3090,37 @@ def t153_v633_ia_enhance_text_acces_legitime():
         record(153, titre, False, str(e))
 
 
+
+def t154_v634_ia_routes_sans_auth():
+    """V634 : /api/chat/enhance-prompt et /api/ai/campaign-suggestions (appels
+    OpenAI facturés) exigent un JWT SIGNÉ de coach/admin, jugé AVANT la lecture
+    du corps. Sondes à COÛT NUL : corps VIDE `{}` — avant V634 ces routes
+    répondaient 400 (preuve qu'un anonyme atteignait le code), après V634 elles
+    refusent (403) sans lire le corps. Jamais d'appel au modèle."""
+    _mt_sonder(154, "V634 : POST /api/chat/enhance-prompt + /api/ai/campaign-suggestions (corps vide) sans coach signé -> refus", [
+        ("POST", "/api/chat/enhance-prompt", {}),
+        ("POST", "/api/ai/campaign-suggestions", {}),
+    ])
+
+
+def t155_v634_ia_routes_acces_legitime():
+    """V634 — PENDANT OBLIGATOIRE (V310c) : le super-admin SIGNÉ franchit la garde
+    des deux routes. Coût nul : corps vide -> 400 rendu APRÈS la garde, sans appel
+    au modèle. SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    titre = "V634 : super-admin signé -> les 2 routes IA franchissent la garde (400 corps vide)"
+    if not ADMIN_JWT:
+        return skip(155, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        codes = {}
+        for chemin in ("/api/chat/enhance-prompt", "/api/ai/campaign-suggestions"):
+            r = requests.post(_url(chemin), headers=_mt8_admin(), json={}, timeout=TIMEOUT)
+            codes[chemin] = r.status_code
+        record(155, titre, all(c == 400 for c in codes.values()),
+               " | ".join(f"{k} HTTP {v}" for k, v in codes.items()) + " (400 attendu : garde franchie, aucun appel IA)")
+    except Exception as e:
+        record(155, titre, False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3157,6 +3188,7 @@ def main():
                    t131_co1_ai_logs_sans_auth, t132_co1_ai_config_ecriture_sans_auth,
                    t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
                    t152_v633_ia_enhance_text_sans_auth, t153_v633_ia_enhance_text_acces_legitime,
+                   t154_v634_ia_routes_sans_auth, t155_v634_ia_routes_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
