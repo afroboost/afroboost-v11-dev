@@ -16,6 +16,7 @@ import SvgIcon from '../SvgIcon';
 // nue, utilisee ici parce que cet ecran a DEJA ses propres boutons d'upload :
 // on change ou va le fichier, pas l'interface.
 import CloudinaryUploadButton, { uploadToCloudinary, isCloudinaryConfigured } from '../CloudinaryUploadButton';
+import { enTetesCoach } from '../../utils/enTetesCoach'; // V633 : JWT joint aux appels IA
 import { applyPrimaryColor, persistThemeColors } from '../../utils/themeColor'; // V259 + V295 (anti-FOUC)
 import HeroEditeurVisuel from './HeroEditeurVisuel'; // V554 : éditeur visuel du Hero
 import { surErreurImageSansSecours } from '../../utils/imageSecours'; // IMG-1 : anti-boucle des images
@@ -338,7 +339,7 @@ const ConceptEditor = ({
     try {
       const res = await fetch(`${API}/ai/enhance-text`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: enTetesCoach({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ text, context: 'legal' })
       });
       const data = await res.json();

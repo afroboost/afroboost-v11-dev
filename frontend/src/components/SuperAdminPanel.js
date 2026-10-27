@@ -5,6 +5,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import SvgIcon from "./SvgIcon";
+import { enTetesCoach } from '../utils/enTetesCoach'; // V633 : JWT joint aux appels IA
 import CockpitGlobal from "./CockpitGlobal"; // V334 etape 4
 import AnalyticsCockpit from "./analytics/AnalyticsCockpit"; // ANALYTICS phase 1
 import BilanAssociation from "./analytics/BilanAssociation"; // ANALYTICS phase 3 : bilan Association + exports
@@ -123,7 +124,7 @@ const SuperAdminPanel = ({ userEmail, onClose }) => {
     try {
       const res = await fetch(`${API}/ai/enhance-text`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: enTetesCoach({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ text, context: 'pack' })
       });
       const data = await res.json();

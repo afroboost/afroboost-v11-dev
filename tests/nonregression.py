@@ -3063,6 +3063,33 @@ def t134_co1_ia_acces_legitime():
         record(134, titre, False, str(e))
 
 
+
+def t152_v633_ia_enhance_text_sans_auth():
+    """V633 : /api/ai/enhance-text (appel OpenAI facturé) exige un JWT SIGNÉ de
+    coach/admin, jugé AVANT la lecture du corps. Sonde à COÛT NUL : corps VIDE
+    `{}` — avant V633 la route répondait 400 « Le texte est requis » (preuve
+    qu'un anonyme atteignait le code), après V633 elle refuse (403) avant même
+    de lire le corps. Aucun texte n'est jamais envoyé : jamais d'appel au modèle."""
+    _mt_sonder(152, "V633 : POST /api/ai/enhance-text (corps vide) sans coach signé -> refus", [
+        ("POST", "/api/ai/enhance-text", {}),
+    ])
+
+
+def t153_v633_ia_enhance_text_acces_legitime():
+    """V633 — PENDANT OBLIGATOIRE (V310c) : le super-admin SIGNÉ franchit la garde.
+    Toujours à COÛT NUL : corps vide -> 400 « Le texte est requis », rendu APRÈS la
+    garde — la preuve que l'identité est acceptée, sans appeler OpenAI.
+    SKIP sans ADMIN_JWT = livraison du durcissement INTERDITE."""
+    titre = "V633 : super-admin signé -> POST /api/ai/enhance-text franchit la garde (400 corps vide)"
+    if not ADMIN_JWT:
+        return skip(153, titre, "ADMIN_JWT non fourni — ⛔ parcours légitime NON prouvé (règle V310c)")
+    try:
+        r = requests.post(_url("/api/ai/enhance-text"), headers=_mt8_admin(), json={}, timeout=TIMEOUT)
+        record(153, titre, r.status_code == 400, f"HTTP {r.status_code} (400 attendu : garde franchie, aucun appel IA)")
+    except Exception as e:
+        record(153, titre, False, str(e))
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3129,6 +3156,7 @@ def main():
                    t150_v607_funnel_chaine_sans_auth, t151_v607_relais_preuves_inconnues,
                    t131_co1_ai_logs_sans_auth, t132_co1_ai_config_ecriture_sans_auth,
                    t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
+                   t152_v633_ia_enhance_text_sans_auth, t153_v633_ia_enhance_text_acces_legitime,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

@@ -3,6 +3,7 @@
  * Gestion des offres/produits - Extrait de CoachDashboard.js
  */
 import React from 'react';
+import { enTetesCoach } from '../../utils/enTetesCoach'; // V633 : JWT joint aux appels IA
 import OfferWizard from './OfferWizard';   // V224
 import OfferCard from './OfferCard';       // V224
 import SvgIcon from '../SvgIcon';          // V228
@@ -314,7 +315,7 @@ const OffersManager = ({
   const fetchEnhancedText = async (text) => {
     const res = await fetch(`${API}/ai/enhance-text`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: enTetesCoach({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ text, context: 'offer' })
     });
     const data = await res.json();
