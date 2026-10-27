@@ -215,8 +215,8 @@ class DBBouchon:
         return self[nom]
 
 
-def signer(secret, methode, chemin, requete, horodatage):
-    chaine = R._chaine_canonique(methode, chemin, requete, horodatage)
+def signer(secret, methode, chemin, requete, horodatage, corps_brut=b""):
+    chaine = R._chaine_canonique(methode, chemin, requete, horodatage, R._empreinte_corps(corps_brut))
     return hmac_module.new(secret.encode(), chaine.encode(), hashlib.sha256).hexdigest()
 
 
@@ -232,22 +232,33 @@ class RequeteFictive:
         self.method = methode
         self.url = URLFictive(chemin, requete)
         self.headers = headers or {}
-        self._corps = corps
+        # UNE SEULE SERIALISATION, reutilisee par .body() ET .json() — exactement
+        # comme un vrai `Request` Starlette (le flux est lu une fois, mis en
+        # cache). Sans cela, l'empreinte signee et le JSON analyse pourraient
+        # porter sur deux representations differentes du meme dict Python.
+        import json as _json
+        self._corps_brut = _json.dumps(corps).encode("utf-8") if corps is not None else b""
+        self._a_un_corps = corps is not None
+
+    async def body(self):
+        return self._corps_brut
 
     async def json(self):
-        if self._corps is None:
+        if not self._a_un_corps:
             raise ValueError("pas de corps")
-        return self._corps
+        import json as _json
+        return _json.loads(self._corps_brut)
 
 
 def requete_signee(methode, chemin, requete="", corps=None, secret=SECRET,
                     decalage=0, sans_signature=False):
     horodatage = str(int(time.time()) + decalage)
-    headers = {"X-Afroboosteur-Timestamp": horodatage}
+    req = RequeteFictive(methode=methode, chemin=chemin, requete=requete,
+                         headers={"X-Afroboosteur-Timestamp": horodatage}, corps=corps)
     if not sans_signature:
-        headers["X-Afroboosteur-Signature"] = signer(secret, methode, chemin, requete, horodatage)
-    return RequeteFictive(methode=methode, chemin=chemin, requete=requete,
-                          headers=headers, corps=corps)
+        req.headers["X-Afroboosteur-Signature"] = signer(
+            secret, methode, chemin, requete, horodatage, req._corps_brut)
+    return req
 
 
 def executer(coro):
@@ -526,6 +537,31 @@ try:
     verifier("5c mauvais secret -> 403", False)
 except HTTPException as e:
     verifier("5c mauvais secret -> 403", e.status_code == 403, str(e.status_code))
+
+# 5d. REVUE DE SECURITE (P6A) — LE CORPS EST DESORMAIS LIE A LA SIGNATURE.
+# Une signature valide pour UN corps JSON ne doit JAMAIS rester valide pour
+# un AUTRE corps sur le meme chemin/horodatage — c'est exactement le defaut
+# ferme par `_empreinte_corps()`. Construit a la main (pas via `requete_signee`,
+# qui signerait automatiquement le bon corps) pour simuler une substitution.
+b5d, empreinte5d = scenario_de_base()
+chemin_apercu = "/api/afroboosteur-relais/conversations/msg-1/apercu-reponse"
+horodatage5d = str(int(time.time()))
+corps_signe = {"draft_hash": empreinte5d}
+corps_substitue = {"draft_hash": "nimporte-quoi-d-autre"}
+signature_du_premier_corps = signer(
+    SECRET, "POST", chemin_apercu, "", horodatage5d,
+    __import__("json").dumps(corps_signe).encode("utf-8"))
+requete_substituee = RequeteFictive(
+    methode="POST", chemin=chemin_apercu, requete="",
+    headers={"X-Afroboosteur-Timestamp": horodatage5d,
+             "X-Afroboosteur-Signature": signature_du_premier_corps},
+    corps=corps_substitue)
+try:
+    executer(R.relais_apercu_reponse("msg-1", requete_substituee))
+    verifier("5d une signature d'UN corps est refusee pour un AUTRE corps (substitution fermee)", False)
+except HTTPException as e:
+    verifier("5d une signature d'UN corps est refusee pour un AUTRE corps (substitution fermee)",
+             e.status_code == 403, str(e.status_code))
 
 # ============================================================================
 print("\n6. AUCUNE ECRITURE POSSIBLE — par construction du bouchon, pas par promesse")

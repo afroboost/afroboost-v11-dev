@@ -121,13 +121,42 @@ def _coach_id_configure() -> str:
     return (os.environ.get("AFROBOOSTEUR_RELAY_COACH_ID", "") or "").strip()
 
 
-def _chaine_canonique(methode: str, chemin: str, requete_brute: str, horodatage: str) -> str:
-    return "\n".join([methode.upper(), chemin, requete_brute or "", horodatage])
+def _empreinte_corps(corps_brut: bytes) -> str:
+    """SHA-256 hexadecimal du CORPS BRUT exact — `b""` pour un GET (constante
+    bien connue, `e3b0c4...`), les octets exacts envoyes pour un POST. Jamais
+    une reserialisation JSON : reserialiser risquerait un ordre de cles
+    different de celui reellement signe cote appelant — l'empreinte porte sur
+    ce qui a VOYAGE, pas sur une reconstruction."""
+    import hashlib
+    return hashlib.sha256(corps_brut or b"").hexdigest()
+
+
+def _chaine_canonique(methode: str, chemin: str, requete_brute: str, horodatage: str,
+                       empreinte_corps: str = "") -> str:
+    """REVUE DE SECURITE — P6A : la chaine ne liait que methode+chemin+requete+
+    horodatage. Les routes de lecture (phases 4/5) n'ont jamais de corps, donc
+    rien n'etait en jeu ; la phase 6A a introduit DEUX routes `POST` avec un
+    corps JSON SIGNIFICATIF (le texte d'un brouillon, une empreinte) — et ce
+    corps, lui, n'etait couvert par AUCUNE preuve : une signature valide pour
+    UN corps restait valide, telle quelle, pour N'IMPORTE QUEL AUTRE corps sur
+    le MEME chemin/horodatage. Une fuite de signature (journal intermediaire,
+    outil de diagnostic) aurait permis de substituer le TEXTE enregistre,
+    dans la fenetre de 5 minutes.
+    `empreinte_corps` (vide par defaut) ferme ce defaut en liant le corps a la
+    preuve — `_empreinte_corps()`, jamais une reserialisation. Les trois
+    routes GET existantes n'envoient jamais de corps : leur preuve ne change
+    pas de NATURE, seulement d'une ligne CONSTANTE (l'empreinte d'un corps
+    vide) — mais CHANGE DE VALEUR, ce qui rompt la compatibilite avec les
+    signatures emises avant ce correctif. Voir le journal de deploiement :
+    les deux cotes doivent etre deployes ENSEMBLE, jamais l'un sans l'autre.
+    """
+    return "\n".join([methode.upper(), chemin, requete_brute or "", horodatage, empreinte_corps])
 
 
 def _signature_valide(secret: str, chaine_canonique: str, entetes) -> bool:
     """HMAC-SHA256 en TEMPS CONSTANT sur une chaîne LIÉE À LA REQUÊTE (méthode,
-    chemin, requête, horodatage) — jamais une valeur réutilisable telle quelle."""
+    chemin, requête, horodatage, empreinte du corps) — jamais une valeur
+    réutilisable telle quelle, et jamais substituable sur son corps."""
     import hmac
     import hashlib
     attendue = hmac.new(secret.encode(), chaine_canonique.encode(), hashlib.sha256).hexdigest()
@@ -146,9 +175,16 @@ def _horodatage_dans_la_fenetre(valeur: str) -> bool:
 
 
 async def _garde(request: Request) -> str:
-    """Vérifie secret + horodatage + signature liée à la requête, ET la
-    présence du périmètre coach. Lève HTTPException (503 si inerte, 401/403
-    selon le défaut) ou rend l'identité (informative) du membre appelant."""
+    """Vérifie secret + horodatage + signature liée à la requête (ET à son
+    corps — P6A), ET la présence du périmètre coach. Lève HTTPException
+    (503 si inerte, 401/403 selon le défaut) ou rend l'identité (informative)
+    du membre appelant.
+
+    `await request.body()` AVANT toute autre lecture du corps : Starlette met
+    en cache les octets lus, donc `await request.json()`, plus bas dans
+    chaque route, relit le MEME corps sans jamais retoucher le flux reseau —
+    aucun risque d'epuiser le flux avant que la route n'y accede a son tour.
+    """
     secret = _secret()
     coach_id = _coach_id_configure()
     if not secret or not coach_id:
@@ -159,8 +195,10 @@ async def _garde(request: Request) -> str:
         logger.warning(f"{PREFIXE} horodatage absent ou hors fenetre")
         raise HTTPException(status_code=401, detail="Horodatage absent ou expiré")
 
+    corps_brut = await request.body()
     chaine = _chaine_canonique(
-        request.method, request.url.path, str(request.url.query or ""), horodatage
+        request.method, request.url.path, str(request.url.query or ""), horodatage,
+        _empreinte_corps(corps_brut)
     )
     if not _signature_valide(secret, chaine, request.headers):
         logger.warning(f"{PREFIXE} signature invalide")

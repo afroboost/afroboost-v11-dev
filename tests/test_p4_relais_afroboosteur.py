@@ -157,9 +157,15 @@ class RequeteFictive:
         self.headers = headers or {}
         self.query_params = params or {}
 
+    # P6A — `_garde()` lit desormais le corps AVANT la signature, meme pour
+    # ces routes GET (le corps y est toujours vide) : ce bouchon doit donc
+    # repondre a `.body()` comme le ferait un vrai `Request` Starlette.
+    async def body(self):
+        return b""
 
-def signer(secret, methode, chemin, requete, horodatage):
-    chaine = R._chaine_canonique(methode, chemin, requete, horodatage)
+
+def signer(secret, methode, chemin, requete, horodatage, corps_brut=b""):
+    chaine = R._chaine_canonique(methode, chemin, requete, horodatage, R._empreinte_corps(corps_brut))
     return hmac_module.new(secret.encode(), chaine.encode(), hashlib.sha256).hexdigest()
 
 
@@ -206,12 +212,24 @@ print("\n1bis. LE CONTRAT CROISE AVEC AFROBOOSTEUR.COM — vecteur FIGE, des DEU
 # peuvent pas partager un fichier : ils partagent ce VECTEUR, et c'est lui qui
 # romprait visiblement si l'un des deux cotes changeait le format signe —
 # une 403 en production, sans ce test, n'aurait dit ni ou ni pourquoi.
+#
+# RECALCULE — P6A, REVUE DE SECURITE : la chaine canonique porte desormais une
+# CINQUIEME ligne, l'empreinte SHA-256 du corps brut (voir `_chaine_canonique`
+# et son en-tete). Pour cette requete GET (corps toujours vide), c'est la
+# constante bien connue de SHA-256("") — mais la SIGNATURE, elle, change de
+# valeur : verifiee ici en Python ET en Node (crypto natif), les deux
+# s'accordent au caractere pres avant d'etre figee.
+_empreinte_corps_vide = R._empreinte_corps(b"")
+verifier("1bis-0 l'empreinte d'un corps vide est la constante SHA-256(\"\") bien connue",
+         _empreinte_corps_vide == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+         _empreinte_corps_vide)
 _chaine_fixe = R._chaine_canonique(
-    "GET", "/api/afroboosteur-relais/prospects", "limit=25&offset=0", "1793456789")
+    "GET", "/api/afroboosteur-relais/prospects", "limit=25&offset=0", "1793456789",
+    _empreinte_corps_vide)
 _sig_fixe = signer("secret-de-contrat-croise-pour-test-uniquement", "GET",
                     "/api/afroboosteur-relais/prospects", "limit=25&offset=0", "1793456789")
 verifier("1bis la signature du vecteur fige correspond EXACTEMENT au cote TypeScript",
-         _sig_fixe == "3f3b062b4a66411f439b1361eb7d4c2bc86ca5808efb8b81392734fd9ea7affa",
+         _sig_fixe == "3b04a151aba0ef477a67ceee55a1ff815d4dc2496d8f3ff8707b82bb1b6096c6",
          _sig_fixe)
 
 print("\n2. UNE SIGNATURE VALIDE POUR UNE REQUETE N'EST PAS VALIDE POUR UNE AUTRE")
