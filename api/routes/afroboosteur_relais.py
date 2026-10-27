@@ -103,7 +103,6 @@ db = None
 P3S1_COLLECTION = "partner_prospects"
 P3S3_CAMPAGNES = "prospect_campaigns"
 P3U2_COLLECTION = "prospect_inbound_messages"
-V595_MEDIAS = "prospection_medias"  # PHASE 6B
 
 LIMITE_MAX = 50
 FENETRE_HORODATAGE_SECONDES = 300  # ±5 minutes
@@ -213,29 +212,11 @@ async def _garde(request: Request) -> str:
     en cache les octets lus, donc `await request.json()`, plus bas dans
     chaque route, relit le MEME corps sans jamais retoucher le flux reseau —
     aucun risque d'epuiser le flux avant que la route n'y accede a son tour.
-
-    REVUE DE SECURITE — P6B : `AFROBOOSTEUR_RELAY_COACH_ID` NE DOIT JAMAIS
-    DESIGNER LE SUPER-ADMIN. Les deux fonctions deleguees de la phase 6B
-    (`p3s3_preparer_campagne_pour`, `p3s3_modifier_campagne_pour`) scopent
-    leurs lectures/ecritures via `is_super_admin(appelant)` : si `appelant`
-    EST le super-admin, leur filtre devient VIDE (tous les coachs) et leur
-    controle de propriete s'efface entierement — ce relais deviendrait alors
-    une porte dérobée inter-coachs, pour une simple erreur de configuration
-    (coller la mauvaise adresse dans Coolify), jamais une action du code.
-    Fermé ICI, une fois, pour toutes les routes presentes et futures — jamais
-    suppose « ca ne peut pas arriver » parce que ca n'est pas arrive encore
-    (meme principe que `_portee()` ci-dessous, voir son commentaire)."""
+    """
     secret = _secret()
     coach_id = _coach_id_configure()
     if not secret or not coach_id:
         raise HTTPException(status_code=503, detail="Relais afroboosteur non configuré")
-
-    from api.server import is_super_admin
-    if is_super_admin(coach_id):
-        logger.error(
-            "%s AFROBOOSTEUR_RELAY_COACH_ID designe le super-admin — relais inerte "
-            "pour empecher une portee vide cote coach", PREFIXE)
-        raise HTTPException(status_code=503, detail="Relais afroboosteur mal configuré")
 
     horodatage = (request.headers.get("X-Afroboosteur-Timestamp", "") or "").strip()
     if not horodatage or not _horodatage_dans_la_fenetre(horodatage):
@@ -335,7 +316,6 @@ _PROJECTION_CAMPAGNE = {
     "_id": 0, "id": 1, "nom": 1, "etat": 1, "nb_fiches": 1, "nb_destinataires": 1,
     "summary": 1, "created_at": 1, "updated_at": 1, "approved_at": 1,
     "started_at": 1, "finished_at": 1,
-    "media_ids": 1,  # PHASE 6B — purement declaratif, voir p3s3_medias_partages_valides
 }
 
 
@@ -350,78 +330,6 @@ async def relais_lister_campagnes(request: Request):
         .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
     return {"total": total, "returned": len(lignes), "limit": limite, "offset": depart,
             "campaigns": lignes}
-
-
-@router.get("/api/afroboosteur-relais/campaigns/{campaign_id}")
-async def relais_lire_campagne(campaign_id: str, request: Request):
-    """Le detail d'UNE campagne — meme projection que la liste, JAMAIS les
-    actions (chaque action porte un message pret et une adresse reelle de
-    prospect : une PII que cette route ne doit pas faire voyager vers un
-    autre systeme). Pour « combien de destinataires », `summary`/`nb_*`
-    suffisent — c'est deja ce que l'ecran du coach affiche en premier."""
-    await _garde(request)
-    identifiant = (campaign_id or "").strip()[:64]
-    campagne = await db[P3S3_CAMPAGNES].find_one(
-        dict(_portee(), id=identifiant), _PROJECTION_CAMPAGNE)
-    if not campagne:
-        raise HTTPException(status_code=404, detail="Campagne introuvable")
-    return {"campaign": campagne}
-
-
-@router.post("/api/afroboosteur-relais/campaigns")
-async def relais_preparer_campagne(request: Request):
-    """Cree OU previsualise une campagne de prospection — PHASE 6B.
-
-    Relaie VERBATIM vers `p3s3_preparer_campagne_pour`, la MEME fonction que
-    la route du coach appelle depuis son extraction (voir server.py) : aucune
-    logique parallele, aucun risque de divergence. `dry_run` (true par
-    defaut, comme cote coach) decide seul si quelque chose est ecrit —
-    « previsualiser » et « creer » ne sont pas deux routes, mais le MEME appel
-    avec ce seul booleen different. N'envoie jamais rien : cette fonction n'a
-    aucune notion de fournisseur, voir son propre docstring.
-    """
-    await _garde(request)
-    from api.server import p3s3_preparer_campagne_pour
-
-    try:
-        corps = await request.json()
-    except Exception:
-        corps = {}
-    if not isinstance(corps, dict):
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    resultat = await p3s3_preparer_campagne_pour(_coach_id_configure(), corps)
-    campagne = resultat.get("campaign")
-    if isinstance(campagne, dict):
-        resultat["campaign"] = {cle: campagne.get(cle) for cle in _PROJECTION_CAMPAGNE if cle != "_id"}
-    # `actions`/`campagne_ouverte` : memes reserves PII qu'au-dessus — retirees
-    # de la reponse du relais, jamais de la fonction reutilisee elle-meme.
-    resultat.pop("actions", None)
-    ouverte = resultat.get("campagne_ouverte")
-    if isinstance(ouverte, dict):
-        resultat["campagne_ouverte"] = {cle: ouverte.get(cle) for cle in _PROJECTION_CAMPAGNE if cle != "_id"}
-    return resultat
-
-
-@router.patch("/api/afroboosteur-relais/campaigns/{campaign_id}")
-async def relais_modifier_campagne(campaign_id: str, request: Request):
-    """Modifie une campagne PREPAREE — nom et/ou medias partages. Relaie vers
-    `p3s3_modifier_campagne_pour`, la MEME fonction que la route du coach.
-    """
-    await _garde(request)
-    from api.server import p3s3_modifier_campagne_pour
-
-    try:
-        corps = await request.json()
-    except Exception:
-        corps = {}
-    if not isinstance(corps, dict):
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    identifiant = (campaign_id or "").strip()[:64]
-    resultat = await p3s3_modifier_campagne_pour(_coach_id_configure(), identifiant, corps)
-    campagne = resultat.get("campaign")
-    if isinstance(campagne, dict):
-        resultat["campaign"] = {cle: campagne.get(cle) for cle in _PROJECTION_CAMPAGNE if cle != "_id"}
-    return resultat
 
 
 # -----------------------------------------------------------------------------
@@ -692,144 +600,3 @@ async def relais_apercu_reponse(inbound_id: str, request: Request):
 
     return {"pret": True, "raison": None, "destinataire": destinataire,
             "texte": texte, "deja_envoye": False}
-
-
-# -----------------------------------------------------------------------------
-# 5. PHASE 6B — MEDIATHEQUE PARTAGEE (V595) : consulter, et ajouter PAR LIEN
-#
-# PAS DE DUPLICATION DE FICHIERS. Ce relais ne stocke jamais un octet : il
-# relit `prospection_medias`/`prospection_niches`, et pour l'ajout, relaie vers
-# la MEME validation que l'ecran coach (`v595_ajouter_media_pour`).
-#
-# ⚠️ L'UPLOAD BINAIRE N'EST PAS REPRIS ICI, PAR CHOIX DELIBERE. `/api/coach/
-# upload-asset` et `/api/coach/upload-chunk` exigent une identite COACH
-# (JWT ou X-User-Email) pour attribuer et bornewr un fichier — une notion que
-# ce relais n'a pas : son secret HMAC agit pour LE coach configure, jamais
-# pour un membre afroboosteur precis, et accepter un gros binaire a travers un
-# canal protege par un seul secret partage (sans antivirus, sans quota par
-# auteur) aurait ete une SURFACE NOUVELLE, pas une reutilisation. Un membre
-# qui veut ajouter un fichier neuf doit soit fournir un LIEN PUBLIC (accepte
-# ci-dessous), soit demander au coach de l'envoyer directement sur
-# afroboost.com. Si le President veut lever cette limite, cela merite un GO
-# separe et explicite — ce n'est pas une omission a corriger sans le demander.
-#
-# AUCUN CHAMP « CONFIDENTIEL » N'EXISTE DANS LE SCHEMA V595 (verifie — zero
-# occurrence dans tout server.py). La protection que ce lot apporte n'est donc
-# pas de MASQUER des medias (la liste ci-dessous montre tout, comme demande :
-# niches ET statuts existants), mais d'empecher qu'un media encore
-# `en_cours`/`a_verifier` (jamais relu par le coach) soit SELECTIONNABLE pour
-# une campagne — voir `p3s3_medias_partages_valides` : seul `validee` passe.
-# -----------------------------------------------------------------------------
-
-_PROJECTION_MEDIA = {
-    "_id": 0, "id": 1, "niche": 1, "format": 1, "url": 1, "statut": 1,
-    "version": 1, "created_at": 1, "updated_at": 1, "cible": 1, "cible_id": 1,
-    "fichier.nom": 1, "fichier.type": 1, "fichier.taille": 1,
-    "fichier.duree": 1, "fichier.largeur": 1, "fichier.hauteur": 1,
-    # `notes` et `coach_id` : JAMAIS renvoyes — `notes` est une annotation
-    # privee du coach, `coach_id` un detail interne sans utilite ici.
-}
-
-_STATUTS_MEDIA_FILTRABLES = ("en_cours", "a_verifier", "validee", "archivee")
-_FORMATS_MEDIA_FILTRABLES = ("original", "16_9", "9_16", "1_1", "miniature", "document")
-
-
-@router.get("/api/afroboosteur-relais/medias")
-async def relais_lister_medias(request: Request):
-    """Lecture pure de la mediatheque — images/videos/miniatures/PDF, niches
-    et statuts existants, filtrables. Rien n'est masque par statut : c'est
-    l'INSERTION dans une campagne qui est bornee a `validee`, pas la lecture
-    (voir l'en-tete de cette section)."""
-    await _garde(request)
-    limite, depart = _pagination(request)
-    filtre = _portee()
-    parametres = request.query_params
-    niche = (parametres.get("niche") or "").strip()[:64]
-    if niche:
-        filtre["niche"] = niche
-    fmt = (parametres.get("format") or "").strip()
-    if fmt:
-        if fmt not in _FORMATS_MEDIA_FILTRABLES:
-            raise HTTPException(status_code=400,
-                                detail="Format inconnu. Valeurs acceptees : %s"
-                                       % ", ".join(_FORMATS_MEDIA_FILTRABLES))
-        filtre["format"] = fmt
-    statut = (parametres.get("statut") or "").strip()
-    if statut:
-        if statut not in _STATUTS_MEDIA_FILTRABLES:
-            raise HTTPException(status_code=400,
-                                detail="Statut inconnu. Valeurs acceptees : %s"
-                                       % ", ".join(_STATUTS_MEDIA_FILTRABLES))
-        filtre["statut"] = statut
-    total = await db[V595_MEDIAS].count_documents(filtre)
-    lignes = await db[V595_MEDIAS].find(filtre, _PROJECTION_MEDIA) \
-        .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
-    return {"total": total, "returned": len(lignes), "limit": limite, "offset": depart,
-            "medias": lignes}
-
-
-@router.get("/api/afroboosteur-relais/niches")
-async def relais_lister_niches(request: Request):
-    """Les niches du coach — pour filtrer la mediatheque et choisir une cible
-    de campagne. Lecture pure ; reutilise `v598_niches`, qui inscrit les six
-    niches d'origine si elles manquent encore (idempotent, jamais destructeur)."""
-    await _garde(request)
-    from api.server import v598_niches
-
-    niches = await v598_niches(_coach_id_configure())
-    projetees = [{"id": n.get("id"), "cle": n.get("cle"), "nom": n.get("nom"),
-                 "slug": n.get("slug"), "ordre": n.get("ordre"), "active": bool(n.get("active", True))}
-                for n in niches]
-    return {"total": len(projetees), "niches": projetees}
-
-
-@router.post("/api/afroboosteur-relais/medias")
-async def relais_ajouter_media(request: Request):
-    """Ajoute un media PAR LIEN PUBLIC uniquement — voir l'en-tete de cette
-    section pour pourquoi l'upload binaire n'est pas repris ici. Relaie vers
-    `v595_ajouter_media_pour`, la MEME validation que l'ecran coach (niche
-    active, format autorise, lien public anti-SSRF) : aucune logique
-    parallele qui pourrait diverger.
-
-    Entre « en cours », jamais « validee » — comme pour le coach : un ajout
-    depuis ce relais ne rend jamais un media immediatement selectionnable
-    pour une campagne (`p3s3_medias_partages_valides` exige `validee`). Le
-    coach reste seul a faire passer un media au statut valide.
-    """
-    await _garde(request)
-    from api.server import v595_ajouter_media_pour
-
-    try:
-        corps = await request.json()
-    except Exception:
-        corps = {}
-    if not isinstance(corps, dict):
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    url_brute = str(corps.get("url") or "").strip()
-    if url_brute.startswith("/api/files/"):
-        raise HTTPException(
-            status_code=400,
-            detail="Un fichier deja envoye sur afroboost.com ne peut pas etre reference depuis ce relais "
-                   "— utilisez un lien public, ou demandez au coach de l'ajouter directement.")
-    corps_relais = {
-        "niche": corps.get("niche"),
-        "format": corps.get("format"),
-        "url": url_brute,
-        "version": corps.get("version"),
-        "cible": corps.get("cible"),
-        # `notes` : JAMAIS transmis depuis ce relais (annotation privee du coach).
-    }
-    # REVUE DE SECURITE — P6B : `proteger_valides=True`, voir le docstring de
-    # `v595_ajouter_media_pour`. Un media `validee` ne peut JAMAIS etre
-    # demotionne par ce relais, quel que soit l'emplacement vise.
-    resultat = await v595_ajouter_media_pour(_coach_id_configure(), corps_relais, proteger_valides=True)
-    media = resultat.get("media")
-    if isinstance(media, dict):
-        resultat["media"] = {cle: media.get(cle) for cle in _PROJECTION_MEDIA if cle != "_id" and "." not in cle}
-        if media.get("fichier"):
-            resultat["media"]["fichier"] = {
-                "nom": media["fichier"].get("nom"), "type": media["fichier"].get("type"),
-                "taille": media["fichier"].get("taille"), "duree": media["fichier"].get("duree"),
-                "largeur": media["fichier"].get("largeur"), "hauteur": media["fichier"].get("hauteur"),
-            }
-    return resultat
