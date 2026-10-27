@@ -1,33 +1,46 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""PHASE 6A — REPONDRE A UN PARTENAIRE DEPUIS LE RELAIS. ZERO ENVOI, ZERO ECRITURE.
+"""PHASE 6A — REPONDRE A UN PARTENAIRE DEPUIS LE RELAIS. ZERO ENVOI REEL.
 
 CE QUE CE LOT AJOUTE (api/routes/afroboosteur_relais.py)
 ==============================================================================
-Deux routes neuves, toujours sous la meme garde HMAC que les trois lectures
+Trois routes neuves, toujours sous la meme garde HMAC que les trois lectures
 existantes (phases 4/5), jamais un acces generique aux routes privees :
 
-  * GET  .../conversations/{id}/brouillon        — lecture du brouillon
+  * GET  .../conversations/{id}/brouillon        — lecture du brouillon.
+  * POST .../conversations/{id}/brouillon        — ENREGISTRE le texte d'un
+                                                     brouillon (jamais le
+                                                     media), avec un controle
+                                                     de concurrence par
+                                                     empreinte : la SEULE
+                                                     ecriture Mongo du fichier.
   * POST .../conversations/{id}/apercu-reponse    — VALIDE un envoi possible,
                                                      sans jamais le reserver
                                                      ni l'executer.
 
 CE QUE CE BANC PROUVE
 ==============================================================================
-  1. Aucune ecriture Mongo n'est possible — meme par accident : le bouchon
-     de base NE DEFINIT PAS `insert_one`/`update_one`/`delete_one`. Si la
-     route en appelait un, ce test planterait avec AttributeError plutot que
-     de laisser passer une ecriture en silence.
-  2. La portee par coach est respectee : un message d'un autre coach rend 404,
+  1. L'ECRITURE EST STRICTEMENT BORNEE : un bouchon dedie (`CollectionEcrivable`)
+     n'est pose QUE sur `P3AI_BROUILLONS` ; toutes les autres collections
+     (`P3AI4_COLLECTION` comprise — reservation/envoi) restent sur le bouchon
+     de base, qui NE DEFINIT AUCUNE methode d'ecriture. Une ecriture
+     accidentelle ailleurs ferait planter le test avec AttributeError plutot
+     que de passer inapercue.
+  2. JAMAIS D'ECRASEMENT SILENCIEUX : une empreinte perimee refuse
+     l'enregistrement (409) et le texte en base reste EXACTEMENT l'original —
+     verifie en le relisant APRES le refus, pas seulement en lisant le code
+     d'erreur.
+  3. LE MEDIA N'EST JAMAIS TOUCHE par une correction de texte depuis ce relais.
+  4. La portee par coach est respectee : un message d'un autre coach rend 404,
      jamais une fuite d'existence.
-  3. Une signature invalide ou absente refuse AVANT toute lecture en base.
-  4. L'apercu reutilise EXACTEMENT les memes refus que l'envoi reel du coach
+  5. Une signature invalide ou absente refuse AVANT toute lecture en base.
+  6. L'apercu reutilise EXACTEMENT les memes refus que l'envoi reel du coach
      (brouillon absent, vide, place-holder non complete, empreinte perimee,
      deja envoye, contexte perime, STOP, destinataire introuvable) — jamais
      une regle reecrite a part qui pourrait diverger.
-  5. Un `pret: true` ne se produit QUE quand toutes les conditions sont
+  7. Un `pret: true` ne se produit QUE quand toutes les conditions sont
      reunies, et porte le texte + destinataire exacts.
-  6. Aucune sortie reseau (DNS/socket bloques au niveau OS).
+  8. Aucune sortie reseau (DNS/socket bloques au niveau OS).
 
 Lancement :
     python3 tests/test_p4_relais_reponse_partenaire.py
@@ -160,6 +173,33 @@ class CollectionBouchon:
         return sum(1 for d in self.documents if self._ok(d, filtre))
 
 
+class CollectionEcrivable(CollectionBouchon):
+    """SEULE collection du banc a offrir `update_one` — reservee a
+    P3AI_BROUILLONS dans `scenario_de_base()`. Toutes les autres collections
+    (P3AI4_COLLECTION comprise) restent le bouchon lecture-seule ci-dessus :
+    une ecriture accidentelle ailleurs ferait planter le test avec
+    AttributeError, exactement comme avant ce lot.
+    """
+
+    def __init__(self, documents=None):
+        super().__init__(documents)
+        self.ecritures = []
+
+    async def update_one(self, filtre, maj, upsert=False, *a, **k):
+        self.ecritures.append({"filtre": dict(filtre), "maj": {k: dict(v) for k, v in maj.items()}})
+        for d in self.documents:
+            if self._ok(d, filtre):
+                d.update(maj.get("$set") or {})
+                return type("R", (), {"matched_count": 1, "modified_count": 1, "upserted_id": None})()
+        if not upsert:
+            return type("R", (), {"matched_count": 0, "modified_count": 0, "upserted_id": None})()
+        candidat = dict(filtre)
+        candidat.update(maj.get("$setOnInsert") or {})
+        candidat.update(maj.get("$set") or {})
+        self.documents.append(candidat)
+        return type("R", (), {"matched_count": 0, "modified_count": 0, "upserted_id": True})()
+
+
 class DBBouchon:
     def __init__(self, collections):
         self._c = collections
@@ -258,7 +298,7 @@ def scenario_de_base():
     b[S.P3S3_ACTIONS] = CollectionBouchon([action_valide()])
     b[S.P3S1_COLLECTION] = CollectionBouchon([fiche_valide()])
     brouillon, empreinte = brouillon_valide()
-    b[S.P3AI_BROUILLONS] = CollectionBouchon([brouillon])
+    b[S.P3AI_BROUILLONS] = CollectionEcrivable([brouillon])
     b[S.P3AI4_COLLECTION] = CollectionBouchon([])
     b["subscribers"] = CollectionBouchon([])
     b[S.P3N_COLLECTION] = CollectionBouchon([])
@@ -272,6 +312,12 @@ def requete_apercu(empreinte, inbound_id="msg-1", **kw):
 
 def requete_brouillon(inbound_id="msg-1", **kw):
     return requete_signee("GET", "/api/afroboosteur-relais/conversations/%s/brouillon" % inbound_id, **kw)
+
+
+def requete_enregistrer(texte, draft_hash="", inbound_id="msg-1", **kw):
+    return requete_signee(
+        "POST", "/api/afroboosteur-relais/conversations/%s/brouillon" % inbound_id,
+        corps={"texte": texte, "draft_hash": draft_hash}, **kw)
 
 
 # ============================================================================
@@ -300,6 +346,95 @@ verifier("2c contexte_obsolete: false (rien de plus recent que le brouillon)",
 verifier("2d draft_hash calcule ICI correspond EXACTEMENT a celui attendu par l'apercu "
          "(afroboosteur.com n'a jamais besoin de connaitre l'algorithme)",
          rep_b["draft_hash"] == empreinte2, "%s != %s" % (rep_b["draft_hash"], empreinte2))
+
+# ============================================================================
+print("\n2bis. ENREGISTRER UN BROUILLON — édition libre, jamais d'écrasement silencieux")
+
+# a. Correction d'un brouillon EXISTANT, empreinte a jour -> accepte.
+b2b, empreinte2b = scenario_de_base()
+rep_ecrit = executer(R.relais_enregistrer_brouillon(
+    "msg-1", requete_enregistrer("Finalement mercredi 14h, si possible.", empreinte2b)))
+verifier("2bis-a correction acceptee, le nouveau texte est rendu",
+         rep_ecrit["brouillon"]["reponse_proposee"] == "Finalement mercredi 14h, si possible.")
+verifier("2bis-a' une nouvelle empreinte, differente de l'ancienne, est rendue",
+         rep_ecrit["draft_hash"] != empreinte2b and rep_ecrit["draft_hash"])
+verifier("2bis-a'' exactement UNE ecriture Mongo, sur P3AI_BROUILLONS",
+         len(b2b[S.P3AI_BROUILLONS].ecritures) == 1)
+
+# b. EMPREINTE PERIMEE (le brouillon a change depuis la derniere lecture) ->
+#    refus NET, et le texte en base reste EXACTEMENT celui d'avant.
+b2c, _ = scenario_de_base()
+try:
+    executer(R.relais_enregistrer_brouillon(
+        "msg-1", requete_enregistrer("Un texte qui ne devrait jamais s'ecrire.", "empreinte-perimee")))
+    verifier("2bis-b empreinte perimee -> refus (409)", False)
+except HTTPException as e:
+    verifier("2bis-b empreinte perimee -> refus (409)", e.status_code == 409, str(e.status_code))
+verifier(
+    "2bis-b' RIEN N'A ETE ECRASE : le texte en base est encore l'original",
+    executer(b2c[S.P3AI_BROUILLONS].find_one({"inbound_id": "msg-1"}))["reponse_proposee"]
+    == "Oui, mardi 10h me convient.",
+)
+
+# c. PREMIER BROUILLON (aucun n'existe encore) — draft_hash vide accepte.
+b2d, _ = scenario_de_base()
+b2d[S.P3AI_BROUILLONS] = CollectionEcrivable([])
+rep_premier = executer(R.relais_enregistrer_brouillon(
+    "msg-1", requete_enregistrer("Bonjour, je reviens vers vous rapidement.", "")))
+verifier("2bis-c premier brouillon (empreinte vide, aucun brouillon prealable) -> accepte",
+         rep_premier["brouillon"]["reponse_proposee"] == "Bonjour, je reviens vers vous rapidement.")
+
+# d. Un appelant qui CROIT qu'un brouillon existe deja (empreinte non vide)
+#    alors qu'il n'y en a AUCUN -> meme refus : sa vue est perimee elle aussi.
+b2e, _ = scenario_de_base()
+b2e[S.P3AI_BROUILLONS] = CollectionEcrivable([])
+try:
+    executer(R.relais_enregistrer_brouillon(
+        "msg-1", requete_enregistrer("Texte quelconque.", "empreinte-qui-ne-devrait-pas-exister")))
+    verifier("2bis-d empreinte non vide sans brouillon existant -> refus (409)", False)
+except HTTPException as e:
+    verifier("2bis-d empreinte non vide sans brouillon existant -> refus (409)", e.status_code == 409, str(e.status_code))
+
+# e. Texte vide -> refus, AVANT toute ecriture.
+b2f, empreinte2f = scenario_de_base()
+try:
+    executer(R.relais_enregistrer_brouillon("msg-1", requete_enregistrer("   ", empreinte2f)))
+    verifier("2bis-e texte vide -> refus (400)", False)
+except HTTPException as e:
+    verifier("2bis-e texte vide -> refus (400)", e.status_code == 400, str(e.status_code))
+verifier("2bis-e' aucune ecriture n'a eu lieu", len(b2f[S.P3AI_BROUILLONS].ecritures) == 0)
+
+# f. LE MEDIA N'EST JAMAIS TOUCHE : un brouillon deja joint d'un fichier le
+#    reste strictement apres une correction de TEXTE depuis ce relais.
+b2g, _ = scenario_de_base()
+brouillon_avec_media = {
+    "inbound_id": "msg-1", "reponse_proposee": "Texte initial.",
+    "medias": [{"filename": "devis.pdf"}], "media": {"filename": "devis.pdf"},
+}
+empreinte_media = S.v625_empreinte("Texte initial.", S.v625_medias(brouillon_avec_media))
+b2g[S.P3AI_BROUILLONS] = CollectionEcrivable([brouillon_avec_media])
+rep_media = executer(R.relais_enregistrer_brouillon(
+    "msg-1", requete_enregistrer("Texte corrige, le fichier doit rester joint.", empreinte_media)))
+verifier(
+    "2bis-f le media reste EXACTEMENT celui d'avant apres une correction de texte",
+    rep_media["brouillon"]["medias"] == [{"filename": "devis.pdf"}]
+    and rep_media["brouillon"]["media"] == {"filename": "devis.pdf"},
+    str(rep_media["brouillon"]),
+)
+
+# g. La garde HMAC s'applique AUSSI a l'enregistrement.
+b2h, empreinte2h = scenario_de_base()
+try:
+    executer(R.relais_enregistrer_brouillon(
+        "msg-1", requete_enregistrer("Texte quelconque.", empreinte2h, secret="mauvais-secret")))
+    verifier("2bis-g mauvais secret -> 403, rien ecrit", False)
+except HTTPException as e:
+    verifier("2bis-g mauvais secret -> 403, rien ecrit", e.status_code == 403, str(e.status_code))
+verifier("2bis-g' aucune ecriture n'a eu lieu (refuse avant la base)",
+         len(b2h[S.P3AI_BROUILLONS].ecritures) == 0)
+
+print("\n   -> Chaque refus ci-dessus laisse le brouillon EXISTANT intact :",
+      "jamais un echec qui efface silencieusement un travail deja enregistre.")
 
 # ============================================================================
 print("\n3. REFUS — mêmes regles que l'envoi reel du coach, aucune ecriture")
@@ -364,7 +499,7 @@ except HTTPException as e:
     verifier("4b identifiant inexistant -> 404", e.status_code == 404, str(e.status_code))
 
 # ============================================================================
-print("\n5. LA GARDE HMAC S'APPLIQUE AUX DEUX NOUVELLES ROUTES")
+print("\n5. LA GARDE HMAC S'APPLIQUE AUX TROIS NOUVELLES ROUTES")
 
 b5, empreinte5 = scenario_de_base()
 try:
@@ -417,11 +552,19 @@ source = open(os.path.join(RACINE, "api/routes/afroboosteur_relais.py"), encodin
 verifier("7a aucun import ni appel a un fournisseur d'envoi reel (resend, Emails.send)",
          not __import__("re").search(r'import\s+resend|Emails\.send|resend_central', source))
 # Redondant AVEC AUCUNE PERTE par rapport a la section 9 de
-# test_p4_relais_afroboosteur.py (aucun insert_one/update_one nulle part dans
-# le fichier) : ce test-ci confirme la MEME garantie depuis ce banc-ci, pour
-# qu'un lecteur de CE fichier n'ait pas a en ouvrir un second pour la verifier.
-verifier("7b aucun insert_one/update_one nulle part dans le fichier (reservation d'envoi incluse)",
-         not __import__("re").search(r'\.(insert_one|insert_many|update_one|update_many)\(', source))
+# test_p4_relais_afroboosteur.py : ce test-ci confirme la MEME garantie
+# depuis ce banc-ci, pour qu'un lecteur de CE fichier n'ait pas a en ouvrir
+# un second pour la verifier. REEVALUE : une ecriture legitime existe desormais
+# (le texte d'un brouillon) ; ce qui reste absolu, c'est qu'elle ne touche
+# JAMAIS prospect_reply_sends (P3AI4_COLLECTION) — la reservation d'un envoi.
+verifier(
+    "7b toute ecriture du fichier porte EXCLUSIVEMENT sur P3AI_BROUILLONS, "
+    "jamais sur P3AI4_COLLECTION (reservation/envoi)",
+    (lambda lignes: len(lignes) > 0 and all("P3AI_BROUILLONS" in l for l in lignes))(
+        [l for l in source.splitlines()
+         if __import__("re").search(r'\.(insert_one|insert_many|update_one|update_many)\(', l)]
+    )
+)
 verifier("7c le fichier documente explicitement que l'envoi n'est pas cable",
          "N'EST PAS CÂBLÉ" in source or "deliberement PAS" in source)
 

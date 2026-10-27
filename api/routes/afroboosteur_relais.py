@@ -13,13 +13,22 @@ RÉDUITE — jamais les champs internes (dedupe_key, website_domain, created_by�
 Phases 4/5 : trois routes `GET`, consultation seule, aucune écriture.
 
 PHASE 6A — UNE SEULE ACTION DÉLÉGUÉE AJOUTÉE, ET RIEN D'AUTRE. « Répondre à un
-partenaire » est la SEULE écriture que ce fichier autorise désormais, via deux
-routes NARROWEMENT dédiées (`.../conversations/{id}/brouillon` en lecture,
-`.../conversations/{id}/apercu-reponse` en validation) — jamais un relais
-générique vers les routes privées d'afroboost.com. Chacune réutilise les MÊMES
-fonctions déjà prouvées par le tableau de bord du coach (`p3ai_dossier`,
-`v625_empreinte`, `p3ai4_refuse_par_stop`, `p3n_contexte_obsolete`...), jamais
-une réécriture parallèle qui pourrait diverger.
+partenaire » est la SEULE action que ce fichier autorise désormais, via trois
+routes NARROWEMENT dédiées — jamais un relais générique vers les routes
+privées d'afroboost.com :
+
+  * `GET  .../conversations/{id}/brouillon`        — lecture, aucune écriture.
+  * `POST .../conversations/{id}/brouillon`        — enregistre le TEXTE d'une
+    réponse (et lui seul — jamais un média), avec contrôle de concurrence par
+    empreinte : un brouillon modifié entre-temps refuse l'écriture plutôt que
+    de l'écraser en silence. C'EST LA SEULE ÉCRITURE MONGO DE CE FICHIER.
+  * `POST .../conversations/{id}/apercu-reponse`   — VALIDE un envoi possible,
+    sans jamais le réserver ni l'exécuter.
+
+Chacune réutilise les MÊMES fonctions déjà prouvées par le tableau de bord du
+coach (`p3ai_dossier`, `v625_empreinte`, `p3ai4_refuse_par_stop`,
+`p3n_contexte_obsolete`, `p3ai_sujets_sensibles`...), jamais une réécriture
+parallèle qui pourrait diverger.
 
 ⚠️ L'ENVOI RÉEL N'EST PAS CÂBLÉ ICI. `apercu-reponse` valide tout ce qu'un
 envoi validerait (brouillon présent, empreinte à jour, destinataire joignable,
@@ -314,6 +323,103 @@ async def relais_lire_brouillon(inbound_id: str, request: Request):
         "statut_commercial": p3n_statut_commercial(
             message, p3n_derniere_declaration(notes),
             (brouillon or {}).get("intention")),
+    }
+
+
+@router.post("/api/afroboosteur-relais/conversations/{inbound_id}/brouillon")
+async def relais_enregistrer_brouillon(inbound_id: str, request: Request):
+    """Enregistre le TEXTE d'une reponse — jamais le media, jamais l'envoi.
+
+    ─────────────────────────────────────────────────────────────────────────────
+    LA SEULE ECRITURE MONGO DE CE FICHIER, ET DELIBEREMENT ETROITE
+
+    Reprend `p3ai_modifier_brouillon` (meme troncature P3AI_REPONSE_MAX, memes
+    `motifs_validation`/`validation_requise` recalcules, meme `upsert=True` qui
+    permet d'ECRIRE le tout premier brouillon d'une reponse — pas seulement
+    corriger un brouillon ne de l'IA) — a UNE difference pres, delibere pour ce
+    canal : AUCUN champ media n'est jamais touche. `corps.get("medias")` et
+    `corps.get("media")` ne sont meme pas lus : un brouillon deja joint d'un
+    fichier le reste strictement tel quel apres un passage par ce relais.
+
+    ⚠️ JAMAIS D'ECRASEMENT SILENCIEUX. Le brouillon EXISTANT (s'il y en a un)
+    est fourni avec une empreinte (`draft_hash`, GET .../brouillon) : enregistrer
+    exige de renvoyer CETTE empreinte. Si le brouillon a change entre-temps
+    (corrige par le coach, par l'IA, ou par un autre membre autorise), l'empreinte
+    ne correspond plus et l'ecriture est refusee avec un message explicite —
+    jamais une ecriture qui gagnerait en silence. Pour un TOUT PREMIER brouillon
+    (aucun n'existe encore), `draft_hash` doit etre vide : une empreinte non vide
+    face a une absence de brouillon est, elle aussi, refusee.
+
+    `to_email` n'est toujours PAS ecrit ici, pour la meme raison que la route du
+    coach : le destinataire reel se resout a l'envoi, jamais depuis un corps de
+    requete.
+    """
+    await _garde(request)
+    # Import differe : evite la circularite avec api.server, qui importe ce
+    # module. Motif deja etabli ailleurs dans ce depot (ex. bot_whatsapp_routes.py).
+    from api.server import (
+        P3AI_BROUILLONS, P3AI_REPONSE_MAX,
+        p3ai_sujets_sensibles, v625_empreinte, v625_medias,
+    )
+
+    message = await _message_de_la_portee(inbound_id)
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict) or "texte" not in corps:
+        raise HTTPException(status_code=400, detail="Champ `texte` requis")
+    texte = str(corps.get("texte") or "").strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Un brouillon vide ne se garde pas")
+    empreinte_recue = str(corps.get("draft_hash") or "").strip()
+
+    brouillon_actuel = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0})
+
+    if brouillon_actuel:
+        texte_actuel = str(brouillon_actuel.get("reponse_proposee") or "").strip()
+        empreinte_actuelle = (
+            v625_empreinte(texte_actuel, v625_medias(brouillon_actuel)) if texte_actuel else ""
+        )
+        if empreinte_recue != empreinte_actuelle:
+            raise HTTPException(
+                status_code=409,
+                detail="Ce brouillon a été modifié depuis votre dernière lecture. "
+                       "Rechargez-le avant d'enregistrer — rien n'a été écrasé.")
+    elif empreinte_recue:
+        # L'appelant croit qu'un brouillon existe deja (il porte une empreinte),
+        # mais il n'y en a aucun — meme refus, meme raison : sa vue est perimee.
+        raise HTTPException(
+            status_code=409,
+            detail="Ce brouillon a été modifié depuis votre dernière lecture. "
+                   "Rechargez-le avant d'enregistrer — rien n'a été écrasé.")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    membre = (request.headers.get("X-Afroboosteur-Membre", "") or "").strip()[:200]
+    texte_tronque = texte[:P3AI_REPONSE_MAX]
+    await db[P3AI_BROUILLONS].update_one(
+        {"inbound_id": message["id"]},
+        {"$set": {"reponse_proposee": texte_tronque,
+                  "motifs_validation": p3ai_sujets_sensibles(texte_tronque),
+                  "validation_requise": bool(p3ai_sujets_sensibles(texte_tronque)),
+                  "edite_le": maintenant,
+                  # INFORMATIF, comme X-Afroboosteur-Membre partout ailleurs dans ce
+                  # fichier — jamais une identite verifiee par afroboost.com.
+                  "edite_par": "afroboosteur:%s" % (membre or _coach_id_configure()),
+                  "updated_at": maintenant},
+         "$setOnInsert": {"inbound_id": message["id"], "origine": "coach",
+                          "created_at": maintenant}},
+        upsert=True)
+
+    brouillon_enregistre = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0})
+    logger.info("%s brouillon enregistre pour %s via le relais (membre=%s)",
+               PREFIXE, inbound_id[:24], membre or "(non precise)")
+    return {
+        "brouillon": brouillon_enregistre,
+        "draft_hash": v625_empreinte(texte_tronque, v625_medias(brouillon_enregistre)),
     }
 
 

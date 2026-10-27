@@ -366,22 +366,36 @@ rep_grosse = executer(R.relais_lister_prospects(req_grosse_page))
 verifier("8a la pagination est PLAFONNEE a 50", rep_grosse["limit"] == R.LIMITE_MAX)
 
 # ============================================================================
-print("\n9. AUCUNE ECRITURE MONGO — meme depuis la nouvelle route POST (phase 6A)")
-# Section mise a jour SCIEMMENT : la phase 6A ajoute UNE route POST
-# (apercu-reponse). Ce qui reste verrouille, et c'est le point qui compte
-# vraiment, c'est qu'aucune de ces routes n'ecrit jamais en base — la preuve
-# porte desormais sur l'ABSENCE D'ECRITURE MONGO, pas sur l'absence de POST.
+print("\n9. ECRITURE MONGO — STRICTEMENT BORNEE AU BROUILLON (phase 6A, reevaluee)")
+# Section mise a jour SCIEMMENT, une seconde fois : la phase 6A porte
+# desormais DEUX routes POST (enregistrer un brouillon, previsualiser un
+# envoi) et UNE ecriture Mongo reelle — le texte d'un brouillon, et lui seul.
+# Ce qui reste verrouille, et c'est ce qui compte vraiment : AUCUNE ecriture
+# nulle part ailleurs, et surtout jamais dans `prospect_reply_sends`
+# (reservation/envoi) — la seule ligne qui transformerait une preparation en
+# depart reel.
 
 methodes_ecriture = re.findall(r'@router\.(post|patch|put|delete)\(', source)
-verifier("9a exactement une route POST (apercu-reponse), aucune PATCH/PUT/DELETE",
-         methodes_ecriture == ["post"], str(methodes_ecriture))
+verifier("9a exactement deux routes POST (brouillon, apercu-reponse), aucune PATCH/PUT/DELETE",
+         methodes_ecriture == ["post", "post"], str(methodes_ecriture))
 verifier("9b quatre routes GET (trois de lecture + le brouillon de la phase 6A)",
          len(re.findall(r'@router\.get\(', source)) == 4)
-verifier("9c aucun appel a insert_one/update_one/delete_one/replace_one dans tout le fichier, "
-         "MEME dans la nouvelle route POST",
-         not re.search(r'\.(insert_one|insert_many|update_one|update_many|delete_one|delete_many|replace_one)\(', source))
-verifier("9d la route POST ne reserve ni n'envoie : aucune reference a prospect_reply_sends/P3AI4_COLLECTION en ECRITURE",
-         "P3AI4_COLLECTION].insert" not in source and "P3AI4_COLLECTION].update" not in source)
+lignes_ecriture = [
+    ligne for ligne in source.splitlines()
+    if re.search(r'\.(insert_one|insert_many|update_one|update_many|delete_one|delete_many|replace_one)\(', ligne)
+]
+verifier(
+    "9c toute ecriture Mongo (insert_one/update_one/...) du fichier porte EXCLUSIVEMENT "
+    "sur P3AI_BROUILLONS — aucune sur une autre collection",
+    len(lignes_ecriture) > 0 and all("P3AI_BROUILLONS" in ligne for ligne in lignes_ecriture),
+    str(lignes_ecriture)
+)
+verifier(
+    "9d aucune reference EN ECRITURE a prospect_reply_sends/P3AI4_COLLECTION — "
+    "seule la LECTURE (find_one) y est autorisee",
+    "P3AI4_COLLECTION].insert" not in source and "P3AI4_COLLECTION].update" not in source
+    and "P3AI4_COLLECTION].delete" not in source
+)
 
 # ============================================================================
 print("\n10. L'EN-TETE MEMBRE EST INFORMATIF, JAMAIS AUTORISANT")
