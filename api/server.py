@@ -39448,9 +39448,48 @@ async def delete_lead(lead_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Lead not found")
     return {"success": True}
 
+# V634 — /chat/enhance-prompt ET /ai/campaign-suggestions FERMEES AUX ANONYMES.
+#
+# LE TROU (meme famille que V633, mesure du 27/10/2026) : ces deux routes
+# appellent OpenAI pour n'importe qui, sans identite ni limite — un POST anonyme
+# `{}` atteignait leur code (400 « Objectif de campagne requis » / « Le prompt
+# brut est requis »), via Cloudflare comme sur l'origine directe.
+#
+# LES APPELANTS LEGITIMES : exactement deux, tous deux dans le tableau de bord
+# coach, tous deux en `axios` global (dont l'intercepteur d'App.js joint le JWT) :
+#   - CoachDashboard.js  -> /chat/enhance-prompt   (prompt d'un chat de groupe)
+#   - CampaignModal.js   -> /ai/campaign-suggestions (3 variantes de message)
+# Aucun usage public, aucun autre projet, aucun appel interne. Sans jeton, le
+# modal de campagne retombe DEJA sur des suggestions statiques (son `catch`),
+# et le tableau de bord sur `null` : un refus ne casse rien.
+#
+# LA REGLE : la meme garde que V633 (`_v309_require_coach_or_admin`, JWT signe,
+# jamais `X-User-Email`) AVANT la lecture du corps, puis le meme debit (20/min,
+# 300/24 h) — mais dans un SEAU PAR ROUTE, pour que ni l'une ni l'autre ne
+# consomme le budget de /ai/enhance-text (V633 reste strictement inchange).
+# Prompts, modeles, plafonds et formats de reponse : INCHANGES.
+async def _v634_garde_ia(request: Request, route: str) -> str:
+    coach_email = await _v309_require_coach_or_admin(request)
+    if not _v633_debit_ok(f"{route}:{coach_email}"):
+        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
+    return coach_email
+
+
+def _v634_texte(donnees: dict, cle: str, defaut: str = "", max_len: int = 0) -> str:
+    """Champ texte facultatif : absent ou null -> `defaut`; autre type ou trop long -> 400."""
+    valeur = donnees.get(cle, defaut)
+    if valeur is None:
+        valeur = defaut
+    if not isinstance(valeur, str):
+        raise HTTPException(status_code=400, detail=f"Le champ {cle} doit être une chaîne")
+    if len(valeur) > (max_len or _V633_TEXTE_MAX):
+        raise HTTPException(status_code=400, detail=f"Le champ {cle} est trop long")
+    return valeur
+
+
 # === v9.4.1: ENDPOINT SUGGESTIONS IA POUR CAMPAGNES ===
 @api_router.post("/ai/campaign-suggestions")
-async def generate_campaign_suggestions(data: dict):
+async def generate_campaign_suggestions(request: Request):
     """
     Génère 3 variantes de messages de campagne basées sur l'objectif fourni.
     Types: Promo (🔥), Relance (👋), Info (📢)
@@ -39458,12 +39497,25 @@ async def generate_campaign_suggestions(data: dict):
     import time
     start_time = time.time()
     
-    campaign_goal = data.get("campaign_goal", "")
-    campaign_name = data.get("campaign_name", "Campagne")
+    # V634 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
+    await _v634_garde_ia(request, "campaign-suggestions")
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+
+    campaign_goal = _v634_texte(data, "campaign_goal")
+    campaign_name = _v634_texte(data, "campaign_name", "Campagne", max_len=200)
     recipient_count = data.get("recipient_count", 1)
+    if recipient_count is None:
+        recipient_count = 1
+    if isinstance(recipient_count, bool) or not isinstance(recipient_count, int) or not (0 <= recipient_count <= 1000000):
+        raise HTTPException(status_code=400, detail="recipient_count invalide")
     # v11: Prompts indépendants par campagne
-    campaign_system_prompt = data.get("system_prompt", "")
-    campaign_description_prompt = data.get("description_prompt", "")
+    campaign_system_prompt = _v634_texte(data, "system_prompt")
+    campaign_description_prompt = _v634_texte(data, "description_prompt")
 
     if not campaign_goal and not campaign_description_prompt:
         raise HTTPException(status_code=400, detail="Objectif de campagne requis")
@@ -43678,8 +43730,15 @@ async def enhance_prompt_with_ai(request: Request):
     Transforme un texte brut en prompt structuré pour le chat IA.
     Utilise l'IA pour reformuler et structurer le prompt de manière professionnelle.
     """
-    body = await request.json()
-    raw_prompt = body.get("raw_prompt", "").strip()
+    # V634 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
+    await _v634_garde_ia(request, "enhance-prompt")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    raw_prompt = _v634_texte(body, "raw_prompt").strip()
     
     if not raw_prompt:
         raise HTTPException(status_code=400, detail="Le prompt brut est requis")
