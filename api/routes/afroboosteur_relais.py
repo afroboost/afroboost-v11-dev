@@ -214,28 +214,24 @@ async def _garde(request: Request) -> str:
     chaque route, relit le MEME corps sans jamais retoucher le flux reseau —
     aucun risque d'epuiser le flux avant que la route n'y accede a son tour.
 
-    REVUE DE SECURITE — P6B : `AFROBOOSTEUR_RELAY_COACH_ID` NE DOIT JAMAIS
-    DESIGNER LE SUPER-ADMIN. Les deux fonctions deleguees de la phase 6B
-    (`p3s3_preparer_campagne_pour`, `p3s3_modifier_campagne_pour`) scopent
-    leurs lectures/ecritures via `is_super_admin(appelant)` : si `appelant`
-    EST le super-admin, leur filtre devient VIDE (tous les coachs) et leur
-    controle de propriete s'efface entierement — ce relais deviendrait alors
-    une porte dérobée inter-coachs, pour une simple erreur de configuration
-    (coller la mauvaise adresse dans Coolify), jamais une action du code.
-    Fermé ICI, une fois, pour toutes les routes presentes et futures — jamais
-    suppose « ca ne peut pas arriver » parce que ca n'est pas arrive encore
-    (meme principe que `_portee()` ci-dessous, voir son commentaire)."""
+    ⚠️ INCIDENT DU 27/10/2026, ET CE QUI LE REMPLACE. Une version precedente
+    REFUSAIT ICI (503) toute configuration ou `AFROBOOSTEUR_RELAY_COACH_ID`
+    designe le super-admin, au motif que `p3s3_portee(appelant)` rend alors un
+    filtre VIDE. Le raisonnement sur la PORTEE etait juste ; la CONCLUSION
+    etait fausse, et elle a mis tout le relais a terre en production — les
+    trois consultations comprises, qui n'appellent meme pas `p3s3_portee`.
+    Pourquoi : sur CETTE plateforme, le seul coach reel EST le super-admin
+    (`DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]`, V244 — « l'admin, seul coach
+    reel »), et c'est lui qui possede legitimement les 449 prospects. La
+    configuration etait donc CORRECTE ; refuser de fonctionner etait l'erreur.
+    Le cloisonnement est desormais impose LA OU IL MANQUAIT : les deux
+    fonctions deleguees recoivent `tenant_strict=True`, qui force la portee a
+    `{"coach_id": appelant}` et le controle de propriete meme pour un
+    super-admin. Voir leurs docstrings dans api/server.py."""
     secret = _secret()
     coach_id = _coach_id_configure()
     if not secret or not coach_id:
         raise HTTPException(status_code=503, detail="Relais afroboosteur non configuré")
-
-    from api.server import is_super_admin
-    if is_super_admin(coach_id):
-        logger.error(
-            "%s AFROBOOSTEUR_RELAY_COACH_ID designe le super-admin — relais inerte "
-            "pour empecher une portee vide cote coach", PREFIXE)
-        raise HTTPException(status_code=503, detail="Relais afroboosteur mal configuré")
 
     horodatage = (request.headers.get("X-Afroboosteur-Timestamp", "") or "").strip()
     if not horodatage or not _horodatage_dans_la_fenetre(horodatage):
@@ -389,7 +385,10 @@ async def relais_preparer_campagne(request: Request):
         corps = {}
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    resultat = await p3s3_preparer_campagne_pour(_coach_id_configure(), corps)
+    # tenant_strict : cloisonnement force meme si le coach configure est le
+    # super-admin (incident du 27/10, voir le docstring de `_garde`).
+    resultat = await p3s3_preparer_campagne_pour(_coach_id_configure(), corps,
+                                                 tenant_strict=True)
     campagne = resultat.get("campaign")
     if isinstance(campagne, dict):
         resultat["campaign"] = {cle: campagne.get(cle) for cle in _PROJECTION_CAMPAGNE if cle != "_id"}
@@ -417,7 +416,8 @@ async def relais_modifier_campagne(campaign_id: str, request: Request):
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
     identifiant = (campaign_id or "").strip()[:64]
-    resultat = await p3s3_modifier_campagne_pour(_coach_id_configure(), identifiant, corps)
+    resultat = await p3s3_modifier_campagne_pour(_coach_id_configure(), identifiant, corps,
+                                                 tenant_strict=True)
     campagne = resultat.get("campaign")
     if isinstance(campagne, dict):
         resultat["campaign"] = {cle: campagne.get(cle) for cle in _PROJECTION_CAMPAGNE if cle != "_id"}
