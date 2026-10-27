@@ -10,12 +10,24 @@ MÊMES collections que le tableau de bord du coach (`partner_prospects`,
 `prospect_campaigns`, `prospect_inbound_messages`) à travers une projection
 RÉDUITE — jamais les champs internes (dedupe_key, website_domain, created_by…).
 
-AUCUNE route d'écriture n'existe ici, PAR CONSTRUCTION : ce fichier ne définit
-que des `@router.get`. Créer, approuver, lancer une campagne ou répondre à un
-partenaire restent exclusivement des gestes du tableau de bord d'afroboost.com,
-jamais de ce relais — c'est la mission qui l'exige explicitement (phases 4/5 :
-consultation seule ; les phases ultérieures, non commencées, pourraient un jour
-brancher des actions, mais PAS ici).
+Phases 4/5 : trois routes `GET`, consultation seule, aucune écriture.
+
+PHASE 6A — UNE SEULE ACTION DÉLÉGUÉE AJOUTÉE, ET RIEN D'AUTRE. « Répondre à un
+partenaire » est la SEULE écriture que ce fichier autorise désormais, via deux
+routes NARROWEMENT dédiées (`.../conversations/{id}/brouillon` en lecture,
+`.../conversations/{id}/apercu-reponse` en validation) — jamais un relais
+générique vers les routes privées d'afroboost.com. Chacune réutilise les MÊMES
+fonctions déjà prouvées par le tableau de bord du coach (`p3ai_dossier`,
+`v625_empreinte`, `p3ai4_refuse_par_stop`, `p3n_contexte_obsolete`...), jamais
+une réécriture parallèle qui pourrait diverger.
+
+⚠️ L'ENVOI RÉEL N'EST PAS CÂBLÉ ICI. `apercu-reponse` valide tout ce qu'un
+envoi validerait (brouillon présent, empreinte à jour, destinataire joignable,
+registre STOP, contexte non périmé) mais NE RÉSERVE NI N'ENVOIE RIEN — aucune
+ligne n'est écrite dans `prospect_reply_sends`. La réservation et l'appel au
+fournisseur, qui existent déjà et fonctionnent pour le coach, ne sont
+délibérément PAS repris ici tant qu'un GO explicite et séparé n'autorise pas
+l'envoi réel depuis ce relais.
 
 ──────────────────────── L'AUTHENTIFICATION : SIGNATURE LIÉE À LA REQUÊTE ────────────────────────
 
@@ -240,3 +252,153 @@ async def relais_lister_conversations(request: Request):
         .sort([("received_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
     return {"total": total, "returned": len(lignes), "limit": limite, "offset": depart,
             "conversations": lignes}
+
+
+# -----------------------------------------------------------------------------
+# 4. PHASE 6A — REPONDRE A UN PARTENAIRE : lecture du brouillon, puis apercu
+#    valide de l'envoi. AUCUNE reservation, AUCUN envoi reel depuis ce fichier
+#    — voir l'avertissement en tete de module.
+# -----------------------------------------------------------------------------
+
+async def _message_de_la_portee(inbound_id: str) -> dict:
+    """Le message, dans la portee du coach configure. 404 sinon — jamais un
+    indice sur l'existence d'un message hors portee."""
+    identifiant = (inbound_id or "").strip()
+    if not identifiant or len(identifiant) > 64:
+        raise HTTPException(status_code=404, detail="Reponse introuvable")
+    message = await db[P3U2_COLLECTION].find_one(
+        {"id": identifiant, **_portee()}, {"_id": 0})
+    if not message:
+        raise HTTPException(status_code=404, detail="Reponse introuvable")
+    return message
+
+
+@router.get("/api/afroboosteur-relais/conversations/{inbound_id}/brouillon")
+async def relais_lire_brouillon(inbound_id: str, request: Request):
+    """Le brouillon de reponse a ce message, ou null. LECTURE SEULE.
+
+    Reutilise EXACTEMENT ce que `p3ai_lire_brouillon` calcule pour le coach
+    (etat lu/traite, contexte perime, statut commercial) — la meme verite,
+    jamais une resumee a part pour ce relais.
+    """
+    await _garde(request)
+    # Import differe : evite la circularite avec api.server, qui importe ce
+    # module. Motif deja etabli ailleurs dans ce depot (ex. bot_whatsapp_routes.py).
+    from api.server import (
+        P3AI_BROUILLONS, P3AI_CHAMP_LU, P3AI_CHAMP_TRAITE,
+        p3n_contexte_obsolete, p3n_derniere_declaration,
+        p3n_notes_du_dossier, p3n_statut_commercial,
+        v625_empreinte, v625_medias,
+    )
+
+    message = await _message_de_la_portee(inbound_id)
+    brouillon = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0})
+    notes = await p3n_notes_du_dossier(message.get("action_id") or "")
+    # L'EMPREINTE EST CALCULEE ICI, PAS CHEZ L'APPELANT. afroboosteur.com n'a
+    # pas besoin de connaitre l'algorithme de `v625_empreinte` : il recoit la
+    # valeur deja calculee et la renvoie telle quelle a `.../apercu-reponse`.
+    # Un seul endroit sait COMMENT elle se calcule — jamais une seconde
+    # implementation, dans un troisieme langage, qui pourrait diverger.
+    empreinte = None
+    if brouillon:
+        texte_brouillon = str(brouillon.get("reponse_proposee") or "").strip()
+        if texte_brouillon:
+            empreinte = v625_empreinte(texte_brouillon, v625_medias(brouillon))
+    return {
+        "brouillon": brouillon,
+        "draft_hash": empreinte,
+        "lu": bool(message.get(P3AI_CHAMP_LU)),
+        "traite": bool(message.get(P3AI_CHAMP_TRAITE)),
+        "contexte_obsolete": p3n_contexte_obsolete(brouillon, notes),
+        "statut_commercial": p3n_statut_commercial(
+            message, p3n_derniere_declaration(notes),
+            (brouillon or {}).get("intention")),
+    }
+
+
+@router.post("/api/afroboosteur-relais/conversations/{inbound_id}/apercu-reponse")
+async def relais_apercu_reponse(inbound_id: str, request: Request):
+    """Valide qu'une reponse POURRAIT partir — sans rien reserver ni envoyer.
+
+    Corps attendu : `{"draft_hash": "..."}` — la meme empreinte que l'ecran du
+    coach calcule et exige avant un envoi reel, pour que l'apercu porte sur LE
+    MEME texte que celui affiche, jamais une version perimee.
+
+    Rend `{"pret": bool, "raison": str|None, "destinataire": str|None,
+    "texte": str|None, "deja_envoye": bool}`. `pret: false` n'est jamais une
+    erreur HTTP : c'est une reponse normale ("pas encore prete"), pour que
+    l'ecran l'affiche sans avoir a distinguer un refus metier d'une panne.
+    """
+    await _garde(request)
+    from api.server import (
+        P3AI4_COLLECTION, P3AI_BROUILLONS, P3S3_ACTIONS,
+        p3ai4_cle_envoi, p3ai4_destinataire, p3ai4_refuse_par_stop,
+        p3n_contexte_obsolete, p3n_notes_du_dossier,
+        v621_a_completer, v625_empreinte, v625_medias, v627_blocage,
+    )
+
+    message = await _message_de_la_portee(inbound_id)
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    empreinte_recue = str(corps.get("draft_hash") or "").strip()
+    if not empreinte_recue:
+        raise HTTPException(status_code=400, detail="Empreinte du brouillon requise")
+
+    action = {}
+    if message.get("action_id"):
+        action = await db[P3S3_ACTIONS].find_one(
+            {"id": message["action_id"]}, {"_id": 0}) or {}
+    fiches = []
+    uuids = [u for u in (action.get("prospect_uuids") or []) if u][:20]
+    if uuids:
+        fiches = await db[P3S1_COLLECTION].find(
+            {"id": {"$in": uuids}}, {"_id": 0}).to_list(20)
+
+    brouillon = await db[P3AI_BROUILLONS].find_one(
+        {"inbound_id": message["id"]}, {"_id": 0})
+
+    def refus(raison: str) -> dict:
+        return {"pret": False, "raison": raison, "destinataire": None,
+                "texte": None, "deja_envoye": False}
+
+    if not brouillon:
+        return refus("Aucun brouillon a envoyer")
+    texte = str(brouillon.get("reponse_proposee") or "").strip()
+    if not texte:
+        return refus("Le brouillon est vide")
+    if v621_a_completer(texte):
+        return refus("Completez le champ « [A COMPLETER : …] » avant l'envoi")
+
+    medias_joints = v625_medias(brouillon)
+    empreinte_calculee = v625_empreinte(texte, medias_joints)
+    if empreinte_recue != empreinte_calculee:
+        return refus("Le brouillon a ete modifie. Rechargez la derniere version")
+
+    cle = p3ai4_cle_envoi(message["id"], empreinte_calculee)
+    deja = await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0})
+    if deja:
+        return {"pret": False, "raison": "Deja envoye", "destinataire": None,
+                "texte": None, "deja_envoye": True}
+
+    notes = await p3n_notes_du_dossier(message.get("action_id") or "")
+    if p3n_contexte_obsolete(brouillon, notes):
+        return refus("Le contexte a change depuis la redaction. Regenerez ou confirmez le brouillon")
+
+    destinataire = p3ai4_destinataire(message, action)
+    if not destinataire:
+        return refus("Aucune adresse exploitable pour ce dossier")
+    if await p3ai4_refuse_par_stop(destinataire):
+        return refus("Ce destinataire ne peut pas etre contacte")
+    blocage = v627_blocage(fiches)
+    if blocage:
+        from api.server import v627_message
+        return refus(v627_message(blocage))
+
+    return {"pret": True, "raison": None, "destinataire": destinataire,
+            "texte": texte, "deja_envoye": False}

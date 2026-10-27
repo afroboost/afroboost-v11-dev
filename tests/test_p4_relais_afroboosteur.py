@@ -366,13 +366,22 @@ rep_grosse = executer(R.relais_lister_prospects(req_grosse_page))
 verifier("8a la pagination est PLAFONNEE a 50", rep_grosse["limit"] == R.LIMITE_MAX)
 
 # ============================================================================
-print("\n9. LECTURE SEULE PAR CONSTRUCTION — aucune route d'ecriture dans ce fichier")
+print("\n9. AUCUNE ECRITURE MONGO — meme depuis la nouvelle route POST (phase 6A)")
+# Section mise a jour SCIEMMENT : la phase 6A ajoute UNE route POST
+# (apercu-reponse). Ce qui reste verrouille, et c'est le point qui compte
+# vraiment, c'est qu'aucune de ces routes n'ecrit jamais en base — la preuve
+# porte desormais sur l'ABSENCE D'ECRITURE MONGO, pas sur l'absence de POST.
 
 methodes_ecriture = re.findall(r'@router\.(post|patch|put|delete)\(', source)
-verifier("9a aucune route POST/PATCH/PUT/DELETE declaree", methodes_ecriture == [], str(methodes_ecriture))
-verifier("9b exactement trois routes GET", len(re.findall(r'@router\.get\(', source)) == 3)
-verifier("9c aucun appel a insert_one/update_one/delete_one/replace_one dans tout le fichier",
+verifier("9a exactement une route POST (apercu-reponse), aucune PATCH/PUT/DELETE",
+         methodes_ecriture == ["post"], str(methodes_ecriture))
+verifier("9b quatre routes GET (trois de lecture + le brouillon de la phase 6A)",
+         len(re.findall(r'@router\.get\(', source)) == 4)
+verifier("9c aucun appel a insert_one/update_one/delete_one/replace_one dans tout le fichier, "
+         "MEME dans la nouvelle route POST",
          not re.search(r'\.(insert_one|insert_many|update_one|update_many|delete_one|delete_many|replace_one)\(', source))
+verifier("9d la route POST ne reserve ni n'envoie : aucune reference a prospect_reply_sends/P3AI4_COLLECTION en ECRITURE",
+         "P3AI4_COLLECTION].insert" not in source and "P3AI4_COLLECTION].update" not in source)
 
 # ============================================================================
 print("\n10. L'EN-TETE MEMBRE EST INFORMATIF, JAMAIS AUTORISANT")
