@@ -43731,19 +43731,81 @@ Réponds UNIQUEMENT avec le prompt amélioré, sans explication."""
         fallback = f"Tu es un assistant virtuel professionnel. {raw_prompt}. Sois courtois et aide l'utilisateur au mieux."
         return {"enhanced_prompt": fallback, "original": raw_prompt, "fallback": True}
 
+# V633 — /ai/enhance-text FERMEE AUX ANONYMES.
+#
+# LE TROU : cette route appelait OpenAI pour n'importe qui, sans identite ni
+# limite (mesure du 27/10/2026 : un POST anonyme atteignait le modele, via
+# Cloudflare comme sur l'origine directe). Chaque appel consommait les credits
+# OpenAI d'Afroboost.
+#
+# LA REGLE : meme garde que les lectures sensibles (V311h) —
+# `_v309_require_coach_or_admin`, JWT SIGNE d'un coach ou d'un admin, jamais
+# `X-User-Email` (falsifiable : l'adresse du super-admin est dans le bundle
+# public). Les 8 appelants legitimes sont tous dans le dashboard coach ou le
+# panneau super-admin, dont les lectures exigent deja ce jeton (V311h) : un
+# appelant legitime le porte donc deja. Les appels `fetch` qui ne l'envoyaient
+# pas le joignent desormais (utils/enTetesCoach.js).
+#
+# + un debit par identite (en memoire du processus, meme forme que LOT 3b :
+# pas de slowapi dans le depot) et une borne sur la taille du texte et de
+# `lang` — sans quoi un seul compte valide pourrait encore vider le credit.
+# Prompts, modele et format de reponse : INCHANGES.
+_V633_IA_DEBIT = {}
+_V633_IA_DEBIT_MINUTE = 20      # appels par minute et par identite
+_V633_IA_DEBIT_JOUR = 300       # appels par 24 h et par identite
+_V633_TEXTE_MAX = 6000          # caracteres
+_V633_LANG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$")
+
+
+def _v633_debit_ok(cle: str) -> bool:
+    import time as _t
+    _now = _t.monotonic()
+    _hist = [h for h in _V633_IA_DEBIT.get(cle, []) if _now - h < 86400.0]
+    _derniere_minute = sum(1 for h in _hist if _now - h < 60.0)
+    if _derniere_minute >= _V633_IA_DEBIT_MINUTE or len(_hist) >= _V633_IA_DEBIT_JOUR:
+        _V633_IA_DEBIT[cle] = _hist
+        return False
+    _hist.append(_now)
+    _V633_IA_DEBIT[cle] = _hist
+    if len(_V633_IA_DEBIT) > 5000:      # borne memoire, jamais une fuite
+        for _k in list(_V633_IA_DEBIT.keys())[:1000]:
+            _V633_IA_DEBIT.pop(_k, None)
+    return True
+
+
 @api_router.post("/ai/enhance-text")
 async def enhance_text_with_ai(request: Request):
     """
     v17.0 — Assistant rédaction IA générique.
     Contextes: offer, pack, legal, seo, faq_answer, general
+    V633 : coach/admin authentifié par JWT signé, débit limité, entrées bornées.
     """
-    body = await request.json()
-    text = body.get("text", "").strip()
+    # V633 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
+    coach_email = await _v309_require_coach_or_admin(request)
+    if not _v633_debit_ok(coach_email):
+        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    texte_brut = body.get("text", "")
+    if not isinstance(texte_brut, str):
+        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
+    text = texte_brut.strip()
     context = body.get("context") or body.get("style") or "general"
     lang = body.get("lang", "fr")
 
     if not text:
         raise HTTPException(status_code=400, detail="Le texte est requis")
+    if len(text) > _V633_TEXTE_MAX:
+        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
+    if not isinstance(context, str) or len(context) > 40:
+        raise HTTPException(status_code=400, detail="Contexte invalide")
+    if not isinstance(lang, str) or not _V633_LANG.match(lang):
+        raise HTTPException(status_code=400, detail="Langue invalide")
 
     try:
         from openai import OpenAI

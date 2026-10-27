@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SvgIcon from '../SvgIcon';
 
+import { enTetesCoach } from '../../utils/enTetesCoach'; // V633 : JWT joint aux appels IA
 const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
   const [metaTitle, setMetaTitle] = useState('');
   const [metaDescription, setMetaDescription] = useState('');
@@ -53,7 +54,7 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
     try {
       const res = await fetch(`${API}/ai/enhance-text`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: enTetesCoach({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ text, context: 'seo' })
       });
       const data = await res.json();
