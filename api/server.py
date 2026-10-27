@@ -28688,10 +28688,25 @@ async def p3s3_preparer_campagne(request: Request):
     return await p3s3_preparer_campagne_pour(appelant, corps)
 
 
-async def p3s3_preparer_campagne_pour(appelant: str, corps: dict) -> dict:
+async def p3s3_preparer_campagne_pour(appelant: str, corps: dict,
+                                       tenant_strict: bool = False) -> dict:
     """Le corps REEL de la preparation — extrait de la route HTTP (PHASE 6B)
     pour etre appele par elle ET par le relais afroboosteur.com, sans aucune
     duplication de logique. Voir le docstring de la route pour le contrat.
+
+    `tenant_strict=True` (relais UNIQUEMENT ; le defaut `False` laisse la route
+    du coach EXACTEMENT comme avant) force la portee a `{"coach_id": appelant}`
+    au lieu de `p3s3_portee(appelant)`.
+    POURQUOI CE PARAMETRE EXISTE, ET L'INCIDENT QU'IL CORRIGE : sur CETTE
+    plateforme, le seul coach reel EST le super-admin (`DEFAULT_COACH_ID =
+    SUPER_ADMIN_EMAILS[0]`, V244 — « l'admin, seul coach reel »). Donc
+    `p3s3_portee(appelant)` rend `{}` — un filtre VIDE — pour l'appelant du
+    relais, c'est-a-dire TOUS les coachs si un second existait un jour. Une
+    premiere correction refusait carrement cette configuration (503) : elle a
+    mis TOUT le relais a terre en production, y compris trois consultations qui
+    ne passaient meme pas par `p3s3_portee`. La configuration n'etait PAS en
+    faute ; c'etait la portee super-admin qui n'avait rien a faire sur un canal
+    delegue. On force donc le cloisonnement ici, sans jamais refuser l'appel.
 
     AJOUT PHASE 6B, ADDITIF UNIQUEMENT : `media_ids`, une liste optionnelle
     d'identifiants de `prospection_medias` (V595) A PARTAGER sur la campagne.
@@ -28705,7 +28720,9 @@ async def p3s3_preparer_campagne_pour(appelant: str, corps: dict) -> dict:
     from pymongo.errors import DuplicateKeyError
 
     simulation = corps.get("dry_run", True) is not False
-    portee = await p3s3_portee(appelant)
+    # CLOISONNEMENT FORCE SUR LE CANAL DELEGUE — voir le docstring.
+    portee = ({"coach_id": appelant} if tenant_strict
+              else await p3s3_portee(appelant))
     cle_idempotence = p3s1_texte(corps.get("idempotency_key"), 64)
 
     # --- rejeu : la campagne existe deja, on la rend sans rien recreer ---
@@ -29110,17 +29127,26 @@ async def p3s3_modifier_campagne(campaign_id: str, request: Request):
     return await p3s3_modifier_campagne_pour(appelant, identifiant, corps)
 
 
-async def p3s3_modifier_campagne_pour(appelant: str, identifiant: str, corps: dict) -> dict:
+async def p3s3_modifier_campagne_pour(appelant: str, identifiant: str, corps: dict,
+                                       tenant_strict: bool = False) -> dict:
     """Le corps REEL de la modification — voir le docstring de la route.
 
     AJOUT PHASE 6B, ADDITIF : `media_ids` rejoint `nom`/l'objet comme champ
     modifiable, meme validation que `p3s3_medias_partages_valides` (coach
     proprietaire, statut `validee`). Omis, le champ existant n'est pas touche.
+
+    `tenant_strict=True` (relais UNIQUEMENT ; defaut `False` = route du coach
+    inchangee) impose le controle de propriete MEME pour un super-admin. Meme
+    raison que dans `p3s3_preparer_campagne_pour` : sur cette plateforme le
+    seul coach reel EST le super-admin, donc sans ce parametre la clause
+    `not is_super_admin(appelant)` ci-dessous escamotait tout le controle sur
+    un canal delegue a des membres d'un AUTRE produit.
     """
     campagne = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
     if not campagne:
         raise HTTPException(status_code=404, detail="Campagne introuvable")
-    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+    if ((tenant_strict or not is_super_admin(appelant))
+            and (campagne.get("coach_id") or "") != appelant):
         raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
     if campagne.get("etat") != P3S3_ETAT_PREPARE:
         raise HTTPException(status_code=409,

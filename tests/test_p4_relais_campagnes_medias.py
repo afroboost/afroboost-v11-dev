@@ -602,25 +602,55 @@ verifier("10a aucun import de 'requests' ni 'httpx' dans le module relais",
          if hasattr(R, "__file__") else True, "verification structurelle")
 
 # ============================================================================
-print("\n11. REVUE DE SECURITE — AFROBOOSTEUR_RELAY_COACH_ID NE PEUT JAMAIS ETRE LE SUPER-ADMIN")
-# `is_super_admin(appelant)` videi la portee de `p3s3_preparer_campagne_pour`/
-# `p3s3_modifier_campagne_pour` (`p3s3_portee` -> `{}` au lieu de `{coach_id}`)
-# et desactive entierement le controle de propriete de la seconde. Une seule
-# ligne de configuration erronee aurait alors fait de ce relais une porte
-# derobee inter-coachs. `_garde` doit refuser (503) AVANT toute autre chose
-# si le coach configure est le super-admin — teste ici sur UNE route
-# representative (les autres partagent la MEME garde).
-base_neuve()
+print("\n11. LE COACH CONFIGURE EST LE SUPER-ADMIN — ET C'EST LE CAS NORMAL ICI")
+# INCIDENT DU 27/10/2026 ET SA CORRECTION, VERROUILLES ICI.
+#
+# Sur CETTE plateforme, le seul coach reel EST le super-admin
+# (`DEFAULT_COACH_ID = SUPER_ADMIN_EMAILS[0]`, V244) : c'est lui qui possede
+# legitimement les prospects. Une premiere version de ce banc exigeait un 503
+# dans ce cas — et le code correspondant a mis TOUT le relais a terre en
+# production, y compris les trois consultations.
+#
+# CE QUI DOIT ETRE VRAI, ET QUE CE BANC EXIGE DESORMAIS : le relais FONCTIONNE
+# avec cette configuration, ET le cloisonnement tient quand meme. Les deux a
+# la fois — c'est tout l'interet de `tenant_strict`.
 _coach_avant = os.environ.get("AFROBOOSTEUR_RELAY_COACH_ID")
 os.environ["AFROBOOSTEUR_RELAY_COACH_ID"] = S.SUPER_ADMIN_EMAILS[0]
 try:
-    executer(R.relais_preparer_campagne(requete_preparer(
-        {"name": "x"}, secret=SECRET)))
-    verifier("11a super-admin configure comme coach -> 503, jamais une portee videe", False,
-             "aucune exception levee")
-except HTTPException as e:
-    verifier("11a super-admin configure comme coach -> 503, jamais une portee videe",
-             e.status_code == 503, str(e.status_code))
+    # 11a — le relais repond, il ne refuse plus.
+    b11 = base_neuve()
+    b11[S.P3S3_CAMPAGNES] = CollectionEcrivable([])
+    b11[S.P3S3_ACTIONS] = CollectionEcrivable([])
+    b11[S.V598_NICHES] = CollectionEcrivable([niche_valide(coach=S.SUPER_ADMIN_EMAILS[0])])
+    b11[S.V595_MEDIAS] = CollectionEcrivable([])
+    # Deux fiches : une au super-admin (le vrai proprietaire), une a un AUTRE coach.
+    b11[S.P3S1_COLLECTION] = CollectionBouchon([
+        fiche_valide(id_="uuid-admin", coach=S.SUPER_ADMIN_EMAILS[0]),
+        fiche_valide(id_="uuid-autre", coach=AUTRE_COACH),
+    ])
+    rep11 = executer(R.relais_preparer_campagne(requete_preparer({"name": "x", "dry_run": True})))
+    verifier("11a le relais FONCTIONNE quand le coach configure est le super-admin",
+             isinstance(rep11, dict) and rep11.get("dry_run") is True, str(rep11)[:120])
+    # 11b — LE POINT QUI COMPTE : la portee reste cloisonnee. Une seule fiche
+    # (celle du super-admin) entre dans la campagne, jamais celle de l'autre coach.
+    verifier("11b la portee reste STRICTE : la fiche de l'autre coach n'entre PAS dans la campagne",
+             rep11["campaign"]["nb_fiches"] == 1, "nb_fiches=%s" % rep11["campaign"].get("nb_fiches"))
+    # 11c — et le controle de propriete tient aussi a la MODIFICATION.
+    b11[S.P3S3_CAMPAGNES].documents.append({
+        "id": "camp-autre", "coach_id": AUTRE_COACH, "nom": "Pas a moi", "etat": "preparee",
+        "nb_fiches": 0, "nb_destinataires": 0, "summary": {}, "media_ids": [],
+        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
+        "created_by": AUTRE_COACH, "approved_at": None, "approved_by": None,
+        "started_at": None, "finished_at": None,
+    })
+    try:
+        executer(R.relais_modifier_campagne(
+            "camp-autre", requete_modifier_campagne("camp-autre", {"nom": "vole"})))
+        verifier("11c modifier la campagne d'un AUTRE coach reste REFUSE (403), super-admin ou non",
+                 False, "aucune exception levee")
+    except HTTPException as e:
+        verifier("11c modifier la campagne d'un AUTRE coach reste REFUSE (403), super-admin ou non",
+                 e.status_code == 403, str(e.status_code))
 finally:
     if _coach_avant is not None:
         os.environ["AFROBOOSTEUR_RELAY_COACH_ID"] = _coach_avant
