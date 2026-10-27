@@ -122,6 +122,20 @@ def _coach_id_configure() -> str:
     return (os.environ.get("AFROBOOSTEUR_RELAY_COACH_ID", "") or "").strip()
 
 
+def _interrupteur_actif(nom: str) -> bool:
+    """MEME convention que `POSTHOG_SERVER_ENABLED` (api/routes/shared.py) —
+    jamais reinventee ici. Absent ou toute autre valeur = FERME."""
+    return (os.environ.get(nom, "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _fil_actif() -> bool:
+    return _interrupteur_actif("AFROBOOSTEUR_RELAIS_FIL_ACTIF")
+
+
+def _relances_actif() -> bool:
+    return _interrupteur_actif("AFROBOOSTEUR_RELAIS_RELANCES_ACTIF")
+
+
 def _empreinte_corps(corps_brut: bytes) -> str:
     """SHA-256 hexadecimal du CORPS BRUT exact — `b""` pour un GET (constante
     bien connue, `e3b0c4...`), les octets exacts envoyes pour un POST. Jamais
@@ -833,3 +847,225 @@ async def relais_ajouter_media(request: Request):
                 "largeur": media["fichier"].get("largeur"), "hauteur": media["fichier"].get("hauteur"),
             }
     return resultat
+
+
+# -----------------------------------------------------------------------------
+# 6. PHASE 6C (ETAPE 1A) — LECTURE SEULE : LE FIL D'UNE CONVERSATION, LES
+#    ECHEANCES D'UNE CAMPAGNE. DEUX ROUTES NEUVES, ISOLEES, DESACTIVEES PAR
+#    DEFAUT — AUCUNE ROUTE EXISTANTE N'EST MODIFIEE PAR CETTE SECTION.
+#
+# POURQUOI DEUX INTERRUPTEURS SEPARES DE `AFROBOOSTEUR_RELAY_SECRET`. Le
+# secret et le coach_id restent la PREMIERE porte (`_garde`, deja verifiee
+# avant d'arriver ici) : sans eux, tout le relais est inerte, ces deux routes
+# comprises. `AFROBOOSTEUR_RELAIS_FIL_ACTIF` et `AFROBOOSTEUR_RELAIS_
+# RELANCES_ACTIF` sont une SECONDE porte, par fonctionnalite : le President
+# peut ouvrir l'une sans l'autre, et les fermer toutes deux sans toucher au
+# reste du relais deja en service (prospects, campagnes, conversations,
+# brouillon, mediatheque). Meme convention que `POSTHOG_SERVER_ENABLED`
+# (api/routes/shared.py) — jamais une regle inventee ici.
+#
+# LECTURE SEULE ABSOLUE, DANS LES DEUX SENS DU MOT :
+#   - aucune ecriture Mongo dans cette section (aucun `insert_one`,
+#     `update_one`, `delete_one`) ;
+#   - aucun appel a `p3r2_reserver`, `p3r2_envoyer_relance`, ni a la boucle de
+#     fond `_v604_boucle_relances` : le moteur de relances n'est JAMAIS
+#     sollicite. `p3r2_garde_relance(..., simulation=True)` est une fonction
+#     PURE (aucun acces base) qui rend un VERDICT, jamais une ACTION.
+#
+# RATTACHEMENT TECHNIQUE, JAMAIS PAR ADRESSE E-MAIL. Les messages recus d'un
+# meme dossier sont retrouves par LE MEME `action_id` que le reste du
+# chantier (`pf_cle_conversation`, deja utilise par le tableau de bord du
+# coach) — jamais en comparant des adresses. Un message recu SANS action
+# associee reste seul : il n'est jamais regroupe avec un autre message, quand
+# bien meme les deux partageraient un expediteur.
+#
+# PERIMETRE ET DONNEES PERSONNELLES. Chaque lecture passe par `_portee()`
+# (le coach_id configure, jamais un filtre vide) — y compris pour la
+# campagne et les actions d'une relance, verifie par cette section en plus
+# de la tenance deja portee par `campaign_id` sur l'action. Aucune des deux
+# routes ne renvoie `target` (l'adresse ou le numero reel du destinataire) :
+# la route des relances ne sert qu'a decider SI une relance pourrait partir,
+# jamais A QUI exactement — comme le reste du relais.
+# -----------------------------------------------------------------------------
+
+_PROJECTION_MESSAGE_FIL = {
+    "_id": 0, "id": 1, "action_id": 1, "received_at": 1, "subject": 1,
+    "body_text": 1, "body_quoted": 1, "from_email": 1, "contenu_recupere": 1,
+    "provider_email_id": 1,
+}
+
+_PROJECTION_ACTION_TRACE = {
+    "_id": 0, "id": 1, "action_id": 1, "inbound_id": 1, "sent_at": 1,
+    "updated_at": 1, "created_at": 1, "subject": 1, "send_status": 1,
+    "provider_status": 1, "approved_text": 1, "provider_message_id": 1,
+    "media": 1, "medias": 1,
+}
+
+
+@router.get("/api/afroboosteur-relais/conversations/{inbound_id}/fil")
+async def relais_fil_conversation(inbound_id: str, request: Request):
+    """Le fil chronologique COMPLET d'UN dossier : premier contact, messages
+    recus, reponses envoyees, relances parties — dans l'ordre, avec leurs
+    dates et statuts de remise. LECTURE SEULE : reutilise EXACTEMENT
+    `v619_fil`, deja prouve par le tableau de bord du coach (`pf_charger`),
+    jamais une seconde implementation.
+
+    Le dossier est celui de CE message (`pf_cle_conversation`) : s'il porte
+    une `action_id`, tous les messages recus de LA MEME action forment le
+    fil ; sinon, le fil ne contient QUE ce message — jamais un regroupement
+    par adresse e-mail.
+    """
+    await _garde(request)
+    if not _fil_actif():
+        raise HTTPException(status_code=503, detail="Fil de conversation non activé")
+
+    from api.server import P3AI4_COLLECTION, P3S3_ACTIONS, v619_fil, v619_preuves
+
+    message = await _message_de_la_portee(inbound_id)
+    action_id = str(message.get("action_id") or "").strip()
+
+    if action_id:
+        # TENANCE VERIFIEE UNE SECONDE FOIS, EXPLICITEMENT, SUR L'ACTION :
+        # `message` est deja dans la portee, mais une action orpheline ou mal
+        # rattachee ne doit jamais elargir silencieusement le fil a autre
+        # chose que ce coach. Absente ou hors portee -> traite comme un
+        # dossier SANS action (repli surete, jamais un fil plus large).
+        action = await db[P3S3_ACTIONS].find_one(
+            {"id": action_id, **_portee()}, {"_id": 0})
+        if not action:
+            action_id = ""
+
+    if action_id:
+        messages_recus = await db[P3U2_COLLECTION].find(
+            {"action_id": action_id, **_portee()}, _PROJECTION_MESSAGE_FIL) \
+            .sort([("received_at", 1), ("id", 1)]).to_list(500)
+        campagne = {}
+        preuve = {}
+        campaign_id = action.get("campaign_id") if action else None
+        if campaign_id:
+            campagnes, preuves = await v619_preuves([campaign_id])
+            campagne = campagnes.get(campaign_id) or {}
+            preuve = preuves.get(campaign_id) or {}
+        traces = await db[P3AI4_COLLECTION].find(
+            {"action_id": action_id, **_portee()}, _PROJECTION_ACTION_TRACE) \
+            .to_list(500)
+    else:
+        action = {}
+        campagne = {}
+        preuve = {}
+        # Dossier SANS action : son fil ne contient jamais que ce message —
+        # jamais un autre message, meme de la meme adresse.
+        messages_recus = [{k: message.get(k) for k in _PROJECTION_MESSAGE_FIL if k != "_id"}]
+        traces = await db[P3AI4_COLLECTION].find(
+            {"inbound_id": message["id"], **_portee()}, _PROJECTION_ACTION_TRACE) \
+            .to_list(500)
+
+    fil = v619_fil(messages_recus, action, campagne, preuve, traces)
+    return {
+        "inbound_id": message["id"],
+        "campaign_id": (action or {}).get("campaign_id"),
+        "returned": len(fil),
+        "fil": fil,
+    }
+
+
+_PROJECTION_ACTION_RELANCE = {
+    "_id": 0, "id": 1, "recipient_key": 1, "organisations": 1, "cities": 1,
+    "channel": 1, "target": 1, "statut": 1, "execution_type": 1,
+    "bounce_type": 1, "suivi_humain": 1, "suivi_livraison": 1,
+    "sent_at": 1, "provider_status": 1, "replied_at": 1,
+    "interesse_at": 1, "paused_at": 1, "prospect_ids": 1, "prospect_uuids": 1,
+    "message_j3": 1, "message_j7": 1, "message_j14": 1,
+    "j3_due_at": 1, "j3_sent_at": 1, "j3_annule_le": 1, "j3_annule_motif": 1,
+    "j3_provider_status": 1, "j3_claimed_at": 1, "j3_verrou": 1,
+    "j7_due_at": 1, "j7_sent_at": 1, "j7_annule_le": 1, "j7_annule_motif": 1,
+    "j7_provider_status": 1, "j7_claimed_at": 1, "j7_verrou": 1,
+    "j14_due_at": 1, "j14_sent_at": 1, "j14_annule_le": 1, "j14_annule_motif": 1,
+    "j14_provider_status": 1, "j14_claimed_at": 1, "j14_verrou": 1,
+}
+
+_CHAMPS_ETAPE_EXPOSES = ("due_at", "sent_at", "annule_le", "annule_motif", "provider_status")
+
+
+@router.get("/api/afroboosteur-relais/campaigns/{campaign_id}/relances")
+async def relais_relances_campagne(campaign_id: str, request: Request):
+    """Les echeances J+3 / J+7 / J+14 d'UNE campagne — dates prevues,
+    envoyees, annulees, statut fournisseur, et le VERDICT (le meme code que
+    le moteur rendrait) pour chaque relance pas encore partie.
+
+    LECTURE SEULE ABSOLUE — `p3r2_garde_relance(..., simulation=True)` est une
+    fonction PURE (aucun acces base) : elle REND un verdict, elle n'ENVOIE ni
+    ne RESERVE jamais rien. Le moteur reel (`p3r2_executer_relances`, la
+    boucle de fond, `p3r2_reserver`) n'est appele nulle part dans cette route.
+
+    Jamais `target` (l'adresse ou le numero reel) dans la reponse : cette
+    route dit SI une relance pourrait partir, jamais A QUI precisement.
+    """
+    await _garde(request)
+    if not _relances_actif():
+        raise HTTPException(status_code=503, detail="Suivi des relances non activé")
+
+    from api.server import (
+        P3R2_ETAPES, P3S3_ACTIONS, c3_refus_exprimes, p3r2_champ,
+        p3r2_garde_relance, p3r2_relations_humaines,
+    )
+
+    identifiant = (campaign_id or "").strip()[:64]
+    campagne = await db[P3S3_CAMPAGNES].find_one(
+        dict(_portee(), id=identifiant), _PROJECTION_CAMPAGNE)
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+
+    limite, depart = _pagination(request)
+    filtre_actions = {"campaign_id": identifiant, **_portee()}
+    total = await db[P3S3_ACTIONS].count_documents(filtre_actions)
+    actions = await db[P3S3_ACTIONS].find(filtre_actions, _PROJECTION_ACTION_RELANCE) \
+        .sort([("recipient_key", 1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+
+    # LE MEME CALCUL DE REFUS QUE LE MOTEUR (p3r2_executer_relances) — lecture
+    # seule sur le registre STOP, jamais une ecriture.
+    refus = set()
+    par_canal: dict = {}
+    for a in actions:
+        canal = (a.get("channel") or "").strip().lower()
+        if canal:
+            par_canal.setdefault(canal, []).append(a.get("target"))
+    for canal, valeurs in par_canal.items():
+        for v in await c3_refus_exprimes(canal, valeurs):
+            refus.add(f"{canal}:{v}")
+    humains = await p3r2_relations_humaines(actions)
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    lignes = []
+    for action in actions:
+        a = dict(action)
+        if a.get("id") in humains:
+            a["_relation_humaine"] = humains[a["id"]]
+        relances = {}
+        for etape in P3R2_ETAPES:
+            champs = {champ: a.get(p3r2_champ(etape, champ)) for champ in _CHAMPS_ETAPE_EXPOSES}
+            verdict = p3r2_garde_relance(
+                a, campagne, etape, refus=refus, maintenant=maintenant,
+                envoi_autorise=False, simulation=True)
+            relances[etape] = {
+                **champs,
+                "autorise_si_execute": verdict["autorise"],
+                "code": verdict["code"],
+                "motif": verdict["motif"],
+            }
+        lignes.append({
+            "id": a.get("id"),
+            "recipient_key": a.get("recipient_key"),
+            "organisations": a.get("organisations") or [],
+            "cities": a.get("cities") or [],
+            "statut": a.get("statut"),
+            "premier_contact_envoye": bool(a.get("sent_at")),
+            "a_repondu": bool(a.get("replied_at")),
+            "relances": relances,
+        })
+
+    return {
+        "campaign_id": identifiant, "campaign_etat": campagne.get("etat"),
+        "total": total, "returned": len(lignes), "limit": limite, "offset": depart,
+        "actions": lignes,
+    }

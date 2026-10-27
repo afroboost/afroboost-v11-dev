@@ -444,8 +444,10 @@ verifier(
     methodes_ecriture == ["post", "patch", "post", "post", "post"], str(methodes_ecriture)
 )
 verifier(
-    "9b sept routes GET (3 lecture P4/5 + brouillon 6A + campaigns/{id}, medias, niches 6B)",
-    len(re.findall(r'@router\.get\(', source)) == 7
+    "9b neuf routes GET (3 lecture P4/5 + brouillon 6A + campaigns/{id}, medias, niches 6B "
+    "+ conversations/{id}/fil, campaigns/{id}/relances 6C-1A — toutes deux lecture seule, "
+    "chacune derriere son propre interrupteur ferme par defaut)",
+    len(re.findall(r'@router\.get\(', source)) == 9
 )
 lignes_ecriture = [
     ligne for ligne in source.splitlines()
