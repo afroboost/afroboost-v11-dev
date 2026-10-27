@@ -416,27 +416,35 @@ rep_grosse = executer(R.relais_lister_prospects(req_grosse_page))
 verifier("8a la pagination est PLAFONNEE a 50", rep_grosse["limit"] == R.LIMITE_MAX)
 
 # ============================================================================
-print("\n9. ECRITURE MONGO — STRICTEMENT BORNEE AU BROUILLON (phase 6A, reevaluee)")
-# Section mise a jour SCIEMMENT, une seconde fois : la phase 6A porte
-# desormais DEUX routes POST (enregistrer un brouillon, previsualiser un
-# envoi) et UNE ecriture Mongo reelle — le texte d'un brouillon, et lui seul.
-# Ce qui reste verrouille, et c'est ce qui compte vraiment : AUCUNE ecriture
-# nulle part ailleurs, et surtout jamais dans `prospect_reply_sends`
-# (reservation/envoi) — la seule ligne qui transformerait une preparation en
-# depart reel.
+print("\n9. ECRITURE MONGO — reevaluee une troisieme fois (phase 6B : campagnes + medias)")
+# PHASE 6B ajoute : POST/PATCH campagnes (prospection), GET campagnes/{id},
+# GET medias, GET niches, POST medias — ET un mode d'ecriture NOUVEAU : au
+# lieu d'un `.update_one(...)` ecrit directement dans CE fichier, les trois
+# nouvelles ecritures passent par des fonctions IMPORTEES depuis api.server
+# (`p3s3_preparer_campagne_pour`, `p3s3_modifier_campagne_pour`,
+# `v595_ajouter_media_pour` — memes fonctions que la route du coach, aucune
+# duplication). Un grep sur « .update_one( » dans CE fichier ne les verrait
+# donc PAS — d'ou le test 9c-bis, qui verrouille la liste EXACTE des
+# fonctions d'ecriture deleguees, pour qu'une quatrieme ne s'ajoute jamais
+# sans qu'un test echoue ici pour le signaler.
 
 methodes_ecriture = re.findall(r'@router\.(post|patch|put|delete)\(', source)
-verifier("9a exactement deux routes POST (brouillon, apercu-reponse), aucune PATCH/PUT/DELETE",
-         methodes_ecriture == ["post", "post"], str(methodes_ecriture))
-verifier("9b quatre routes GET (trois de lecture + le brouillon de la phase 6A)",
-         len(re.findall(r'@router\.get\(', source)) == 4)
+verifier(
+    "9a exactement QUATRE routes POST (campaigns, brouillon, apercu-reponse, medias) "
+    "et UNE PATCH (campaigns/{id}) — toujours aucun PUT/DELETE",
+    methodes_ecriture == ["post", "patch", "post", "post", "post"], str(methodes_ecriture)
+)
+verifier(
+    "9b sept routes GET (3 lecture P4/5 + brouillon 6A + campaigns/{id}, medias, niches 6B)",
+    len(re.findall(r'@router\.get\(', source)) == 7
+)
 lignes_ecriture = [
     ligne for ligne in source.splitlines()
     if re.search(r'\.(insert_one|insert_many|update_one|update_many|delete_one|delete_many|replace_one)\(', ligne)
 ]
 verifier(
-    "9c toute ecriture Mongo (insert_one/update_one/...) du fichier porte EXCLUSIVEMENT "
-    "sur P3AI_BROUILLONS — aucune sur une autre collection",
+    "9c toute ecriture Mongo LITTERALE (insert_one/update_one/...) DANS CE FICHIER porte "
+    "EXCLUSIVEMENT sur P3AI_BROUILLONS — aucune sur une autre collection",
     len(lignes_ecriture) > 0 and all("P3AI_BROUILLONS" in ligne for ligne in lignes_ecriture),
     str(lignes_ecriture)
 )
@@ -445,6 +453,14 @@ verifier(
     "seule la LECTURE (find_one) y est autorisee",
     "P3AI4_COLLECTION].insert" not in source and "P3AI4_COLLECTION].update" not in source
     and "P3AI4_COLLECTION].delete" not in source
+)
+appels_delegues = sorted(set(re.findall(r'\b([a-z0-9_]+_pour)\(', source)))
+verifier(
+    "9c-bis les SEULES ecritures deleguees (fonctions *_pour importees d'api.server) sont "
+    "exactement ces trois — jamais une quatrieme sans qu'un test le signale ici",
+    appels_delegues == ["p3s3_modifier_campagne_pour", "p3s3_preparer_campagne_pour",
+                        "v595_ajouter_media_pour"],
+    str(appels_delegues)
 )
 
 # ============================================================================
