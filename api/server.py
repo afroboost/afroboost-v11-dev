@@ -30677,6 +30677,192 @@ async def p3r1_assurer_token(action: dict) -> dict:
 
 
 # ============================================================================
+# P3-R5 — RECEVOIR AUSSI SUR L'ADRESSE QUI ENVOIE (V631)
+# ============================================================================
+# CE QUI MANQUAIT, MESURE LE 27/10/2026. `afroboost.com` n'a AUCUN MX, et le
+# port 25 de ses IP (Cloudflare) est injoignable : une reponse adressee a
+# `notifications@afroboost.com` — l'adresse que le prospect VOIT dans son
+# logiciel de messagerie — ne peut PHYSIQUEMENT pas arriver. Le prospect
+# Un groupe etudiant demarche l'a ecrit lui-meme : « On a repondu deux fois a vos emails
+# mais il nous semble qu'il y a un probleme avec la boite. » Ses deux premieres
+# reponses ne sont ni chez le fournisseur ni en base, et il a recu J+3, J+7
+# puis J+14 pendant ce temps.
+#
+# POURQUOI LE `Reply-To` NE SUFFIT PAS. Il est pose correctement et il marche
+# (98 reponses rattachees par jeton). Mais un transfert interne ne conserve pas
+# l'en-tete `Reply-To` : la personne qui lit le message transfere ne voit plus
+# que `notifications@afroboost.com` dans l'en-tete recopie, et c'est la qu'elle
+# repond. C'est exactement le cas d'un groupe etudiant — ecrit a une adresse de groupe,
+# reponse venue de l'adresse personnelle d'un membre, sur un autre domaine.
+#
+# OUVRIR UN MX SUR LE DOMAINE N'EST PAS ANODIN. La documentation Resend est
+# explicite : « you will receive emails through Resend for ANY address at that
+# domain ». Sans filtre, TOUT le courrier du domaine — robots, prospectus,
+# pourriel, rapports d'echec — entrerait dans `prospect_inbound_messages` et
+# noierait l'ecran Prospection sous du bruit. D'ou une LISTE BLANCHE de boites
+# et un acquittement silencieux pour tout le reste : acquitter plutot que
+# refuser, sinon le fournisseur reessaie indefiniment pour du pourriel.
+#
+# ET SURTOUT — PAS DE JETON, PAS D'ECRITURE AUTOMATIQUE. L'adresse a jeton
+# prouve a quel envoi un message repond ; une boite generique ne prouve RIEN,
+# et n'importe qui peut y ecrire en usurpant un expediteur. Un message arrive
+# sur la boite generique est donc STOCKE, SIGNALE et VISIBLE — mais jamais
+# rattache tout seul. Il attend qu'un humain confirme. C'est la seule facon de
+# tenir les deux exigences a la fois : ne plus rien perdre, et ne jamais couper
+# les relances de quelqu'un qui n'a rien dit.
+#
+# CONSEQUENCE VOULUE : TANT QUE LE MX N'EST PAS POSE, CE LOT NE CHANGE RIEN.
+# Aucun message ne peut arriver sur la boite generique sans MX ; les 98 reponses
+# existantes arrivent toutes avec un jeton valide et suivent le chemin d'avant,
+# a l'octet pres. La methode `C_FROM_EMAIL` n'a JAMAIS servi en production
+# (98/98 en `A0_REPLY_TOKEN`) : la rendre plus prudente ne retire rien a personne.
+
+# La boite generique, cote local-part. Une seule aujourd'hui : c'est l'adresse
+# d'expedition de tous les e-mails Afroboost, donc la seule ou un prospect
+# puisse repondre par erreur. En ajouter une se fait ICI, pas en semant des
+# chaines dans le code.
+P3R5_BOITES_ACCEPTEES = ("notifications",)
+# Le domaine d'envoi. Surchargeable pour un banc ou une bascule, jamais devine.
+P3R5_DOMAINE_ENVOI = (os.environ.get("P3R5_DOMAINE_RECEPTION")
+                      or "afroboost.com").strip().lower()
+# Le plafond de lecture de la piste « meme domaine ». Une piste n'a d'interet
+# que si elle est UNIQUE : deux candidats valent zero, inutile d'en lire mille.
+P3R5_MAX_DOMAINE = 50
+_P3R5_RE_DOMAINE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}$")
+
+
+def p3r5_adresse_nue(adresse) -> str:
+    """`Nom <a@b.c>` -> `a@b.c`, en minuscules. PURE.
+
+    POURQUOI CETTE FONCTION EXISTE ALORS QUE `p3r1_token_depuis_adresse` LIT
+    DEJA UNE ADRESSE. Parce qu'elle sert a une porte qui peut REFUSER, et que
+    la seule erreur inacceptable ici serait de refuser un message legitime.
+    `p3r1_...` coupe sur `@` sans retirer un chevron : sur `X <r-tok@dom>` il
+    lirait le domaine `dom>` et rendrait "". Tolerer la forme avec nom
+    d'affichage rend cette porte plus permissive que le rattachement — jamais
+    l'inverse.
+    """
+    texte = str(adresse or "").strip()
+    if "<" in texte and ">" in texte:
+        texte = texte[texte.rfind("<") + 1:texte.rfind(">")]
+    return texte.strip().strip('"').strip().lower()
+
+
+def p3r5_domaine_de(adresse) -> str:
+    """Le domaine d'une adresse, ou "" s'il n'est pas exploitable. PURE.
+
+    LA VALIDATION N'EST PAS DECORATIVE : ce domaine entre dans une requete
+    MongoDB. Un domaine qui ne colle pas exactement au motif rend "", et
+    l'appelant ne cherche alors rien du tout — c'est ce qui empeche une entree
+    tordue d'atteindre la base. `re.escape` vient EN PLUS, pas a la place.
+    """
+    nue = p3r5_adresse_nue(adresse)
+    if nue.count("@") != 1:
+        return ""
+    domaine = nue.rsplit("@", 1)[1].strip()
+    return domaine if _P3R5_RE_DOMAINE.match(domaine) else ""
+
+
+def p3r5_boite_generique(adresse) -> bool:
+    """CE MESSAGE EST-IL ARRIVE SUR LA BOITE D'ENVOI ? PURE.
+
+    C'est le SEUL predicat qui ouvre le comportement neuf de ce lot : pas de
+    rattachement automatique, et une piste par domaine. Il est VOLONTAIREMENT
+    etroit — il ne dit oui que pour une boite nommee d'un domaine nomme. Tout
+    le reste du depot continue exactement comme avant.
+
+    Le sous-adressage `+quelquechose` est tolere, comme dans P3-R1 : certains
+    clients l'ajoutent, il ne fait pas partie de l'identite de la boite.
+    """
+    nue = p3r5_adresse_nue(adresse)
+    if nue.count("@") != 1:
+        return False
+    local, domaine = nue.rsplit("@", 1)
+    if domaine.strip() != P3R5_DOMAINE_ENVOI:
+        return False
+    return local.split("+", 1)[0].strip() in P3R5_BOITES_ACCEPTEES
+
+
+def p3r5_sur_domaine_envoi(adresse) -> bool:
+    """CETTE ADRESSE EST-ELLE SUR LE DOMAINE D'ENVOI, QUELLE QUE SOIT LA BOITE ? PURE.
+
+    Plus large que `p3r5_boite_generique` a dessein. Une reponse envoyee a
+    `contact@afroboost.com` ou `info@afroboost.com` n'a pas de jeton non plus :
+    rien ne prouve a quel envoi elle repond. Elle doit donc suivre le MEME
+    chemin prudent (stockee, jamais rattachee toute seule) — la jeter parce que
+    la boite n'est pas dans la liste blanche perdrait un prospect legitime.
+    """
+    nue = p3r5_adresse_nue(adresse)
+    return nue.count("@") == 1 and nue.rsplit("@", 1)[1].strip() == P3R5_DOMAINE_ENVOI
+
+
+async def p3r5_candidats_domaine(coach_id: str, domaine: str) -> list:
+    """Les actions ENVOYEES et sans reponse dont la cible est sur ce domaine.
+
+    UNE SEULE SOURCE pour trois usages (la piste a la reception, le filtre
+    « expediteur connu », la liste proposee au coach) : trois copies auraient
+    diverge au premier correctif. Le domaine est valide par `p3r5_domaine_de`
+    AVANT d'arriver ici et passe par `re.escape` en plus ; l'egalite exacte est
+    reverifiee en Python parce que `$regex` ne dit qu'une ressemblance.
+    """
+    domaine = (domaine or "").strip().lower()
+    if not domaine or not _P3R5_RE_DOMAINE.match(domaine):
+        return []
+    trouvees = await db[P3S3_ACTIONS].find(
+        {"coach_id": coach_id,
+         "target": {"$regex": "@%s$" % re.escape(domaine), "$options": "i"},
+         "sent_at": {"$exists": True, "$ne": None}, "replied_at": {"$exists": False}},
+        {"_id": 0}).to_list(P3R5_MAX_DOMAINE)
+    return [a for a in trouvees
+            if a.get("sent_at") and p3r5_domaine_de(a.get("target")) == domaine]
+
+
+async def p3r5_expediteur_connu(coach_id: str, expediteur) -> bool:
+    """CET EXPEDITEUR EST-IL QUELQU'UN QUE NOUS AVONS DEMARCHE ? Lecture seule.
+
+    C'est ce qui separe un prospect qui ecrit a la mauvaise boite d'un robot ou
+    d'un prospectus : adresse EXACTE d'une action envoyee, ou meme domaine
+    qu'une action envoyee. Deux requetes bornees, et seulement pour du courrier
+    qui serait autrement jete.
+    """
+    nue = p3r5_adresse_nue(expediteur)
+    domaine = p3r5_domaine_de(nue)
+    if not domaine:
+        return False
+    exacte = await db[P3S3_ACTIONS].find_one(
+        {"coach_id": coach_id, "target": nue, "sent_at": {"$exists": True, "$ne": None}},
+        {"_id": 0, "id": 1})
+    if exacte:
+        return True
+    return bool(await p3r5_candidats_domaine(coach_id, domaine))
+
+
+def p3r5_courrier_non_releve(adresse) -> bool:
+    """FAUT-IL JETER CE MESSAGE SANS LE LIRE ? PURE. Par defaut : NON.
+
+    LA FORME DE CETTE FONCTION EST LE CORRECTIF LUI-MEME. Une premiere version
+    demandait « cette adresse est-elle acceptee ? » et refusait tout le reste.
+    Elle cassait 26 verifications des bancs existants, et pour une bonne
+    raison : elle faisait de ce lot le nouveau point de passage obligatoire de
+    TOUTE la reception, alors qu'il ne doit filtrer qu'une chose.
+
+    Formulee a l'envers, elle ne refuse QUE ce qu'elle doit refuser : le
+    courrier de notre domaine d'envoi adresse a une boite qui n'est pas
+    relevee. Ouvrir un MX sur `afroboost.com` fait arriver ici tout le courrier
+    du domaine ; sans ce filtre, le pourriel et les robots entreraient dans la
+    file de travail du coach. Pour tout le reste — le domaine a jeton en
+    premier — la reponse est NON, et le chemin prouve par 98 reponses n'a pas
+    meme a etre reconnu pour continuer de fonctionner.
+    """
+    nue = p3r5_adresse_nue(adresse)
+    if nue.count("@") != 1:
+        return False
+    if nue.rsplit("@", 1)[1].strip() != P3R5_DOMAINE_ENVOI:
+        return False
+    return not p3r5_boite_generique(nue)
+
+
+# ============================================================================
 # P3-U2 — LA RECEPTION DES REPONSES, ET RIEN QUI RECOIVE ENCORE
 # ============================================================================
 # CE LOT NE RECOIT AUCUN E-MAIL. Il n'ouvre ni webhook, ni IMAP, ni port. Il
@@ -30712,6 +30898,10 @@ P3U2_METHODE_IN_REPLY_TO = "A_IN_REPLY_TO"   # l'en-tete que le protocole garant
 P3U2_METHODE_REFERENCES = "B_REFERENCES"     # le fil complet, meme garantie
 P3U2_METHODE_PROVIDER = "B_PROVIDER"         # l'identifiant du fournisseur
 P3U2_METHODE_EMAIL = "C_FROM_EMAIL"          # l'expediteur, et lui seul
+# V631 : les deux methodes de la boite GENERIQUE (`notifications@afroboost.com`).
+# Elles n'existent que pour elle, et aucune des deux n'ecrit toute seule.
+P3U2_METHODE_DOMAINE = "D_DOMAINE_PROSPECT"  # le domaine de l'expediteur : une PISTE
+P3U2_METHODE_HUMAIN = "E_CONFIRME_HUMAIN"    # un humain a tranche : certitude
 P3U2_METHODE_AUCUNE = "AUCUNE"
 
 # La confiance n'est pas decorative : elle dit au dashboard ce qu'il peut
@@ -30728,6 +30918,13 @@ P3U2_CONFIANCE = {
     P3U2_METHODE_REFERENCES: 95,
     P3U2_METHODE_PROVIDER: 90,
     P3U2_METHODE_EMAIL: 60,
+    # V631 — 40, DONC SOUS LE SEUIL, ET C'EST TOUT L'INTERET. Le domaine de
+    # l'expediteur ne prouve pas qu'il repond a NOTRE message : il dit
+    # seulement « quelqu'un de cette maison ecrit ». C'est la piste qu'il faut
+    # montrer au coach, jamais une date de reponse a ecrire.
+    P3U2_METHODE_DOMAINE: 40,
+    # Un humain qui tranche est aussi certain qu'un jeton : il a lu le message.
+    P3U2_METHODE_HUMAIN: 100,
     P3U2_METHODE_AUCUNE: 0,
 }
 # EN DESSOUS DE CE SEUIL, AUCUNE ECRITURE AUTOMATIQUE. `C_FROM_EMAIL` le
@@ -30750,6 +30947,9 @@ P3U2_MOTIFS = {
     "JAMAIS_ENVOYE": "l'action correspondante n'a jamais ete envoyee",
     "SANS_IDENTIFIANT": "message sans identifiant : impossible d'ecarter un doublon",
     "EXPEDITEUR_ILLISIBLE": "adresse d'expedition inexploitable",
+    # V631 — les deux motifs de la boite generique.
+    "SANS_JETON": "recu sur la boite generique : a confirmer avant de couper les relances",
+    "DOMAINE_SEUL": "meme domaine qu'un prospect demarche — a confirmer par un humain",
 }
 
 # LE CHAMP QUI MANQUE SUR L'ACTION, ET POURQUOI IL N'EST PAS UN DOUBLON.
@@ -30875,7 +31075,9 @@ def p3u2_candidats_par_identifiant(message: dict) -> list:
 def p3u2_verdict_correlation(message: dict, actions_par_rfc: dict,
                              actions_par_provider: dict,
                              candidats_email: list,
-                             action_par_token: dict = None) -> dict:
+                             action_par_token: dict = None,
+                             candidats_domaine: list = None,
+                             auto_interdit: bool = False) -> dict:
     """A QUELLE ACTION CE MESSAGE REPOND-IL ? Fonction PURE, sans base.
 
     QUATRE METHODES, DANS UN ORDRE QUI N'EST PAS NEGOCIABLE :
@@ -30915,7 +31117,13 @@ def p3u2_verdict_correlation(message: dict, actions_par_rfc: dict,
         if action is None:
             return {"action": None, "methode": P3U2_METHODE_AUCUNE, "confiance": 0,
                     "statut": P3U2_STATUT_REVUE, "motif": motif}
-        automatique = confiance >= P3U2_SEUIL_AUTOMATIQUE
+        # V631 — `auto_interdit` : recu sur une boite SANS jeton. La confiance
+        # ne change pas (elle dit ce qu'on a trouve), seul le DROIT D'ECRIRE
+        # tombe. Un message reste donc rattachable d'un clic, avec sa piste
+        # deja calculee — mais aucune relance ne s'arrete sans un humain.
+        automatique = confiance >= P3U2_SEUIL_AUTOMATIQUE and not auto_interdit
+        if not automatique and not motif and auto_interdit:
+            motif = P3U2_MOTIFS["SANS_JETON"]
         return {"action": action, "methode": methode, "confiance": confiance,
                 "statut": P3U2_STATUT_RATTACHE if automatique else P3U2_STATUT_REVUE,
                 "motif": "" if automatique else motif}
@@ -30946,6 +31154,20 @@ def p3u2_verdict_correlation(message: dict, actions_par_rfc: dict,
     if len(candidats_email or []) == 1:
         return issue(candidats_email[0], P3U2_METHODE_EMAIL)
     if len(candidats_email or []) > 1:
+        return {"action": None, "methode": P3U2_METHODE_AUCUNE, "confiance": 0,
+                "statut": P3U2_STATUT_REVUE, "motif": P3U2_MOTIFS["PLUSIEURS_CANDIDATS"]}
+    # D — V631 : LE DOMAINE, ET SEULEMENT COMME PISTE A CONFIRMER.
+    # C'est le cas d'un groupe etudiant : on ecrit a l'adresse du groupe, une
+    # personne repond depuis son adresse personnelle. Ni le jeton (transfert
+    # interne), ni l'adresse exacte ne rattachent. Le domaine, lui, peut
+    # DESIGNER le bon dossier — il ne le PROUVE pas. Confiance 40 : sous le
+    # seuil, donc revue manuelle, meme si `auto_interdit` etait faux.
+    # L'appelant ne remplit cette liste que pour la boite generique : sur le
+    # chemin a jeton, elle reste vide et rien ne change.
+    if len(candidats_domaine or []) == 1:
+        return issue(candidats_domaine[0], P3U2_METHODE_DOMAINE,
+                     P3U2_MOTIFS["DOMAINE_SEUL"])
+    if len(candidats_domaine or []) > 1:
         return {"action": None, "methode": P3U2_METHODE_AUCUNE, "confiance": 0,
                 "statut": P3U2_STATUT_REVUE, "motif": P3U2_MOTIFS["PLUSIEURS_CANDIDATS"]}
     return issue(None, P3U2_METHODE_AUCUNE, P3U2_MOTIFS["AUCUN_CANDIDAT"])
@@ -31219,9 +31441,44 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
             logger.info("[P3-R1] jeton inconnu sur %s — methodes suivantes",
                         str(message.get("to_email"))[:40])
 
+    # V631 — RECU SUR LA BOITE D'ENVOI = AUCUNE ECRITURE AUTOMATIQUE, ET UNE PISTE.
+    #
+    # LA CONDITION EST L'ADRESSE D'ARRIVEE, PAS L'ABSENCE DE JETON, et cette
+    # nuance est tout le correctif. « Pas de jeton » englobait des chemins
+    # anciens, eprouves et documentes (`C_FROM_EMAIL` sur le domaine a jeton) :
+    # les durcir au passage faisait tomber 20 verifications de
+    # `test_p3u2_inbound` — un lot qui repare une perte n'a pas a redefinir en
+    # chemin ce que « rattache » voulait dire ailleurs.
+    #
+    # Ici la porte est donc NOMINATIVE : seule une reponse arrivee sur
+    # `notifications@afroboost.com` suit le chemin prudent. Consequence voulue,
+    # et verifiable : tant que le MX n'est pas pose, aucun message ne peut
+    # remplir cette condition, et ce bloc ne s'execute JAMAIS.
+    _boite_generique = p3r5_sur_domaine_envoi(message.get("to_email"))
+    candidats_domaine = []
+    if _boite_generique:
+        candidats_domaine = await p3r5_candidats_domaine(
+            coach_id, p3r5_domaine_de(message.get("from_email")))
+
     verdict = p3u2_verdict_correlation(message, par_rfc, par_provider,
-                                       candidats_email, action_par_token)
+                                       candidats_email, action_par_token,
+                                       candidats_domaine=candidats_domaine,
+                                       auto_interdit=_boite_generique)
     action = verdict["action"] or {}
+
+    # V631 — UNE PISTE N'EST PAS UNE ASSOCIATION. Sur la boite d'envoi, un
+    # message en revue peut designer un prospect probable ; il ne LUI appartient
+    # pas pour autant. S'il portait `action_id`, tout ce qui lit ce champ — la
+    # conversation, le dossier donne a l'IA, le nom dans la notification, les
+    # notes — le traiterait comme la reponse de ce prospect AVANT qu'un humain
+    # ait confirme. La piste vit donc dans des champs a part, uniquement pour
+    # l'affichage ; l'association n'est posee que par la route de confirmation.
+    piste = {}
+    if _boite_generique and verdict["statut"] == P3U2_STATUT_REVUE and action:
+        piste = {"piste_action_id": action.get("id"),
+                 "piste_recipient_key": action.get("recipient_key"),
+                 "piste_organisation": p3ai_organisation(action)}
+        action = {}
 
     document = {
         "id": str(uuid.uuid4()),
@@ -31247,6 +31504,7 @@ async def p3u2_recevoir(brut: dict, coach_id: str) -> dict:
         "processed_at": None,
         "created_at": maintenant,
     }
+    document.update(piste)
     # P3-R4 : le corps reel, quand l'adaptateur a su le lire. LISTE BLANCHE.
     document.update(p3r4_champs_contenu(message.get("contenu")))
     try:
@@ -31403,7 +31661,15 @@ async def p3u2_lister_reponses(request: Request):
             **await p3ai_compteurs(email),
             **focus,
             "a_rattacher": await db[P3U2_COLLECTION].count_documents(
-                {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE})}
+                {**dict(get_coach_filter(email)), "statut": P3U2_STATUT_REVUE}),
+            # V631 — CE QUI APPELLE LE COACH : non lu OU sans proprietaire, compte
+            # UNE seule fois. Additionner `non_lues` et `a_rattacher` compterait
+            # deux fois un message qui est les deux. Sert au badge du tableau de
+            # bord, qui ne doit pas disparaitre parce que tout a ete OUVERT alors
+            # que rien n'a encore ete RATTACHE.
+            "a_voir": await db[P3U2_COLLECTION].count_documents(
+                {**dict(get_coach_filter(email)),
+                 "$or": [{P3AI_CHAMP_LU: None}, {"statut": P3U2_STATUT_REVUE}]})}
 
 
 # ============================================================================
@@ -32264,7 +32530,13 @@ def p3u3_adapter_recu(evenement: dict) -> dict:
     """
     e = evenement or {}
     donnees = e.get("data") or e.get("email") or e
-    destinataires = donnees.get("to")
+    # V631 — `received_for` D'ABORD, `to` EN REPLI. C'est Resend qui dit sur
+    # LAQUELLE de nos adresses le message est arrive, et c'est cette adresse
+    # qui porte le jeton. `to` peut contenir autre chose : une liste de
+    # destinataires, une adresse en copie, ou l'adresse d'un alias quand le
+    # prospect repond a tous. Lire `to` quand `received_for` existe ferait
+    # chercher un jeton dans l'adresse de quelqu'un d'autre.
+    destinataires = donnees.get("received_for") or donnees.get("to")
     if isinstance(destinataires, (list, tuple)):
         destinataire = destinataires[0] if destinataires else None
     else:
@@ -32429,6 +32701,27 @@ async def p3u3_webhook_resend(request: Request):
         return {"recu": True, "type": type_evenement, "ignore": True}
 
     message = p3u3_adapter_recu(evenement)
+
+    # V631 — LES BOITES QUI NE SONT PAS RELEVEES. Ouvrir un MX sur `afroboost.com`
+    # fait arriver ICI tout le courrier du domaine ; sans filtre, le pourriel et
+    # les robots entreraient dans la file de travail du coach. ON ACQUITTE au
+    # lieu de refuser — un 4xx ferait reessayer Resend indefiniment.
+    #
+    # MAIS ON NE JETTE PAS UN PROSPECT. Un prospect qui ecrit a `contact@` ou
+    # `info@` au lieu de `notifications@` est legitime : si l'expediteur est une
+    # adresse (ou un domaine) que nous avons demarche, le message suit le chemin
+    # prudent de la boite generique — stocke, jamais rattache tout seul.
+    # Ce qui est vraiment ecarte laisse une trace : l'identifiant fournisseur
+    # (`email_id`) suffit a retrouver le message chez Resend, qui le conserve.
+    if p3r5_courrier_non_releve(message.get("to_email")) and not \
+            await p3r5_expediteur_connu(P3U3_COACH_PAR_DEFAUT, message.get("from_email")):
+        logger.warning("[P3-R5] ecarte : boite non relevee, expediteur inconnu "
+                       "(domaine=%s, email_id=%s)",
+                       p3r5_domaine_de(message.get("from_email")) or "illisible",
+                       str(((evenement.get("data") or {}).get("email_id")) or "-")[:40])
+        return {"recu": True, "type": type_evenement, "ignore": True,
+                "stocke": False, "motif": "boite non relevee, expediteur inconnu"}
+
     if not message.get("provider_event_id"):
         # `svix-id` identifie l'evenement de facon unique cote Resend : c'est
         # le meilleur repli quand la charge utile n'a pas d'identifiant.
@@ -33063,6 +33356,186 @@ async def p3ai_marquer_traite(inbound_id: str, request: Request):
                 (message.get("id") or "")[:8], "traite" if traite else "a repondre")
     return {"ok": True, "id": message["id"], "traite": traite,
             "traite_at": champs[P3AI_CHAMP_TRAITE], **await p3ai_compteurs(email)}
+
+
+# ============================================================================
+# P3-R5 (suite) — LE RATTACHEMENT CONFIRME PAR UN HUMAIN (V631)
+# ============================================================================
+# CETTE BANNIERE N'EST PAS DECORATIVE. Sans elle, la route ci-dessous tombait
+# DANS le bloc READ-P1, et le banc `test_p3ai_reponses` compte les gardes de ce
+# bloc pour prouver qu'aucune route n'y echappe : il attend 2 routes, il en
+# voyait 3. La verification etait juste — c'est le decoupage qui etait faux.
+# Une route appartient au lot qui la cree, et les bancs lisent les bannieres.
+
+@api_router.get("/prospect-inbound/{inbound_id}/candidats")
+async def p3r5_candidats(inbound_id: str, request: Request):
+    """V631 — LES PROSPECTS A QUI CE MESSAGE PEUT REPONDRE. LECTURE SEULE.
+
+    Sert uniquement a CHOISIR, avant de confirmer par `/rattacher`. Memes gardes
+    que la confirmation : session coach, portee de tenance, proprietaire, et
+    message encore EN REVUE (un message deja rattache n'a plus rien a choisir).
+
+    Ne rend que des actions ENVOYEES de la portee du coach : une action jamais
+    partie ne peut pas avoir recu de reponse. La piste et les actions du meme
+    domaine passent d'abord. Le filtre `q` se fait en Python sur des champs
+    deja lus — aucune entree utilisateur n'atteint une requete Mongo. Borne a
+    30 lignes ; au-dela, on precise la recherche.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    message = await p3ai_message_du_coach(inbound_id, email)
+    if not p3ai_est_proprietaire(message, email):
+        raise HTTPException(status_code=403,
+                            detail="Seul le proprietaire de cette reponse peut la rattacher")
+    if (message.get("statut") or "") != P3U2_STATUT_REVUE:
+        raise HTTPException(status_code=409,
+                            detail="Cette reponse est deja rattachee a un interlocuteur")
+
+    recherche = str(request.query_params.get("q") or "").strip().lower()[:80]
+    domaine = p3r5_domaine_de(message.get("from_email"))
+    piste = str(message.get("piste_action_id") or "")
+    actions = await db[P3S3_ACTIONS].find(
+        {**dict(get_coach_filter(email)), "sent_at": {"$exists": True, "$ne": None}},
+        {"_id": 0, "id": 1, "recipient_key": 1, "organisations": 1, "target": 1,
+         "sent_at": 1, "replied_at": 1, "channel": 1}).to_list(600)
+
+    def ligne(a):
+        cible = str(a.get("target") or "")
+        return {"action_id": a.get("id"), "recipient_key": a.get("recipient_key") or "",
+                "organisation": p3ai_organisation(a), "cible": cible,
+                "envoye_le": a.get("sent_at"), "deja_repondu": bool(a.get("replied_at")),
+                "suggere": a.get("id") == piste,
+                "meme_domaine": bool(domaine) and p3r5_domaine_de(cible) == domaine}
+
+    lignes = [ligne(a) for a in actions if a.get("id") and a.get("sent_at")]
+    if recherche:
+        lignes = [l for l in lignes if recherche in (
+            "%s %s %s" % (l["organisation"], l["recipient_key"], l["cible"])).lower()]
+    # La suggestion d'abord, puis la meme maison, puis les plus recentes.
+    lignes.sort(key=lambda l: str(l["envoye_le"] or ""), reverse=True)
+    lignes.sort(key=lambda l: (0 if l["suggere"] else 1, 0 if l["meme_domaine"] else 1))
+    return {"candidats": lignes[:30], "total": len(lignes),
+            "tronque": len(lignes) > 30, "piste_action_id": piste or None}
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/rattacher")
+async def p3r5_rattacher(inbound_id: str, request: Request):
+    """V631 — UN HUMAIN DIT A QUEL ENVOI CE MESSAGE REPOND. C'est ici, et nulle
+    part ailleurs, qu'une reponse recue sans jeton arrete les relances.
+
+    POURQUOI CETTE ROUTE EXISTE. Un message arrive sur la boite generique
+    (`notifications@afroboost.com`) ne porte aucune preuve du fil auquel il
+    repond : ni jeton, ni `In-Reply-To` (Resend ne transmet aucun en-tete). Le
+    moteur le range donc en revue manuelle, avec au mieux une PISTE. Sans cette
+    route, cette piste resterait une impasse : le message serait visible, mais
+    la fiche ne passerait jamais a « repondu » et les relances continueraient a
+    se derouler — exactement la faute que tout ce chantier cherche a eviter.
+
+    CE QU'ELLE N'EST PAS. Elle ne devine rien, elle ENREGISTRE une decision.
+    D'ou la confiance 100 et la methode `E_CONFIRME_HUMAIN` : un humain a lu le
+    message, c'est plus sur qu'un jeton.
+
+    L'ORDRE DES CONTROLES EST LE CONTRAT :
+      1. session coach/admin, puis portee de tenance (`p3ai_message_du_coach`) ;
+      2. PROPRIETAIRE seulement — il y a deux super-admins, et celui qui n'est
+         pas proprietaire ne doit pas pouvoir trancher le dossier de l'autre
+         (meme garde que `/lu` et `/traite`) ;
+      3. le message doit etre EN REVUE : un message deja rattache ne se
+         redirige pas, sinon on pourrait deplacer une reponse d'un prospect a
+         un autre et falsifier deux dossiers d'un coup ;
+      4. l'action doit appartenir a la portee de l'appelant ET avoir ete
+         ENVOYEE : une action jamais partie ne peut pas avoir suscite de
+         reponse.
+
+    `replied_at` RESTE ECRIT UNE SEULE FOIS : on appelle `p3u2_marquer_reponse`
+    au lieu d'ecrire a la main, donc la condition `$exists: False` du filtre
+    maison s'applique telle quelle, et les trois relances tombent dans la meme
+    operation atomique. Recopier ces ecritures ici aurait donne une seconde
+    regle, qui aurait diverge au premier correctif.
+
+    ET LA DECISION HUMAINE PRIME SUR L'ANALYSE V604. Si le texte ressemblait a
+    un accuse de reception automatique, c'est le coach qui a raison : il a lu.
+    """
+    email = await _v309_require_coach_or_admin(request)
+    message = await p3ai_message_du_coach(inbound_id, email)
+    if not p3ai_est_proprietaire(message, email):
+        raise HTTPException(status_code=403,
+                            detail="Seul le proprietaire de cette reponse peut la rattacher")
+    if (message.get("statut") or "") != P3U2_STATUT_REVUE:
+        raise HTTPException(status_code=409,
+                            detail="Cette reponse est deja rattachee a un interlocuteur")
+
+    corps = {}
+    try:
+        if int(request.headers.get("content-length") or 0) > 0:
+            corps = await request.json()
+    except (ValueError, TypeError):
+        corps = {}
+    action_id = str((corps or {}).get("action_id") or "").strip() \
+        if isinstance(corps, dict) else ""
+    if not action_id or len(action_id) > 64:
+        raise HTTPException(status_code=400, detail="action_id manquant")
+
+    action = await db[P3S3_ACTIONS].find_one(
+        {"id": action_id, **dict(get_coach_filter(email))}, {"_id": 0})
+    if not action:
+        raise HTTPException(status_code=404, detail="Action introuvable")
+    if not (action.get("sent_at") or "").strip():
+        raise HTTPException(status_code=400,
+                            detail="Cette action n'a jamais ete envoyee : "
+                                   "elle ne peut pas avoir recu de reponse")
+
+    maintenant = datetime.now(timezone.utc).isoformat()
+    # ETAPE 1 — REVENDIQUER LE MESSAGE, CONDITIONNELLEMENT. `statut == revue`
+    # est DANS le filtre : un double clic, ou deux onglets, ne peuvent pas
+    # rattacher le meme message a deux prospects. Le perdant recoit un 409 et
+    # n'a, surtout, touche AUCUNE relance — c'est pourquoi cette etape vient
+    # AVANT l'arret des relances et non apres.
+    avant = {k: message.get(k) for k in (
+        "statut", "matching_method", "matching_confidence", "motif", "action_id",
+        "campaign_id", "recipient_key", "processed_at")}
+    prise = await db[P3U2_COLLECTION].update_one(
+        {"id": message["id"], "statut": P3U2_STATUT_REVUE},
+        {"$set": {"statut": P3U2_STATUT_RATTACHE,
+                  "matching_method": P3U2_METHODE_HUMAIN,
+                  "matching_confidence": P3U2_CONFIANCE[P3U2_METHODE_HUMAIN],
+                  "motif": "",
+                  "action_id": action.get("id"),
+                  "campaign_id": action.get("campaign_id"),
+                  "recipient_key": action.get("recipient_key"),
+                  "rattache_par": email, "rattache_le": maintenant,
+                  "processed_at": maintenant}})
+    if not getattr(prise, "matched_count", 0):
+        raise HTTPException(status_code=409,
+                            detail="Cette reponse vient d'etre rattachee ailleurs")
+    # ETAPE 2 — ARRETER LES RELANCES. Si elle echoue, le message REVIENT en
+    # revue : un message « rattache » dont les relances tournent encore serait
+    # l'etat le plus trompeur possible (l'ecran dirait « c'est fait », et un
+    # nouvel essai se heurterait a un 409). Mieux vaut un echec franc qui ne
+    # laisse RIEN de modifie.
+    try:
+        marque = await p3u2_marquer_reponse(action, message.get("received_at"))
+    except Exception as e:  # noqa: BLE001
+        logger.error("[P3-R5] arret des relances impossible pour %s (%s) — retour en revue",
+                     (message.get("id") or "")[:8], type(e).__name__)
+        try:
+            await db[P3U2_COLLECTION].update_one(
+                {"id": message["id"], "rattache_par": email, "rattache_le": maintenant},
+                {"$set": dict(avant, rattache_par=None, rattache_le=None)})
+        except Exception as e2:  # noqa: BLE001
+            logger.error("[P3-R5] retour en revue IMPOSSIBLE pour %s (%s) — a verifier a la main",
+                         (message.get("id") or "")[:8], type(e2).__name__)
+        raise HTTPException(status_code=500,
+                            detail="Le rattachement n'a pas abouti. Rien n'a ete modifie.")
+    logger.info("[P3-R5] %s rattache %s a l'action %s (premiere reponse=%s)",
+                email[:24], (message.get("id") or "")[:8],
+                (action.get("id") or "")[:8], marque["premiere_reponse"])
+    return {"ok": True, "id": message["id"], "action_id": action.get("id"),
+            "recipient_key": action.get("recipient_key"),
+            "methode": P3U2_METHODE_HUMAIN,
+            "premiere_reponse": marque["premiere_reponse"],
+            "replied_at": marque["replied_at"],
+            "fiches_marquees": marque["fiches_marquees"],
+            **await p3ai_compteurs(email)}
 
 
 # ============================================================================
@@ -36258,6 +36731,18 @@ def pf_conversation(cle: str, messages, action, envoi, statuts, intentions) -> d
     statut = statuts.get(identifiant) or P3N_STATUT_A_REPONDRE
     intention = intentions.get(identifiant) or ""
     non_lues = sum(1 for m in ordonnes if not m.get(P3AI_CHAMP_LU))
+    # V631 — UN MESSAGE EN REVUE RESTE VISIBLE MEME UNE FOIS LU. `non_lues` ne
+    # dit que « ouvert ou pas » ; ce qui doit rester a l'ecran jusqu'a decision,
+    # c'est « personne n'a encore dit a qui il repond ». Le compte est fait sur
+    # le statut du MESSAGE (source de verite), jamais sur la lecture.
+    a_rattacher = sum(1 for m in ordonnes
+                      if (m.get("statut") or P3U2_STATUT_RATTACHE) == P3U2_STATUT_REVUE)
+    piste = None
+    if a_rattacher and dernier.get("piste_action_id"):
+        piste = {"action_id": dernier.get("piste_action_id"),
+                 "recipient_key": dernier.get("piste_recipient_key") or "",
+                 "organisation": dernier.get("piste_organisation") or "",
+                 "methode": dernier.get("matching_method") or ""}
     recu_le = pf_instant(dernier.get("received_at"))
     envoye_le = pf_instant((envoi or {}).get("sent_at"))
     return {
@@ -36271,6 +36756,8 @@ def pf_conversation(cle: str, messages, action, envoi, statuts, intentions) -> d
         "nb_messages": len(ordonnes),
         "message_ids": [m.get("id") for m in ordonnes],
         "non_lues": non_lues,
+        "a_rattacher": a_rattacher,
+        "piste": piste,
         "statut_commercial": statut,
         "intention": intention,
         "dernier_message": dernier,
@@ -36289,7 +36776,9 @@ def pf_conversation(cle: str, messages, action, envoi, statuts, intentions) -> d
         # message — c'est exactement le cas du BDE HE-Arc (envoi le 05/09 a
         # 13:05, nouveau message le 05/09 a 14:45).
         "reponse_apres_dernier_message": bool(envoye_le and recu_le and envoye_le > recu_le),
-        "rang": pf_rang(statut, non_lues > 0, intention),
+        # Un message a rattacher passe devant tout : tant qu'il n'a pas de
+        # proprietaire, aucune relance de personne ne s'arrete pour lui.
+        "rang": PF_RANG_NOUVEAU if a_rattacher else pf_rang(statut, non_lues > 0, intention),
     }
 
 
@@ -36359,11 +36848,14 @@ def pf_compteurs(conversations) -> dict:
         compteurs[statut] = compteurs.get(statut, 0) + 1
         if conversation.get("non_lues"):
             compteurs["non_lues"] += 1
+        if conversation.get("a_rattacher"):
+            compteurs["a_rattacher"] = compteurs.get("a_rattacher", 0) + 1
         if conversation.get("rang", PF_RANG_CLOS) <= PF_RANG_A_QUALIFIER:
             compteurs["a_traiter"] += 1
         if v606_conversation_positive(conversation):
             compteurs["reponses_positives"] = compteurs.get("reponses_positives", 0) + 1
     compteurs.setdefault("reponses_positives", 0)
+    compteurs.setdefault("a_rattacher", 0)
     return compteurs
 
 

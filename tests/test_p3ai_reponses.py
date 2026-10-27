@@ -1028,8 +1028,9 @@ verifier("12i. les compteurs viennent du SERVEUR, pas d'un comptage local",
          "sectionReponses.donnees.conversations_counts" in ECRAN
          and "conversations.filter" not in ECRAN
          and "reponses.filter" not in ECRAN)
-verifier("12j. l'onglet Prospection porte la pastille des non-lues",
-         "p3NonLues > 0 ? `Prospection (${p3NonLues})`" in TABLEAU)
+verifier("12j. l'onglet Prospection porte la pastille de ce qui appelle le coach",
+         # V631 : non lus OU a rattacher, compte une seule fois par le serveur.
+         "p3Voir > 0 ? `Prospection (${p3Voir})`" in TABLEAU)
 verifier("12k. pas de pastille « 0 »", '`Prospection (${p3NonLues})` : "Prospection"' in TABLEAU)
 verifier("12l. le tableau de bord porte le bandeau « nouvelles reponses »",
          'data-testid="p3-nouvelles-reponses"' in TABLEAU and "Voir les réponses" in TABLEAU)

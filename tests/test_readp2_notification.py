@@ -452,8 +452,13 @@ verifier("10l. une cible introuvable ne casse rien et le DIT",
          "cibleIntrouvable" in ECRAN and "cible-introuvable" in ECRAN)
 verifier("10m. la notification en-app mene au MEME endroit que le push",
          "c17jOuvrir" in DASH and "prospection=1" in DASH)
-verifier("10n. le badge Prospection continue de venir des NON LUES",
-         "p3NonLues > 0 ? `Prospection (${p3NonLues})`" in DASH
+# V631 : le badge reste un COMPTEUR SERVEUR, et jamais un « 0 ». Sa formule
+# s'elargit : non lus OU sans proprietaire (`a_voir`, compte une seule fois par
+# le serveur), car « lu » ne veut pas dire « rattache ». `non_lues` reste lu et
+# sert de repli si le serveur ne connait pas encore `a_voir`.
+verifier("10n. le badge Prospection vient des compteurs SERVEUR (non lus OU a rattacher)",
+         "p3Voir > 0 ? `Prospection (${p3Voir})`" in DASH
+         and "res?.data?.a_voir ?? res?.data?.non_lues" in DASH
          and "res?.data?.non_lues" in DASH)
 
 # ============================================================================

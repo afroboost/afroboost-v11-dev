@@ -4960,6 +4960,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // `setInterval`, la règle anti-boucle du dépôt s'applique ici comme ailleurs.
   const [p3NonLues, setP3NonLues] = useState(0);
   const [p3ARepondre, setP3ARepondre] = useState(0);
+  // V631 — messages reçus sans jeton, qu'aucun prospect ne réclame encore. Ils
+  // doivent rester visibles MÊME une fois ouverts : « lu » ne veut pas dire
+  // « rattaché », et les relances de leur auteur tournent tant que personne
+  // n'a tranché. `p3Voir` = non lus OU à rattacher, compté une seule fois par
+  // le serveur (additionner les deux compterait deux fois le même message).
+  const [p3ARattacher, setP3ARattacher] = useState(0);
+  const [p3Voir, setP3Voir] = useState(0);
 
   // UI-1 (V587) — CAMPAGNES = COCKPIT. La prospection devient un MODE de la page
   // Campagnes (Clients | Prospection), plus un écran séparé. L'ancien onglet
@@ -4986,10 +4993,15 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
       const res = await axios.get(`${API}/prospect-inbound`, { params: { limit: 1 } });
       setP3NonLues(Number(res?.data?.non_lues) || 0);
       setP3ARepondre(Number(res?.data?.a_repondre) || 0);
+      setP3ARattacher(Number(res?.data?.a_rattacher) || 0);
+      // Repli sur `non_lues` si le serveur ne connaît pas encore `a_voir`.
+      setP3Voir(Number(res?.data?.a_voir ?? res?.data?.non_lues) || 0);
     } catch (e) {
       // Jeton expiré ou panne : aucun badge plutôt qu'un badge faux.
       setP3NonLues(0);
       setP3ARepondre(0);
+      setP3ARattacher(0);
+      setP3Voir(0);
     }
   }, []);
 
@@ -6794,7 +6806,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "contacts", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Contacts</span> },
     // V587b : la prospection vit DANS Campagnes (Clients | Prospection). La pastille des
     // réponses partenaires non lues passe donc sur Campagnes, visible depuis tout onglet.
-    { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> {p3NonLues > 0 ? `Campagnes (${p3NonLues})` : "Campagnes"}</span> },
+    { id: "campaigns", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="megaphone" size={14} /> {p3Voir > 0 ? `Campagnes (${p3Voir})` : "Campagnes"}</span> },
     // P3-S2 : voisin de Contacts et Campagnes, jamais une application a part.
     // Visible pour tous les coachs — le backend cloisonne par coach_id.
     // READ-P1 : la pastille compte les réponses partenaires JAMAIS OUVERTES.
@@ -7768,7 +7780,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             avoir rien à fermer : aucune popup, aucun blocage, et le bloc
             disparaît de lui-même dès qu'il n'y a plus rien de neuf.
             Il ne marque RIEN comme lu — il emmène simplement au bon endroit. */}
-        {p3NonLues > 0 && (
+        {(p3NonLues > 0 || p3ARattacher > 0) && (
           <div data-testid="p3-nouvelles-reponses"
             style={{
               marginBottom: '14px', padding: '10px 14px', borderRadius: '10px',
@@ -7779,9 +7791,14 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             }}>
             <SvgIcon name="compass" size={18} />
             <span style={{ flex: 1, fontSize: '14px', fontWeight: 600, minWidth: '160px' }}>
-              {p3NonLues === 1
-                ? '1 nouvelle réponse partenaire'
-                : `${p3NonLues} nouvelles réponses partenaires`}
+              {[
+                p3NonLues > 0 ? (p3NonLues === 1
+                  ? '1 nouvelle réponse partenaire'
+                  : `${p3NonLues} nouvelles réponses partenaires`) : '',
+                p3ARattacher > 0 ? (p3ARattacher === 1
+                  ? '1 message à rattacher'
+                  : `${p3ARattacher} messages à rattacher`) : '',
+              ].filter(Boolean).join(' · ')}
               {p3ARepondre > 0 && (
                 <span style={{ fontWeight: 400, opacity: 0.8, fontSize: '12px' }}>
                   {` — ${p3ARepondre} à répondre au total`}
@@ -9215,7 +9232,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                         overflowX: 'auto', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
             {[
               { id: 'clients', label: 'Clients', icone: 'users' },
-              { id: 'prospection', label: p3NonLues > 0 ? `Prospection (${p3NonLues})` : 'Prospection', icone: 'compass' },
+              { id: 'prospection', label: p3Voir > 0 ? `Prospection (${p3Voir})` : 'Prospection', icone: 'compass' },
               { id: 'invitation', label: 'Invitation & Parrainage', icone: 'gift' },
             ].map(m => {
               // V610e : « Invitation & Parrainage » devient un VRAI onglet (« Mes invitations » :

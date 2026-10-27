@@ -850,6 +850,11 @@ describe('P3-S3-B — préparation de campagne', () => {
       '/prospect-inbound/${encodeURIComponent(id)}/lu',
       '/prospect-inbound/${encodeURIComponent(id)}/traite',
       '/prospect-inbound/${encodeURIComponent(id)}/analyser',
+      /* V631 : RATTACHER un message reçu sans jeton à un prospect. Aucun envoi,
+         aucun appel Resend : il écrit sur le message REÇU, et arrête les relances
+         du SEUL prospect que le coach a choisi puis confirmé. Il n'est atteignable
+         qu'après un choix explicite ET une confirmation (deux clics séparés). */
+      '/prospect-inbound/${encodeURIComponent(id)}/rattacher',
       /* AI-P3 : une note raconte une action HUMAINE (appel, WhatsApp,
          rencontre). Elle n'envoie rien, ne touche pas la fiche prospect, et
          n'écrit jamais dans le message reçu — qui reste immuable. */
@@ -2819,5 +2824,252 @@ describe('V594 — la fiche ongletée (rien n\'est retiré, une section à la fo
     await act(async () => { par('fiche-onglet-contact').click(); });
     await act(async () => { par('fiche-onglet-plus').click(); });
     expect(par('edit-notes').value).toBe('note en cours');
+  });
+});
+
+/* ==========================================================================
+   V631 / P3-R5 — RATTACHER UN MESSAGE REÇU SANS JETON
+
+   CE QUI A RENDU CE LOT NÉCESSAIRE. Une réponse arrivée sur la boîte d'envoi
+   (`notifications@…`) ne prouve pas à quel envoi elle répond. Le serveur la
+   range donc « en revue manuelle » SANS propriétaire : aucune relance ne
+   s'arrête. Sans écran pour trancher, ce message serait visible mais
+   inutilisable — et les relances continueraient d'écrire à quelqu'un qui a
+   déjà répondu (c'est ce qui est arrivé à Groupe Danse Fictif EPFL).
+
+   CE QUI EST PROUVÉ ICI :
+     * un message à rattacher reste VISIBLE une fois lu ;
+     * l'écran n'écrit RIEN avant la confirmation (ouvrir et choisir sont de la
+       lecture) ;
+     * la confirmation envoie UN post, avec le seul `action_id` choisi ;
+     * après succès l'écran relit le serveur ; après échec il ne touche à rien ;
+     * un message déjà rattaché n'offre aucun bouton de rattachement ;
+     * aucune couleur imposée, aucun emoji.
+   ========================================================================== */
+describe('V631 — rattacher un message sans jeton', () => {
+  const messageARattacher = (extra = {}) => ({
+    id: 'msg-r1', campaign_id: null, action_id: null, recipient_key: null,
+    from_email: 'membre@epfl.exemple.test',
+    to_email: 'notifications@afroboost.exemple.test',
+    subject: 'Re: Un atelier afro en invité',
+    body_text: 'Bonjour, on a répondu deux fois à vos e-mails.',
+    received_at: '2026-10-26T08:50:59.975Z',
+    matching_method: 'D_DOMAINE_PROSPECT', matching_confidence: 40,
+    statut: 'manual_review', motif: 'meme domaine',
+    piste_action_id: 'act-ds', piste_recipient_key: 'TST-A1',
+    piste_organisation: 'Groupe Danse Fictif', statut_commercial: 'a_repondre',
+    ...extra,
+  });
+
+  const CANDIDATS = [
+    { action_id: 'act-ds', recipient_key: 'TST-A1', organisation: 'Groupe Danse Fictif',
+      cible: 'groupe-danse@agepoly.exemple.test', envoye_le: '2026-10-11T08:24:33+00:00',
+      deja_repondu: false, suggere: true, meme_domaine: true },
+    { action_id: 'act-b', recipient_key: 'TST-B1', organisation: 'Club B',
+      cible: 'info@clubb.exemple.test', envoye_le: '2026-10-11T08:00:00+00:00',
+      deja_repondu: false, suggere: false, meme_domaine: false },
+  ];
+
+  const servir = (messages) => {
+    const avecStatut = messages.map((m) => ({ ...m }));
+    const conversations = conversationsDe(avecStatut).map((c) => {
+      const aRattacher = c.messages_recus.filter((m) => m.statut === 'manual_review').length;
+      const dernier = c.dernier_message;
+      return { ...c, a_rattacher: aRattacher,
+               piste: aRattacher && dernier.piste_action_id
+                 ? { action_id: dernier.piste_action_id, recipient_key: dernier.piste_recipient_key,
+                     organisation: dernier.piste_organisation, methode: dernier.matching_method }
+                 : null };
+    });
+    mockEtatParSection = {
+      prospects: { etat: SECTION.OK, donnees: reponse([prospect()], null, 142) },
+      campagnes: { etat: SECTION.OK, donnees: { total: 0, campaigns: [] } },
+      reponses: { etat: SECTION.OK, donnees: {
+        messages: avecStatut, total: avecStatut.length,
+        a_rattacher: avecStatut.filter((m) => m.statut === 'manual_review').length,
+        non_lues: avecStatut.filter((m) => !m.read_at).length,
+        a_repondre: avecStatut.length, appel_a_faire: 0, en_attente: 0, refus: 0, traite: 0,
+        conversations, conversations_total: conversations.length,
+        conversations_counts: compteursDe(conversations) } },
+    };
+  };
+
+  const appelsPost = () => axios.post.mock.calls.map((a) => a[0]);
+  const ouvrirLaCarte = async () => {
+    axios.post.mockResolvedValue({ data: { ok: true } });
+    axios.get.mockImplementation((url) => Promise.resolve(
+      String(url).endsWith('/candidats')
+        ? { data: { candidats: CANDIDATS, total: 2, tronque: false } }
+        : { data: { brouillon: null, notes: [], timeline: [] } }));
+    await act(async () => { tous('[data-testid="conversation-ligne"]')[0].click(); });
+  };
+  const cliquer = (id) => act(async () => { par(id).click(); });
+
+  test('lu ou non, le message à rattacher RESTE signalé dans la file', async () => {
+    servir([messageARattacher({ read_at: '2026-10-26T09:00:00+00:00' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('ligne-a-rattacher')).toBeTruthy();
+    expect(par('ligne-a-rattacher').textContent).toContain('À RATTACHER');
+    expect(par('point-non-lu')).toBeTruthy();                 // le point reste allumé
+    expect(tous('[data-testid^="ligne-statut-"]')).toHaveLength(0);  // pas d'état commercial inventé
+    expect(par('reponses-en-attente').textContent).toContain('1 à rattacher');
+  });
+
+  test('un message déjà rattaché ne porte AUCUN marqueur ni bouton', async () => {
+    servir([reponseFictive({ read_at: '2026-09-02T12:00:00+00:00' })]);
+    await monter(<ProspectsSection API="/api" />);
+    expect(par('ligne-a-rattacher')).toBeNull();
+    await ouvrirLaCarte();
+    expect(par('bloc-rattacher')).toBeNull();
+    expect(par('ouvrir-rattacher')).toBeNull();
+  });
+
+  test('ouvrir la carte ne lit que : AUCUN post de rattachement, AUCUNE liste chargée', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    expect(par('bloc-rattacher')).toBeTruthy();
+    expect(par('rattacher-explication').textContent).toContain('ses relances continuent');
+    expect(par('volet-rattacher')).toBeNull();                       // accordéon fermé
+    expect(appelsPost().some((u) => u.endsWith('/rattacher'))).toBe(false);
+    expect(axios.get.mock.calls.some((a) => String(a[0]).endsWith('/candidats'))).toBe(false);
+  });
+
+  test('ouvrir le volet charge les candidats ; la suggestion est marquée ; rien n’est écrit', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    const lecture = axios.get.mock.calls.find((a) => String(a[0]).endsWith('/candidats'));
+    expect(lecture[0]).toContain('/prospect-inbound/msg-r1/candidats');
+    expect(tous('[data-testid="rattacher-candidat"]').map((b) => b.dataset.action))
+      .toEqual(['act-ds', 'act-b']);
+    expect(par('candidat-suggere')).toBeTruthy();
+    expect(appelsPost().some((u) => u.endsWith('/rattacher'))).toBe(false);
+  });
+
+  test('choisir DEMANDE confirmation et n’écrit toujours rien', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    await act(async () => { tous('[data-testid="rattacher-candidat"]')[1].click(); });
+    expect(par('rattacher-confirmation')).toBeTruthy();
+    expect(par('rattacher-choix-nom').textContent).toBe('Club B');
+    expect(par('rattacher-confirmation').textContent).toContain('J+3, J+7 et J+14');
+    expect(par('rattacher-confirmation').textContent).toContain('Ce n’est pas le prospect suggéré');
+    expect(appelsPost().some((u) => u.endsWith('/rattacher'))).toBe(false);
+  });
+
+  test('« Choisir un autre » revient à la liste sans rien envoyer', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    await act(async () => { tous('[data-testid="rattacher-candidat"]')[0].click(); });
+    await cliquer('rattacher-changer');
+    expect(par('rattacher-confirmation')).toBeNull();
+    expect(par('rattacher-liste')).toBeTruthy();
+    expect(appelsPost().some((u) => u.endsWith('/rattacher'))).toBe(false);
+  });
+
+  test('confirmer envoie UN post avec le SEUL action_id choisi, puis relit le serveur', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    await act(async () => { tous('[data-testid="rattacher-candidat"]')[0].click(); });
+    mockReessayer.mockClear();
+    /* Le serveur, une fois relu, rend le message RATTACHÉ et la conversation
+       sous la clé du prospect : on le simule avant le clic, comme le ferait la
+       relecture déclenchée par la confirmation. */
+    servir([messageARattacher({ statut: 'rattache', action_id: 'act-ds',
+                                recipient_key: 'TST-A1', matching_method: 'E_CONFIRME_HUMAIN',
+                                matching_confidence: 100, motif: '', _organisation: 'Groupe Danse Fictif' })]);
+    await cliquer('rattacher-confirmer');
+    const posts = axios.post.mock.calls.filter((a) => String(a[0]).endsWith('/rattacher'));
+    expect(posts).toHaveLength(1);
+    expect(posts[0][0]).toContain('/prospect-inbound/msg-r1/rattacher');
+    expect(posts[0][1]).toEqual({ action_id: 'act-ds' });
+    const relus = mockReessayer.mock.calls.map((a) => a[0]);
+    expect(relus).toContain('reponses');     // la conversation change de clé : on relit
+    expect(relus).toContain('prospects');    // la fiche passe à « répondu »
+    expect(par('rattacher-ok').textContent).toContain('relances de ce prospect sont arrêtées');
+    expect(par('volet-rattacher')).toBeNull();
+    /* La conversation a changé de clé et reste OUVERTE sur le bon prospect :
+       le message s'affiche maintenant dans la conversation du prospect choisi,
+       et plus aucun bouton de rattachement ne subsiste. */
+    expect(par('conversation-active')).toBeTruthy();
+    expect(par('conversation-active').dataset.inbound).toBe('msg-r1');
+    expect(par('conversation-nom').textContent).toContain('Groupe Danse Fictif');
+    expect(par('bloc-rattacher')).toBeNull();
+    expect(par('ligne-a-rattacher')).toBeNull();
+  });
+
+  test('si la confirmation ÉCHOUE : erreur affichée, rien relu, rien marqué, choix conservé', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    await act(async () => { tous('[data-testid="rattacher-candidat"]')[0].click(); });
+    axios.post.mockRejectedValue({ response: { status: 500, data: { detail: 'x' } } });
+    mockReessayer.mockClear();
+    await cliquer('rattacher-confirmer');
+    expect(par('rattacher-erreur').textContent).toContain('Les relances n’ont pas été modifiées');
+    expect(par('rattacher-ok')).toBeNull();                  // aucun faux « rattaché »
+    expect(mockReessayer).not.toHaveBeenCalled();            // aucun état optimiste à corriger
+    expect(par('rattacher-confirmation')).toBeTruthy();      // le coach peut réessayer
+    expect(par('ouvrir-rattacher')).toBeNull();              // le volet reste ouvert
+  });
+
+  test('un 409 (déjà rattaché ailleurs) relit le serveur au lieu de mentir', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    await act(async () => { tous('[data-testid="rattacher-candidat"]')[0].click(); });
+    axios.post.mockRejectedValue({ response: { status: 409, data: { detail: 'x' } } });
+    mockReessayer.mockClear();
+    await cliquer('rattacher-confirmer');
+    expect(par('rattacher-erreur').textContent).toContain('rattaché ailleurs');
+    expect(mockReessayer.mock.calls.map((a) => a[0])).toContain('reponses');
+  });
+
+  test('sans réponse du serveur, l’écran ne conclut pas : il relit', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    await act(async () => { tous('[data-testid="rattacher-candidat"]')[0].click(); });
+    axios.post.mockRejectedValue(new Error('Network Error'));
+    mockReessayer.mockClear();
+    await cliquer('rattacher-confirmer');
+    expect(par('rattacher-erreur').textContent).toContain('actualisez');
+    expect(mockReessayer.mock.calls.map((a) => a[0])).toContain('reponses');
+    expect(par('rattacher-ok')).toBeNull();
+  });
+
+  test('une recherche relit la liste côté serveur (jamais filtrée à l’écran)', async () => {
+    servir([messageARattacher()]);
+    await monter(<ProspectsSection API="/api" />);
+    await ouvrirLaCarte();
+    await cliquer('ouvrir-rattacher');
+    axios.get.mockClear();
+    await act(async () => { saisir(par('rattacher-recherche'), 'club b'); });
+    await cliquer('rattacher-chercher');
+    const lecture = axios.get.mock.calls.find((a) => String(a[0]).endsWith('/candidats'));
+    expect(lecture[1]).toEqual({ params: { q: 'club b' } });
+  });
+
+  test('aucune couleur imposée, aucun emoji, aucun envoi dans le bloc de rattachement', () => {
+    const debut = SOURCE_C.indexOf("V631 : CE MESSAGE N'A PAS ENCORE DE PROPRIÉTAIRE");
+    const fin = SOURCE_C.indexOf("{/* ---- §5 : STATUT COMMERCIAL ET ÉTAT D'ENVOI, SÉPARÉS");
+    expect(debut).toBeGreaterThan(0);
+    expect(fin).toBeGreaterThan(debut);
+    const bloc = SOURCE_C.slice(debut, fin);
+    expect(bloc).not.toMatch(/#[0-9a-fA-F]{6}\b/);
+    expect(bloc).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+    expect(bloc).not.toContain('envoyer-reponse');
+    expect(bloc).toContain('rgba(${RGB}');   // la couleur du coach, via la constante qui porte var(--primary-rgb)
   });
 });

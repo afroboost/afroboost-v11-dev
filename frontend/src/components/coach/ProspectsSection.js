@@ -958,6 +958,76 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     }
   }, [base, carteDe, majCarte, chargement]);
 
+  /* V631 — RATTACHER UN MESSAGE SANS JETON À SON PROSPECT.
+
+     TROIS GESTES, ET AUCUN N'ÉCRIT AVANT LE DERNIER :
+       1. ouvrir  -> lit la liste des candidats (lecture seule) ;
+       2. choisir -> mémorise le choix dans la carte, rien ne part ;
+       3. confirmer -> UN SEUL POST. C'est lui, et lui seul, qui arrête les
+          relances du prospect choisi.
+
+     L'ÉCRAN NE MODIFIE RIEN LOCALEMENT. Après succès on recharge ce que le
+     serveur dit ; après échec on affiche l'erreur et on ne touche ni la carte
+     ni la liste. Un état optimiste « rattaché » qui se révélerait faux serait
+     exactement le mensonge que cette fonction doit éviter : l'écran dirait que
+     les relances sont arrêtées alors qu'elles tournent.
+
+     TOUT EST INDEXÉ PAR `message.id` (comme le reste des cartes), jamais par
+     une variable partagée : deux messages à rattacher ne se mélangent pas. */
+  const chargerCandidats = useCallback(async (id, recherche) => {
+    majCarte(id, { rattChargement: true, rattErreur: '' });
+    try {
+      const r = await axios.get(
+        `${base}/prospect-inbound/${encodeURIComponent(id)}/candidats`,
+        { params: recherche ? { q: recherche } : {} });
+      const d = (r && r.data) || {};
+      majCarte(id, { rattChargement: false, rattListe: d.candidats || [],
+                     rattTronque: !!d.tronque });
+    } catch (e) {
+      majCarte(id, { rattChargement: false, rattListe: [],
+                     rattErreur: 'La liste des prospects n’a pas pu être chargée.' });
+    }
+  }, [base, majCarte]);
+
+  const ouvrirRattachement = useCallback((id) => {
+    if (!id) return;
+    majCarte(id, { rattOuvert: true, rattChoix: null, rattRecherche: '', rattErreur: '' });
+    chargerCandidats(id, '');
+  }, [majCarte, chargerCandidats]);
+
+  const fermerRattachement = useCallback((id) => {
+    majCarte(id, { rattOuvert: false, rattChoix: null, rattErreur: '' });
+  }, [majCarte]);
+
+  const confirmerRattachement = useCallback(async (id, actionId) => {
+    if (!id || !actionId || carteDe(id).rattChargement) return;
+    majCarte(id, { rattChargement: true, rattErreur: '' });
+    try {
+      await axios.post(`${base}/prospect-inbound/${encodeURIComponent(id)}/rattacher`,
+        { action_id: actionId });
+      majCarte(id, { rattChargement: false, rattOuvert: false, rattChoix: null,
+                     rattOk: true, rattErreur: '' });
+      /* LA CONVERSATION CHANGE DE CLÉ : `inbound:<id>` devient l'action du
+         prospect. On suit le message, sinon l'écran referme ce que le coach
+         vient de rattacher. */
+      setFilActif(actionId);
+      chargement.reessayer('reponses');
+      chargement.reessayer('prospects');
+    } catch (e) {
+      const code = e && e.response && e.response.status;
+      const detail = e && e.response && e.response.data && e.response.data.detail;
+      let message = 'Le rattachement n’a pas abouti. Les relances n’ont pas été modifiées.';
+      if (code === 409) message = 'Ce message vient d’être rattaché ailleurs. Actualisation…';
+      else if (code === 403) message = 'Seul le propriétaire de ce message peut le rattacher.';
+      else if (code === 400 && detail) message = detail;
+      else if (!e || !e.response) message = 'Aucune réponse du serveur : actualisez pour vérifier avant de réessayer.';
+      majCarte(id, { rattChargement: false, rattErreur: message });
+      /* Sans réponse du serveur on ne SAIT pas : on relit la vérité plutôt que
+         de laisser croire à un échec qui serait peut-être un succès. */
+      if (code === 409 || !e || !e.response) chargement.reessayer('reponses');
+    }
+  }, [base, carteDe, majCarte, chargement]);
+
   /* READ-P2 — LA CARTE VISÉE PAR LA NOTIFICATION.
      Le coach a touché une notification : on ouvre CETTE réponse, une seule
      fois, dès qu'elle est chargée. `ouvrirReponse` est le chemin normal — donc
@@ -1507,8 +1577,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
             {reponsesARattacher > 0 && (
               <span data-testid="reponses-en-attente"
                     style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                             background: 'rgba(255,255,255,0.10)', color: TEXTE, fontWeight: 600 }}>
-                {reponsesARattacher} à rattacher à la main
+                             background: `rgba(${RGB}, 0.30)`, color: TEXTE, fontWeight: 700,
+                             border: `1px solid rgba(${RGB}, 0.6)` }}>
+                {reponsesARattacher} à rattacher
               </span>
             )}
           </div>
@@ -1614,11 +1685,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                             background: actif
                               ? `rgba(${RGB}, 0.22)` : 'rgba(255,255,255,0.04)',
                           }}>
-                    <span data-testid={conv.non_lues > 0 ? 'point-non-lu' : 'point-lu'}
+                    {/* V631 — UN MESSAGE A RATTACHER RESTE VISIBLE MEME LU. « Lu »
+                        veut dire « ouvert » ; ce qui doit rester a l'ecran, c'est
+                        « personne n'a encore dit a qui il repond ». Le point reste
+                        donc allume tant que la decision n'est pas prise. */}
+                    <span data-testid={conv.non_lues > 0 || conv.a_rattacher > 0
+                            ? 'point-non-lu' : 'point-lu'}
                           aria-hidden="true"
                           style={{ flex: '0 0 8px', minWidth: '8px', height: '8px',
                                    borderRadius: '999px',
-                                   background: conv.non_lues > 0
+                                   background: conv.non_lues > 0 || conv.a_rattacher > 0
                                      ? `rgba(${RGB}, 0.95)` : 'rgba(255,255,255,0.18)' }} />
                     <span style={{ flex: '1 1 140px', minWidth: '120px', fontWeight: 700,
                                    fontSize: '13px', overflow: 'hidden',
@@ -1638,12 +1714,25 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                                      flex: '0 0 auto', background: 'rgba(255,255,255,0.12)' }}>Corbeille</span>
                     ) : null}
                     <BadgeCategorie cle={cleCategorie(conv)} testid="conversation-categorie" />
-                    <span data-testid={`ligne-statut-${conv.statut_commercial}`}
-                          style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
-                                   padding: '2px 8px', borderRadius: '999px',
-                                   flex: '0 0 auto', background: etatConv.fond }}>
-                      {etatConv.libelle}
-                    </span>
+                    {conv.a_rattacher > 0 ? (
+                      /* Un message sans proprietaire n'a PAS d'etat commercial :
+                         afficher « A REPONDRE » laisserait croire qu'il appartient
+                         deja a quelqu'un. */
+                      <span data-testid="ligne-a-rattacher"
+                            style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                     padding: '2px 8px', borderRadius: '999px', flex: '0 0 auto',
+                                     background: `rgba(${RGB}, 0.40)`,
+                                     border: `1px solid rgba(${RGB}, 0.75)` }}>
+                        À RATTACHER
+                      </span>
+                    ) : (
+                      <span data-testid={`ligne-statut-${conv.statut_commercial}`}
+                            style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em',
+                                     padding: '2px 8px', borderRadius: '999px',
+                                     flex: '0 0 auto', background: etatConv.fond }}>
+                        {etatConv.libelle}
+                      </span>
+                    )}
                     <span style={{ fontSize: '11px', opacity: 0.6, flex: '0 0 auto' }}>
                       {jourMois(conv.dernier_message_at)}
                     </span>
@@ -1754,6 +1843,191 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                               whiteSpace: 'nowrap', maxWidth: '100%' }}>
                   {r.from_email}
                 </div>
+
+                {/* V631 — LA CONFIRMATION VIT EN DEHORS DU BLOC « À RATTACHER ». Après
+                     un succès le serveur renvoie le message DÉJÀ rattaché : le bloc
+                     ci-dessous a disparu, et une confirmation rangée dedans ne
+                     s'afficherait jamais. L'état est lu dans la carte du message,
+                     donc il suit la conversation quand elle change de clé. */}
+                {carte.rattOk && (
+                  <div data-testid="rattacher-ok" role="status"
+                       style={{ fontSize: '11px', marginTop: '9px', padding: '6px 10px',
+                                borderRadius: '8px', color: TEXTE,
+                                background: 'rgba(34,197,94,0.18)' }}>
+                    Rattaché. Les relances de ce prospect sont arrêtées.
+                  </div>
+                )}
+
+                {/* ---- V631 : CE MESSAGE N'A PAS ENCORE DE PROPRIÉTAIRE ----
+                     Une ligne, un bouton discret. Le volet ne s'ouvre qu'au
+                     clic (accordéon fermé par défaut) : rien d'autre à l'écran
+                     tant que le coach n'a pas décidé. */}
+                {r.statut !== 'rattache' && (() => {
+                  const rattOuvert = !!carte.rattOuvert;
+                  const liste = carte.rattListe || [];
+                  const choix = carte.rattChoix || null;
+                  const piste = convActive.piste || null;
+                  return (
+                    <div data-testid="bloc-rattacher"
+                         style={{ marginTop: '9px', padding: '8px 10px', borderRadius: '8px',
+                                  background: 'rgba(255,255,255,0.06)',
+                                  border: `1px solid rgba(${RGB}, 0.40)` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px',
+                                    flexWrap: 'wrap' }}>
+                        <span data-testid="rattacher-explication"
+                              style={{ fontSize: '11px', color: TEXTE, opacity: 0.85,
+                                       flex: '1 1 200px' }}>
+                          Ce message n’est rattaché à aucun prospect : ses relances
+                          continuent tant que vous ne l’avez pas confirmé.
+                        </span>
+                        {!rattOuvert && (
+                          <button type="button" data-testid="ouvrir-rattacher"
+                                  onClick={() => ouvrirRattachement(r.id)}
+                                  style={{ ...stylePetitBouton, display: 'inline-flex',
+                                           alignItems: 'center', gap: '5px',
+                                           border: `1px solid rgba(${RGB}, 0.60)` }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                                 strokeLinejoin="round" aria-hidden="true">
+                              <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+                              <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+                            </svg>
+                            Rattacher à un prospect
+                          </button>
+                        )}
+                      </div>
+
+                      {rattOuvert && (
+                        <div data-testid="volet-rattacher" style={{ marginTop: '8px' }}>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <input type="text" data-testid="rattacher-recherche"
+                                   value={carte.rattRecherche || ''}
+                                   placeholder="Nom, code ou adresse du prospect"
+                                   aria-label="Chercher un prospect"
+                                   onChange={(ev) => majCarte(r.id, { rattRecherche: ev.target.value })}
+                                   onKeyDown={(ev) => { if (ev.key === 'Enter') {
+                                     ev.preventDefault();
+                                     chargerCandidats(r.id, (carte.rattRecherche || '').trim()); } }}
+                                   style={{ ...styleChamp, flex: '1 1 auto', fontSize: '12px',
+                                            padding: '5px 8px', minWidth: 0 }} />
+                            <button type="button" data-testid="rattacher-chercher"
+                                    disabled={!!carte.rattChargement}
+                                    onClick={() => chargerCandidats(r.id, (carte.rattRecherche || '').trim())}
+                                    style={stylePetitBouton}>
+                              Chercher
+                            </button>
+                            <button type="button" data-testid="rattacher-annuler"
+                                    onClick={() => fermerRattachement(r.id)}
+                                    style={stylePetitBouton}>
+                              Fermer
+                            </button>
+                          </div>
+
+                          {!choix && (
+                            <div data-testid="rattacher-liste"
+                                 style={{ marginTop: '6px', maxHeight: '220px', overflowY: 'auto',
+                                          display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              {carte.rattChargement && liste.length === 0 && (
+                                <span style={{ fontSize: '11px', opacity: 0.7 }}>Chargement…</span>
+                              )}
+                              {!carte.rattChargement && liste.length === 0 && !carte.rattErreur && (
+                                <span data-testid="rattacher-vide" style={{ fontSize: '11px', opacity: 0.7 }}>
+                                  Aucun prospect contacté ne correspond.
+                                </span>
+                              )}
+                              {liste.map((c) => (
+                                <button key={c.action_id} type="button"
+                                        data-testid="rattacher-candidat" data-action={c.action_id}
+                                        onClick={() => majCarte(r.id, { rattChoix: c, rattErreur: '' })}
+                                        style={{ ...stylePetitBouton, textAlign: 'left', width: '100%',
+                                                 padding: '6px 8px',
+                                                 border: c.suggere
+                                                   ? `1px solid rgba(${RGB}, 0.75)`
+                                                   : '1px solid rgba(255,255,255,0.14)' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '12px' }}>
+                                    {c.organisation || c.recipient_key || 'Prospect'}
+                                  </span>
+                                  <span style={{ opacity: 0.65 }}>
+                                    {' '}· {c.recipient_key}{c.cible ? ` · ${c.cible}` : ''}
+                                  </span>
+                                  {c.suggere && (
+                                    <span data-testid="candidat-suggere"
+                                          style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 700,
+                                                   padding: '1px 6px', borderRadius: '999px',
+                                                   background: `rgba(${RGB}, 0.40)` }}>
+                                      SUGGÉRÉ
+                                    </span>
+                                  )}
+                                  {c.meme_domaine && !c.suggere && (
+                                    <span style={{ marginLeft: '6px', fontSize: '10px', opacity: 0.75 }}>
+                                      même domaine
+                                    </span>
+                                  )}
+                                  {c.deja_repondu && (
+                                    <span style={{ marginLeft: '6px', fontSize: '10px', opacity: 0.75 }}>
+                                      a déjà répondu
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                              {carte.rattTronque && (
+                                <span style={{ fontSize: '10px', opacity: 0.65 }}>
+                                  Liste limitée — précisez la recherche.
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {choix && (
+                            <div data-testid="rattacher-confirmation"
+                                 style={{ marginTop: '8px', padding: '8px 10px', borderRadius: '8px',
+                                          background: 'rgba(0,0,0,0.25)',
+                                          border: `1px solid rgba(${RGB}, 0.55)` }}>
+                              <div style={{ fontSize: '12px', color: TEXTE }}>
+                                Ce message répond à{' '}
+                                <strong data-testid="rattacher-choix-nom">
+                                  {choix.organisation || choix.recipient_key}
+                                </strong>
+                                {' '}({choix.recipient_key}{choix.cible ? ` · ${choix.cible}` : ''}) ?
+                              </div>
+                              <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '3px' }}>
+                                Les relances J+3, J+7 et J+14 de ce prospect seront arrêtées.
+                                {piste && piste.action_id && piste.action_id !== choix.action_id
+                                  ? ' Ce n’est pas le prospect suggéré.' : ''}
+                              </div>
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                                <button type="button" data-testid="rattacher-confirmer"
+                                        disabled={!!carte.rattChargement}
+                                        onClick={() => confirmerRattachement(r.id, choix.action_id)}
+                                        style={{ ...stylePetitBouton, fontWeight: 700,
+                                                 border: `1px solid rgba(${RGB}, 0.75)`,
+                                                 background: `rgba(${RGB}, 0.35)`,
+                                                 opacity: carte.rattChargement ? 0.6 : 1 }}>
+                                  {carte.rattChargement ? 'Enregistrement…' : 'Confirmer'}
+                                </button>
+                                <button type="button" data-testid="rattacher-changer"
+                                        disabled={!!carte.rattChargement}
+                                        onClick={() => majCarte(r.id, { rattChoix: null, rattErreur: '' })}
+                                        style={stylePetitBouton}>
+                                  Choisir un autre
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {carte.rattErreur && (
+                            <div data-testid="rattacher-erreur" role="alert"
+                                 style={{ marginTop: '6px', fontSize: '11px', color: TEXTE,
+                                          padding: '5px 8px', borderRadius: '6px',
+                                          background: 'rgba(239,68,68,0.20)' }}>
+                              {carte.rattErreur}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ---- §5 : STATUT COMMERCIAL ET ÉTAT D'ENVOI, SÉPARÉS ----
                      « EN ATTENTE » ne veut pas dire « nous avons répondu ». Ce
