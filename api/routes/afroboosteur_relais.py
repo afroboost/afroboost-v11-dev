@@ -153,6 +153,34 @@ def _chaine_canonique(methode: str, chemin: str, requete_brute: str, horodatage:
     return "\n".join([methode.upper(), chemin, requete_brute or "", horodatage, empreinte_corps])
 
 
+def _chaine_canonique_heritee(methode: str, chemin: str, requete_brute: str,
+                               horodatage: str) -> str:
+    """L'ANCIENNE chaine, en QUATRE lignes, telle qu'afroboosteur.com la signe
+    ENCORE EN PRODUCTION a l'heure ou ce correctif part.
+
+    ⚠️ CECI EST UN PONT, PAS L'ETAT FINAL — a retirer, voir `_garde`.
+
+    Pourquoi elle existe : le passage a cinq lignes change la VALEUR de toutes
+    les signatures, y compris celles des trois routes de lecture deja en
+    production. Sans ce pont, deployer un seul des deux depots renvoie 403 sur
+    TOUT jusqu'a ce que l'autre suive — et comme les deux ne peuvent jamais
+    basculer a la milliseconde, l'interruption est garantie dans les deux
+    ordres possibles.
+
+    Pourquoi elle n'affaiblit RIEN : `_garde` ne l'essaie QUE si le corps de la
+    requete est VIDE. Un corps vide n'a rien a prouver — son empreinte est une
+    constante connue de tous. Les deux routes `POST` de la phase 6A, les seules
+    a porter un corps SIGNIFICATIF et les seules pour lesquelles ce correctif a
+    ete ecrit, n'atteignent JAMAIS ce repli : elles exigent la chaine a cinq
+    lignes, sans exception et des le premier jour.
+
+    Ne comporte volontairement PAS de cinquieme ligne vide : l'ancienne chaine
+    n'avait pas de saut de ligne final, et `_chaine_canonique(...)` appelee a
+    quatre arguments en produirait un.
+    """
+    return "\n".join([methode.upper(), chemin, requete_brute or "", horodatage])
+
+
 def _signature_valide(secret: str, chaine_canonique: str, entetes) -> bool:
     """HMAC-SHA256 en TEMPS CONSTANT sur une chaîne LIÉE À LA REQUÊTE (méthode,
     chemin, requête, horodatage, empreinte du corps) — jamais une valeur
@@ -196,13 +224,39 @@ async def _garde(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Horodatage absent ou expiré")
 
     corps_brut = await request.body()
+    requete_brute = str(request.url.query or "")
     chaine = _chaine_canonique(
-        request.method, request.url.path, str(request.url.query or ""), horodatage,
+        request.method, request.url.path, requete_brute, horodatage,
         _empreinte_corps(corps_brut)
     )
     if not _signature_valide(secret, chaine, request.headers):
-        logger.warning(f"{PREFIXE} signature invalide")
-        raise HTTPException(status_code=403, detail="Signature invalide")
+        # ─────────────────────────────────────────────────────────────────────
+        # PONT DE TRANSITION P6A — A RETIRER, PROCEDURE CI-DESSOUS
+        #
+        # Accepte l'ANCIENNE chaine (quatre lignes, sans empreinte de corps)
+        # UNIQUEMENT pour une requete SANS CORPS, le temps qu'afroboosteur.com
+        # recoive le meme correctif. Voir `_chaine_canonique_heritee` pour le
+        # raisonnement complet : un corps vide n'a rien a prouver, et les deux
+        # routes `POST` de la phase 6A ne passent JAMAIS par ici.
+        #
+        # MEME MOTIF QUE LE PONT V265 (`[V265] repli X-User-Email`, CLAUDE.md) :
+        # tant que `[TRANSITION P6A]` apparait dans les journaux, afroboosteur.com
+        # signe encore a l'ancien format — NE PAS retirer ce repli. Quand ces
+        # avertissements ont cesse, une version dediee supprime ce bloc et
+        # `_chaine_canonique_heritee`, et le relais redevient strict.
+        # ─────────────────────────────────────────────────────────────────────
+        pont_possible = not corps_brut and _signature_valide(
+            secret,
+            _chaine_canonique_heritee(request.method, request.url.path, requete_brute, horodatage),
+            request.headers,
+        )
+        if not pont_possible:
+            logger.warning(f"{PREFIXE} signature invalide")
+            raise HTTPException(status_code=403, detail="Signature invalide")
+        logger.warning(
+            "%s [TRANSITION P6A] signature a l'ANCIEN format (4 lignes, sans corps) acceptee "
+            "sur %s — afroboosteur.com n'a pas encore le correctif ; ne pas retirer le pont",
+            PREFIXE, request.url.path)
 
     membre = (request.headers.get("X-Afroboosteur-Membre", "") or "").strip()[:200]
     logger.info(f"{PREFIXE} consultation par membre afroboosteur={membre or '(non precise)'}")

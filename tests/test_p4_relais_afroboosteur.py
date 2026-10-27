@@ -156,12 +156,16 @@ class RequeteFictive:
         self.url = URLFictive(chemin, requete)
         self.headers = headers or {}
         self.query_params = params or {}
+        # Vide par defaut : toutes les requetes de CE fichier sont des GET.
+        # Le pont de transition (section 10bis) le surcharge pour prouver
+        # qu'un corps NON vide ferme le pont.
+        self._corps_brut_test = b""
 
     # P6A — `_garde()` lit desormais le corps AVANT la signature, meme pour
     # ces routes GET (le corps y est toujours vide) : ce bouchon doit donc
     # repondre a `.body()` comme le ferait un vrai `Request` Starlette.
     async def body(self):
-        return b""
+        return self._corps_brut_test
 
 
 def signer(secret, methode, chemin, requete, horodatage, corps_brut=b""):
@@ -231,6 +235,34 @@ _sig_fixe = signer("secret-de-contrat-croise-pour-test-uniquement", "GET",
 verifier("1bis la signature du vecteur fige correspond EXACTEMENT au cote TypeScript",
          _sig_fixe == "3b04a151aba0ef477a67ceee55a1ff815d4dc2496d8f3ff8707b82bb1b6096c6",
          _sig_fixe)
+
+# ── 1ter. LE VECTEUR QUI MANQUAIT : UN CORPS FRANCAIS ACCENTUE ──────────────
+# Le vecteur ci-dessus ne couvre qu'un corps VIDE, dont l'empreinte est une
+# constante. Or les deux routes POST de la phase 6A transportent du TEXTE
+# FRANCAIS : accents, apostrophe typographique, parfois un emoji (4 octets en
+# UTF-8, paire de substitution en UTF-16 cote JavaScript). Si Python et Node
+# divergeaient d'un seul octet sur cet encodage, CHAQUE enregistrement reel
+# echouerait en 403 — en passant les tests ASCII sans broncher. D'ou ce second
+# vecteur fige, calcule independamment dans les deux langages avant d'etre
+# ecrit ici. Le pendant exact vit dans prospection-relais.test.ts, section 1ter.
+_corps_accentue = (
+    '{"texte":"Bonjour, à très bientôt ! Voilà '
+    'l’essentiel \U0001F3C3","draft_hash":"abc123"}'
+).encode("utf-8")
+verifier("1ter-0 le corps de reference pese bien 88 octets en UTF-8",
+         len(_corps_accentue) == 88, len(_corps_accentue))
+_empreinte_accentuee = R._empreinte_corps(_corps_accentue)
+verifier("1ter-1 l'empreinte du corps accentue correspond EXACTEMENT au cote TypeScript",
+         _empreinte_accentuee ==
+         "6fbbac90746846f8bec3bf8cb55bbb14bae4c6028a8e977117fe0031de09eec5",
+         _empreinte_accentuee)
+_sig_accentuee = signer("secret-de-contrat-croise-pour-test-uniquement", "POST",
+                         "/api/afroboosteur-relais/conversations/msg-1/brouillon", "",
+                         "1793456789", _corps_accentue)
+verifier("1ter-2 la signature POST du corps accentue correspond EXACTEMENT au cote TypeScript",
+         _sig_accentuee ==
+         "0625496bcfa72238df1c281ffbe721f0435b8c9d3927cb449ed48085ac961979",
+         _sig_accentuee)
 
 print("\n2. UNE SIGNATURE VALIDE POUR UNE REQUETE N'EST PAS VALIDE POUR UNE AUTRE")
 
@@ -425,6 +457,87 @@ verifier("10a la valeur est recopiee pour le journal, sans etre interpretee",
 ligne_membre = [l for l in source.splitlines() if "X-Afroboosteur-Membre" in l and "if" in l]
 verifier("10b aucun branchement conditionnel sur X-Afroboosteur-Membre dans la garde",
          ligne_membre == [], str(ligne_membre))
+
+# ============================================================================
+print("\n10bis. PONT DE TRANSITION P6A — l'ancien format, et SEULEMENT sans corps")
+# Pourquoi ces tests : sans pont, deployer un seul des deux depots renvoie 403
+# sur les trois lectures DEJA EN PRODUCTION jusqu'a ce que l'autre suive. Avec
+# le pont, il faut prouver les DEUX faces : il laisse passer la lecture (pas
+# d'interruption) et il ne couvre JAMAIS une ecriture (pas d'affaiblissement).
+os.environ["AFROBOOSTEUR_RELAY_SECRET"] = SECRET
+os.environ["AFROBOOSTEUR_RELAY_COACH_ID"] = COACH_ID
+
+
+def requete_ancien_format(chemin="/api/afroboosteur-relais/prospects", requete="",
+                           methode="GET", corps=b""):
+    """Une requete signee comme afroboosteur.com le fait ENCORE en production :
+    quatre lignes, aucune empreinte de corps."""
+    horodatage = str(int(time.time()))
+    chaine = R._chaine_canonique_heritee(methode, chemin, requete, horodatage)
+    sig = hmac_module.new(SECRET.encode(), chaine.encode(), hashlib.sha256).hexdigest()
+    r = RequeteFictive(
+        chemin=chemin, requete=requete,
+        headers={"X-Afroboosteur-Signature": sig, "X-Afroboosteur-Timestamp": horodatage})
+    r.method = methode
+    r._corps_brut_test = corps
+    return r
+
+
+_ancienne_chaine = R._chaine_canonique_heritee(
+    "GET", "/api/afroboosteur-relais/prospects", "limit=25", "1793456789")
+verifier("10bis-a l'ancienne chaine a bien QUATRE lignes, sans saut de ligne final",
+         _ancienne_chaine.count("\n") == 3 and not _ancienne_chaine.endswith("\n"),
+         repr(_ancienne_chaine))
+verifier("10bis-b elle DIFFERE de la nouvelle a quatre arguments (pas de 5e ligne vide)",
+         _ancienne_chaine != R._chaine_canonique(
+             "GET", "/api/afroboosteur-relais/prospects", "limit=25", "1793456789"))
+
+# Face 1 — PAS D'INTERRUPTION : une lecture signee a l'ancien format passe.
+_passe_sans_corps = True
+try:
+    executer(R._garde(requete_ancien_format()))
+except Exception as e:
+    _passe_sans_corps = False
+    _detail_pont = repr(e)
+verifier("10bis-c un GET (corps vide) signe a l'ANCIEN format est ACCEPTE — "
+         "le relais ne s'interrompt pas pendant la bascule",
+         _passe_sans_corps, "" if _passe_sans_corps else _detail_pont)
+
+# Face 2 — PAS D'AFFAIBLISSEMENT : la meme indulgence s'arrete net des qu'il y
+# a un corps. C'est LE test qui prouve que le correctif de securite tient : les
+# deux routes POST de la phase 6A n'ont aucun acces a ce pont.
+_refuse_avec_corps = False
+# Initialise AVANT le `try` : si la garde accepte a tort (c'est-a-dire si ce
+# correctif regresse un jour), on veut un ECHEC lisible sur CETTE ligne, pas un
+# NameError qui arreterait la suite et ferait soupconner le test.
+_detail_refus = "ACCEPTE A TORT — le pont a couvert une ecriture"
+_corps_json = b'{"texte":"texte substitue","draft_hash":""}'
+try:
+    executer(R._garde(requete_ancien_format(
+        chemin="/api/afroboosteur-relais/conversations/m-1/brouillon",
+        methode="POST", corps=_corps_json)))
+except Exception as e:
+    _refuse_avec_corps = (getattr(e, "status_code", None) == 403)
+    _detail_refus = repr(e)
+verifier("10bis-d un POST AVEC CORPS signe a l'ancien format est REFUSE en 403 — "
+         "le pont ne couvre JAMAIS une ecriture",
+         _refuse_avec_corps, _detail_refus if not _refuse_avec_corps else "403")
+
+# Face 3 — le nouveau format reste la voie normale, inchangee.
+_nouveau_passe = True
+try:
+    executer(R._garde(requete_signee()))
+except Exception as e:
+    _nouveau_passe = False
+    _detail_nouveau = repr(e)
+verifier("10bis-e le NOUVEAU format (5 lignes) reste accepte — aucune regression",
+         _nouveau_passe, "" if _nouveau_passe else _detail_nouveau)
+
+# Le pont doit etre OBSERVABLE pour pouvoir etre retire un jour (motif V265).
+verifier("10bis-f le pont journalise un avertissement reperable `[TRANSITION P6A]`",
+         "[TRANSITION P6A]" in source)
+verifier("10bis-g le pont est documente comme A RETIRER, jamais comme l'etat final",
+         "A RETIRER" in source)
 
 # ============================================================================
 print("\n11. AUCUNE SORTIE RESEAU DANS LA GARDE")
