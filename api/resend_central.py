@@ -28,7 +28,13 @@ d'idempotence passent tels quels. Ce module n'ajoute que trois choses :
      baisser.
 2. JOURNAL CENTRAL `resend_envois` : une ligne par tentative (source, type, destinataire,
    dates, provider_status, identifiant Resend, raison). Aucun contenu d'e-mail, aucune clé.
-3. Rien d'autre : aucune nouvelle tentative automatique, aucun changement de contenu.
+3. UNE ADRESSE DE REPONSE PAR DEFAUT (V632) : un e-mail transactionnel (reservation,
+   bienvenue, code de verification...) qui n'en fixe pas recoit `Reply-To:
+   contact@afroboosteur.com`. Sans elle, le client voyait `notifications@afroboost.com`
+   — une adresse qui n'a longtemps eu AUCUN MX — et sa reponse etait perdue. Un
+   `reply_to` fixe par l'appelant n'est JAMAIS modifie (c'est le cas de la prospection :
+   `r-<jeton>@reply.afroboosteur.com`).
+4. Rien d'autre : aucune nouvelle tentative automatique, aucun changement de contenu.
 """
 import logging
 import os
@@ -299,6 +305,44 @@ def _destinataire(params) -> str:
     return str(to or "")[:200]
 
 
+# V632 — L'ADRESSE DE REPONSE PAR DEFAUT.
+# MEME VALEUR QUE `AFROBOOST_REPLY_TO_CANONIQUE` (api/server.py) : ce module ne peut pas
+# importer le serveur (import circulaire), la parite est donc VERIFIEE PAR UN BANC
+# (tests/test_v632_reply_to_transactionnel.py) plutot que supposee.
+REPLY_TO_DEFAUT = "contact@afroboosteur.com"
+# Adresses mortes : domaine sans MX. Meme regle que cote serveur — une variable
+# d'environnement ne peut pas les remettre.
+REPLY_TO_MORTES = ("contact@afroboost.ch",)
+
+
+def reply_to_defaut() -> str:
+    """L'adresse de reponse des e-mails qui n'en fixent pas. Surchargeable (AFROBOOST_REPLY_TO),
+    sauf pour une adresse morte, qui rend toujours la canonique."""
+    valeur = (os.environ.get("AFROBOOST_REPLY_TO") or "").strip()
+    if not valeur or valeur.lower() in REPLY_TO_MORTES:
+        return REPLY_TO_DEFAUT
+    return valeur
+
+
+def _avec_reply_to(params):
+    """`params` avec une adresse de reponse, SANS jamais ecraser celle de l'appelant.
+
+    Un `reply_to` absent, nul, vide ou une liste vide recoit la valeur par defaut. Tout
+    `reply_to` renseigne (chaine ou liste) passe tel quel. Le dictionnaire de l'appelant
+    n'est pas modifie : on rend une copie.
+    """
+    if not isinstance(params, dict):
+        return params
+    actuel = params.get("reply_to")
+    if isinstance(actuel, (list, tuple)):
+        renseigne = any(str(x or "").strip() for x in actuel)
+    else:
+        renseigne = bool(str(actuel or "").strip())
+    if renseigne:
+        return params
+    return dict(params, reply_to=reply_to_defaut())
+
+
 class _Emails:
     def __init__(self, source: str, type_email: str, critique: bool, reference, sdk=None):
         self.source, self.type_email, self.critique, self.reference = source, type_email, critique, reference
@@ -313,6 +357,7 @@ class _Emails:
 
     def send(self, params, options=None):
         """Même signature et même valeur de retour que `resend.Emails.send`."""
+        params = _avec_reply_to(params)   # V632 : adresse de reponse par defaut, jamais imposee
         if not _actif:
             return self._appeler(params, options)
         jid = str(uuid.uuid4())
