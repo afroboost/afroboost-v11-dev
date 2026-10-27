@@ -28672,37 +28672,13 @@ async def p3s3_preparer_campagne(request: Request):
     existe deja pour cette cle, elle est RENVOYEE telle quelle au lieu d'etre
     recreee. C'est ce qui rend un double clic inoffensif — le second appel
     reconnait le premier plutot que de fabriquer une campagne jumelle.
-
-    Le CORPS de cette fonction n'est plus ici : il vit dans
-    `p3s3_preparer_campagne_pour(appelant, corps)` (PHASE 6B), pour que le
-    relais afroboosteur.com puisse l'appeler SANS passer par une Request HTTP
-    (le relais n'a pas de JWT coach, seulement un secret HMAC + un coach_id
-    configure). Cette route reste le SEUL endroit qui lit l'identite depuis la
-    requete ; tout le reste est identique a l'ancien corps, verifie ligne a
-    ligne, 0 changement de comportement.
     """
+    from pymongo.errors import DuplicateKeyError
+
     appelant = await _v309_require_coach_or_admin(request)
     corps = await request.json() if request.headers.get("content-length") else {}
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps de requete invalide")
-    return await p3s3_preparer_campagne_pour(appelant, corps)
-
-
-async def p3s3_preparer_campagne_pour(appelant: str, corps: dict) -> dict:
-    """Le corps REEL de la preparation — extrait de la route HTTP (PHASE 6B)
-    pour etre appele par elle ET par le relais afroboosteur.com, sans aucune
-    duplication de logique. Voir le docstring de la route pour le contrat.
-
-    AJOUT PHASE 6B, ADDITIF UNIQUEMENT : `media_ids`, une liste optionnelle
-    d'identifiants de `prospection_medias` (V595) A PARTAGER sur la campagne.
-    Omis ou vide, rien ne change par rapport a avant ce lot. Fourni, chaque id
-    est verifie : appartient a CE coach, et porte le statut `validee` — jamais
-    un media encore « en_cours »/« a_verifier » (donc potentiellement prive ou
-    non destine a sortir) ni un media archive. Le champ est purement
-    DECLARATIF : rien dans ce lot ne lit `media_ids` pour composer un envoi, le
-    moteur de lancement restant dormant (P3_LAUNCH_ENABLED).
-    """
-    from pymongo.errors import DuplicateKeyError
 
     simulation = corps.get("dry_run", True) is not False
     portee = await p3s3_portee(appelant)
@@ -28797,7 +28773,6 @@ async def p3s3_preparer_campagne_pour(appelant: str, corps: dict) -> dict:
     resume = p3s3_resume(actions)
 
     nom = p3s1_texte(corps.get("name"), 120) or ("P3-LAUNCH-%d" % resume["destinataires"])
-    media_ids = await p3s3_medias_partages_valides(appelant, corps.get("media_ids"))
     campagne = {
         "id": campagne_id,
         "coach_id": appelant,
@@ -28813,8 +28788,6 @@ async def p3s3_preparer_campagne_pour(appelant: str, corps: dict) -> dict:
         # Poses UNE SEULE FOIS, par un lot ulterieur. Jamais ici.
         "approved_at": None, "approved_by": None,
         "started_at": None, "finished_at": None,
-        # PHASE 6B — purement declaratif, voir le docstring de cette fonction.
-        "media_ids": media_ids,
     }
 
     if simulation:
@@ -29098,25 +29071,9 @@ async def p3s3_modifier_campagne(campaign_id: str, request: Request):
     UNE CAMPAGNE APPROUVEE N'EST PAS MODIFIABLE ICI. Il faut d'abord la
     rouvrir, ce qui archive l'approbation et la rend inexecutable. Modifier
     puis « oublier » de reapprouver ne laisse donc rien partir.
-
-    Extrait (PHASE 6B) dans `p3s3_modifier_campagne_pour`, meme motif que
-    `p3s3_preparer_campagne` : le relais n'a pas de Request HTTP a lire.
     """
     appelant = await _v309_require_coach_or_admin(request)
     identifiant = p3s1_texte(campaign_id, 64)
-    corps = await request.json()
-    if not isinstance(corps, dict):
-        raise HTTPException(status_code=400, detail="Corps de requete invalide")
-    return await p3s3_modifier_campagne_pour(appelant, identifiant, corps)
-
-
-async def p3s3_modifier_campagne_pour(appelant: str, identifiant: str, corps: dict) -> dict:
-    """Le corps REEL de la modification — voir le docstring de la route.
-
-    AJOUT PHASE 6B, ADDITIF : `media_ids` rejoint `nom`/l'objet comme champ
-    modifiable, meme validation que `p3s3_medias_partages_valides` (coach
-    proprietaire, statut `validee`). Omis, le champ existant n'est pas touche.
-    """
     campagne = await db[P3S3_CAMPAGNES].find_one({"id": identifiant}, {"_id": 0})
     if not campagne:
         raise HTTPException(status_code=404, detail="Campagne introuvable")
@@ -29127,6 +29084,10 @@ async def p3s3_modifier_campagne_pour(appelant: str, identifiant: str, corps: di
                             detail="Cette campagne n'est pas modifiable (etat : %s). "
                                    "Rouvrez-la d'abord." % campagne.get("etat"))
 
+    corps = await request.json()
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps de requete invalide")
+
     champs = {}
     if P3S3D2_CHAMP_OBJET in corps:
         champs[P3S3D2_CHAMP_OBJET] = p3s1_texte(
@@ -29136,8 +29097,6 @@ async def p3s3_modifier_campagne_pour(appelant: str, identifiant: str, corps: di
         if not nouveau:
             raise HTTPException(status_code=400, detail="Le nom ne peut pas etre vide")
         champs["nom"] = nouveau
-    if "media_ids" in corps:
-        champs["media_ids"] = await p3s3_medias_partages_valides(appelant, corps.get("media_ids") or [])
     if not champs:
         raise HTTPException(status_code=400, detail="Aucun champ modifiable fourni")
 
@@ -55954,10 +55913,6 @@ async def v595_ajouter_media(request: Request):
     LA NOUVELLE ENTRE « EN COURS » (V596 : « À VÉRIFIER » pour un export) — le
     statut du corps est ignoré : aucune vidéo n'est validée par un enregistrement. L'ancienne du même
     emplacement (niche + format) passe « archivée », jamais supprimée.
-
-    Extrait (PHASE 6B) dans `v595_ajouter_media_pour` : meme motif que les
-    campagnes P3-S3, pour que le relais afroboosteur.com reutilise la MEME
-    logique sans Request HTTP a lire.
     """
     appelant = await _v309_require_coach_or_admin(request)
     try:
@@ -55966,32 +55921,6 @@ async def v595_ajouter_media(request: Request):
         corps = {}
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    return await v595_ajouter_media_pour(appelant, corps)
-
-
-async def v595_ajouter_media_pour(appelant: str, corps: dict, proteger_valides: bool = False) -> dict:
-    """Le corps REEL de l'ajout — voir le docstring de la route.
-
-    PHASE 6B : le relais afroboosteur.com appelle CETTE fonction, jamais la
-    route, et REFUSE lui-meme (avant d'arriver ici) toute `url` commencant par
-    `/api/files/` — cette branche verifie la propriete du fichier par
-    `coach_email`, une notion que le relais HMAC n'a pas (il agit pour LE
-    coach configure, jamais pour un membre precis). Le relais ne peut donc
-    emprunter QUE la branche « lien » ci-dessous ; cette fonction, elle,
-    reste capable des deux, pour l'ecran du coach qui l'appelle encore
-    directement.
-
-    REVUE DE SECURITE — P6B : `proteger_valides=True` (relais UNIQUEMENT,
-    jamais la route du coach — son defaut reste `False`, comportement
-    identique a avant ce lot) EXCLUT un media `validee` des « anciens » a
-    archiver. Sans cela, un membre afroboosteur portant seulement
-    `prospection_medias_ajouter` aurait pu DEMOTIONNER en silence un media
-    deja approuve par le coach et potentiellement en usage actif, simplement
-    en ajoutant un nouveau lien sur le MEME emplacement (niche+format+cible) —
-    une integrite que ce relais, pense pour consulter et proposer, ne doit
-    jamais pouvoir degrader seul. Le coach, lui, garde la main complete :
-    cette protection ne s'applique qu'au chemin relais.
-    """
     niche = v595_niche(corps.get("niche"))
     await v598_verifier_niche(niche, appelant)
     fmt = v595_choix(corps.get("format"), V595_FORMATS, "Format")
@@ -56032,12 +55961,9 @@ async def v595_ajouter_media_pour(appelant: str, corps: dict, proteger_valides: 
         cible = (orig or {}).get("cible")
     doc["cible"] = cible
     doc["cible_id"] = cible["id"] if cible else None
-    filtre_anciens = {"coach_id": appelant, "niche": niche, "format": fmt,
-                      "cible_id": doc["cible_id"], "statut": {"$ne": "archivee"}}
-    if proteger_valides:
-        filtre_anciens["statut"] = {"$nin": ["archivee", "validee"]}
     anciens = [] if fmt == "document" else await db[V595_MEDIAS].find(   # V625 : un PDF ne remplace rien
-        filtre_anciens, {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
+        {"coach_id": appelant, "niche": niche, "format": fmt, "cible_id": doc["cible_id"], "statut": {"$ne": "archivee"}},
+        {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
     doc["remplace"] = [a["id"] for a in anciens] or None
     await db[V595_MEDIAS].insert_one(dict(doc))
     if anciens:
@@ -56047,50 +55973,6 @@ async def v595_ajouter_media_pour(appelant: str, corps: dict, proteger_valides: 
                       "remplace_par": doc["id"], "updated_at": instant}})
     logger.info("%s média ajouté niche=%s format=%s (archivés : %d)", V595_PREFIXE, niche, fmt, len(anciens))
     return {"media": doc, "archives": len(anciens)}
-
-
-async def p3s3_medias_partages_valides(appelant: str, media_ids) -> list:
-    """PHASE 6B — les medias (CETTE section, V595) qu'une campagne de
-    prospection (P3-S3, plus bas dans le fichier) PEUT partager.
-
-    Vit ICI, dans la section V595, et non pres de P3-S3 qui l'appelle : toute
-    lecture de `V595_MEDIAS` doit rester groupee dans ce bloc (verifie par
-    test_v595_prospection_medias_liens.py, "seules les routes V595 touchent
-    ces collections") — un second lecteur disperse ailleurs dans le fichier
-    serait exactement le defaut que ce test existe pour empecher.
-
-    `None` ou absent -> liste vide, rien ne change par rapport a avant ce lot.
-    Chaque id fourni doit EXISTER, appartenir a CE coach, et porter le statut
-    `validee` : un media encore `en_cours`/`a_verifier` n'a pas ete relu par le
-    coach, et pourrait rester prive de ce qui sort vers un canal partenaire —
-    il n'y a aucun champ « confidentiel » explicite dans ce schema (V595),
-    donc `validee` EST la frontiere qui en tient lieu. Un media `archivee` est
-    refuse pour la meme raison qu'il ne sert plus de reference nulle part
-    ailleurs. 400 au premier id qui ne satisfait pas ces trois conditions —
-    jamais un filtrage silencieux qui retirerait des entrees sans le dire.
-    """
-    if media_ids is None:
-        return []
-    if not isinstance(media_ids, list) or len(media_ids) > 20:
-        raise HTTPException(status_code=400, detail="media_ids : liste de 20 identifiants maximum")
-    propres = []
-    for brut in media_ids:
-        identifiant = p3s1_texte(brut, 64)
-        if not identifiant:
-            continue
-        if identifiant in propres:
-            continue
-        media = await db[V595_MEDIAS].find_one(
-            {"id": identifiant, "coach_id": appelant}, {"_id": 0, "id": 1, "statut": 1})
-        if not media:
-            raise HTTPException(status_code=400,
-                                detail="Media introuvable ou hors de votre bibliotheque : %s" % identifiant[:24])
-        if media.get("statut") != "validee":
-            raise HTTPException(status_code=400,
-                                detail="Seuls les medias valides peuvent etre partages (statut actuel : %s)"
-                                       % (media.get("statut") or "inconnu"))
-        propres.append(identifiant)
-    return propres
 
 
 # --- V596 : fichiers /api/files et export navigateur ---------------------------
