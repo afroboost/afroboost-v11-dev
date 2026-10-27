@@ -213,11 +213,29 @@ async def _garde(request: Request) -> str:
     en cache les octets lus, donc `await request.json()`, plus bas dans
     chaque route, relit le MEME corps sans jamais retoucher le flux reseau —
     aucun risque d'epuiser le flux avant que la route n'y accede a son tour.
-    """
+
+    REVUE DE SECURITE — P6B : `AFROBOOSTEUR_RELAY_COACH_ID` NE DOIT JAMAIS
+    DESIGNER LE SUPER-ADMIN. Les deux fonctions deleguees de la phase 6B
+    (`p3s3_preparer_campagne_pour`, `p3s3_modifier_campagne_pour`) scopent
+    leurs lectures/ecritures via `is_super_admin(appelant)` : si `appelant`
+    EST le super-admin, leur filtre devient VIDE (tous les coachs) et leur
+    controle de propriete s'efface entierement — ce relais deviendrait alors
+    une porte dérobée inter-coachs, pour une simple erreur de configuration
+    (coller la mauvaise adresse dans Coolify), jamais une action du code.
+    Fermé ICI, une fois, pour toutes les routes presentes et futures — jamais
+    suppose « ca ne peut pas arriver » parce que ca n'est pas arrive encore
+    (meme principe que `_portee()` ci-dessous, voir son commentaire)."""
     secret = _secret()
     coach_id = _coach_id_configure()
     if not secret or not coach_id:
         raise HTTPException(status_code=503, detail="Relais afroboosteur non configuré")
+
+    from api.server import is_super_admin
+    if is_super_admin(coach_id):
+        logger.error(
+            "%s AFROBOOSTEUR_RELAY_COACH_ID designe le super-admin — relais inerte "
+            "pour empecher une portee vide cote coach", PREFIXE)
+        raise HTTPException(status_code=503, detail="Relais afroboosteur mal configuré")
 
     horodatage = (request.headers.get("X-Afroboosteur-Timestamp", "") or "").strip()
     if not horodatage or not _horodatage_dans_la_fenetre(horodatage):
@@ -801,7 +819,10 @@ async def relais_ajouter_media(request: Request):
         "cible": corps.get("cible"),
         # `notes` : JAMAIS transmis depuis ce relais (annotation privee du coach).
     }
-    resultat = await v595_ajouter_media_pour(_coach_id_configure(), corps_relais)
+    # REVUE DE SECURITE — P6B : `proteger_valides=True`, voir le docstring de
+    # `v595_ajouter_media_pour`. Un media `validee` ne peut JAMAIS etre
+    # demotionne par ce relais, quel que soit l'emplacement vise.
+    resultat = await v595_ajouter_media_pour(_coach_id_configure(), corps_relais, proteger_valides=True)
     media = resultat.get("media")
     if isinstance(media, dict):
         resultat["media"] = {cle: media.get(cle) for cle in _PROJECTION_MEDIA if cle != "_id" and "." not in cle}

@@ -602,6 +602,50 @@ verifier("10a aucun import de 'requests' ni 'httpx' dans le module relais",
          if hasattr(R, "__file__") else True, "verification structurelle")
 
 # ============================================================================
+print("\n11. REVUE DE SECURITE — AFROBOOSTEUR_RELAY_COACH_ID NE PEUT JAMAIS ETRE LE SUPER-ADMIN")
+# `is_super_admin(appelant)` videi la portee de `p3s3_preparer_campagne_pour`/
+# `p3s3_modifier_campagne_pour` (`p3s3_portee` -> `{}` au lieu de `{coach_id}`)
+# et desactive entierement le controle de propriete de la seconde. Une seule
+# ligne de configuration erronee aurait alors fait de ce relais une porte
+# derobee inter-coachs. `_garde` doit refuser (503) AVANT toute autre chose
+# si le coach configure est le super-admin — teste ici sur UNE route
+# representative (les autres partagent la MEME garde).
+base_neuve()
+_coach_avant = os.environ.get("AFROBOOSTEUR_RELAY_COACH_ID")
+os.environ["AFROBOOSTEUR_RELAY_COACH_ID"] = S.SUPER_ADMIN_EMAILS[0]
+try:
+    executer(R.relais_preparer_campagne(requete_preparer(
+        {"name": "x"}, secret=SECRET)))
+    verifier("11a super-admin configure comme coach -> 503, jamais une portee videe", False,
+             "aucune exception levee")
+except HTTPException as e:
+    verifier("11a super-admin configure comme coach -> 503, jamais une portee videe",
+             e.status_code == 503, str(e.status_code))
+finally:
+    if _coach_avant is not None:
+        os.environ["AFROBOOSTEUR_RELAY_COACH_ID"] = _coach_avant
+    else:
+        os.environ.pop("AFROBOOSTEUR_RELAY_COACH_ID", None)
+
+# ============================================================================
+print("\n12. REVUE DE SECURITE — UN MEDIA VALIDE N'EST JAMAIS DEMOTIONNE PAR CE RELAIS")
+# Sans protection, ajouter un lien sur le MEME emplacement (niche+format+cible)
+# qu'un media deja `validee` l'aurait archive — un membre portant seulement
+# `prospection_medias_ajouter` aurait alors pu faire disparaitre, en silence,
+# un media potentiellement en usage actif et approuve par le coach.
+b12 = scenario_de_base()
+b12[S.V595_MEDIAS] = CollectionEcrivable([media_valide(id_="media-valide-en-usage", statut="validee")])
+rep12 = executer(R.relais_ajouter_media(requete_ajouter_media(
+    {"niche": NICHE_ID, "format": "16_9", "url": "https://exemple.test/remplacant.mp4"})))
+verifier("12a le NOUVEAU media est bien ajoute", rep12["media"]["statut"] == "en_cours", str(rep12))
+verifier("12b AUCUN media n'est rapporte comme archive par ce relais", rep12["archives"] == 0, str(rep12))
+media_valide_apres = next(d for d in b12[S.V595_MEDIAS].documents if d["id"] == "media-valide-en-usage")
+verifier("12c le media VALIDE PRE-EXISTANT reste `validee`, jamais `archivee`",
+         media_valide_apres["statut"] == "validee", str(media_valide_apres))
+verifier("12d le media valide n'a pas ete marque comme remplace",
+         media_valide_apres.get("remplace_par") is None, str(media_valide_apres))
+
+# ============================================================================
 total = len(RESULTATS)
 reussites = sum(1 for _, ok, _ in RESULTATS if ok)
 echecs = total - reussites

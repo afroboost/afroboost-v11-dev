@@ -75,8 +75,17 @@ SECRET = "secret-relais-fictif-sans-aucun-rapport-avec-la-production"
 COACH_ID = "coach.fictif@exemple.test"
 os.environ.pop("AFROBOOSTEUR_RELAY_SECRET", None)  # section 1 depend de son absence
 os.environ.pop("AFROBOOSTEUR_RELAY_COACH_ID", None)
+# PHASE 6B : `_garde()` importe desormais `is_super_admin` depuis api.server
+# (revue de securite — refus si AFROBOOSTEUR_RELAY_COACH_ID designe le
+# super-admin). `api.server` leve au premier import si MONGO_URL est absente —
+# jamais atteint en production (le relais est un sous-routeur DE ce module,
+# toujours deja importe), mais ce fichier de test n'importait jamais
+# api.server avant ce lot.
+os.environ.setdefault("JWT_SECRET", "jwt-secret-fictif-p4")
+os.environ.setdefault("MONGO_URL", "mongodb://bouchon-p4-inexistant:27017")
 
 from fastapi import HTTPException  # noqa: E402
+import api.server as S  # noqa: E402,F401
 import api.routes.afroboosteur_relais as R  # noqa: E402
 
 

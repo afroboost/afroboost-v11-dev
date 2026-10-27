@@ -55477,7 +55477,7 @@ async def v595_ajouter_media(request: Request):
     return await v595_ajouter_media_pour(appelant, corps)
 
 
-async def v595_ajouter_media_pour(appelant: str, corps: dict) -> dict:
+async def v595_ajouter_media_pour(appelant: str, corps: dict, proteger_valides: bool = False) -> dict:
     """Le corps REEL de l'ajout — voir le docstring de la route.
 
     PHASE 6B : le relais afroboosteur.com appelle CETTE fonction, jamais la
@@ -55488,6 +55488,17 @@ async def v595_ajouter_media_pour(appelant: str, corps: dict) -> dict:
     emprunter QUE la branche « lien » ci-dessous ; cette fonction, elle,
     reste capable des deux, pour l'ecran du coach qui l'appelle encore
     directement.
+
+    REVUE DE SECURITE — P6B : `proteger_valides=True` (relais UNIQUEMENT,
+    jamais la route du coach — son defaut reste `False`, comportement
+    identique a avant ce lot) EXCLUT un media `validee` des « anciens » a
+    archiver. Sans cela, un membre afroboosteur portant seulement
+    `prospection_medias_ajouter` aurait pu DEMOTIONNER en silence un media
+    deja approuve par le coach et potentiellement en usage actif, simplement
+    en ajoutant un nouveau lien sur le MEME emplacement (niche+format+cible) —
+    une integrite que ce relais, pense pour consulter et proposer, ne doit
+    jamais pouvoir degrader seul. Le coach, lui, garde la main complete :
+    cette protection ne s'applique qu'au chemin relais.
     """
     niche = v595_niche(corps.get("niche"))
     await v598_verifier_niche(niche, appelant)
@@ -55529,9 +55540,12 @@ async def v595_ajouter_media_pour(appelant: str, corps: dict) -> dict:
         cible = (orig or {}).get("cible")
     doc["cible"] = cible
     doc["cible_id"] = cible["id"] if cible else None
+    filtre_anciens = {"coach_id": appelant, "niche": niche, "format": fmt,
+                      "cible_id": doc["cible_id"], "statut": {"$ne": "archivee"}}
+    if proteger_valides:
+        filtre_anciens["statut"] = {"$nin": ["archivee", "validee"]}
     anciens = [] if fmt == "document" else await db[V595_MEDIAS].find(   # V625 : un PDF ne remplace rien
-        {"coach_id": appelant, "niche": niche, "format": fmt, "cible_id": doc["cible_id"], "statut": {"$ne": "archivee"}},
-        {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
+        filtre_anciens, {"_id": 0, "id": 1}).to_list(V595_LISTE_MAX)
     doc["remplace"] = [a["id"] for a in anciens] or None
     await db[V595_MEDIAS].insert_one(dict(doc))
     if anciens:
