@@ -68,16 +68,35 @@ def verifier(intitule, condition, detail=""):
 print("\n0. api/server.py N'EST PAS TOUCHE PAR CE LOT")
 import subprocess  # noqa: E402
 
+# ⚠️ CE TEST ETAIT BORNE A L'ARBRE DE TRAVAIL, ET IL A FINI PAR ACCUSER UN
+#    LOT INNOCENT. Il demandait `git diff origin/main...`, c'est-a-dire « tout
+#    ce qui differe de main sur cette branche ». Tant que 6C etait seul en
+#    cours, cela decrivait bien 6C. Des qu'un lot SUIVANT a travaille sur le
+#    meme depot (V636 : envoi + medias, qui touche legitimement api/server.py
+#    pour y EXTRAIRE la logique d'envoi du coach), ce test s'est mis a echouer
+#    en listant les fichiers de l'autre lot — alors que le lot 6C, lui,
+#    n'avait pas bouge d'un octet.
+#
+#    Ce que ce test veut garantir est une propriete DU LOT 6C, donc d'un
+#    COMMIT precis — pas de l'etat courant du dossier. On le borne au commit
+#    qui a introduit 6C (`0b8a552f`, « feat(relais): fil de conversation +
+#    echeances de relances, lecture seule »). La garantie devient permanente
+#    et cesse de dependre de ce que font les lots d'apres.
+COMMIT_6C = "0b8a552f"
 try:
     diff = subprocess.run(
-        ["git", "diff", "--name-only", "origin/main..."],
+        ["git", "show", "--name-only", "--format=", COMMIT_6C],
         cwd=RACINE, capture_output=True, text=True, timeout=30).stdout
     fichiers = [l.strip() for l in diff.splitlines() if l.strip()]
-    verifier("0a seuls le relais et les tests sont modifies (jamais api/server.py)",
-             all(f.startswith("api/routes/afroboosteur_relais.py") or f.startswith("tests/") for f in fichiers)
+    verifier("0a le lot 6C (commit %s) ne touche que le relais et les tests, "
+             "jamais api/server.py" % COMMIT_6C,
+             len(fichiers) > 0
+             and all(f.startswith("api/routes/afroboosteur_relais.py") or f.startswith("tests/")
+                     for f in fichiers)
              and "api/server.py" not in fichiers, str(fichiers))
 except Exception as e:
-    verifier("0a seuls le relais et les tests sont modifies (jamais api/server.py)", False, str(e))
+    verifier("0a le lot 6C (commit %s) ne touche que le relais et les tests, "
+             "jamais api/server.py" % COMMIT_6C, False, str(e))
 
 # ============================================================================
 class SortieReseauInterdite(RuntimeError):
