@@ -533,6 +533,59 @@ async def _medias_valides_du_coach(valeurs) -> list:
     return await v625_resoudre_medias(references, _coach_id_configure())
 
 
+async def _refuser_medias_plus_valides(inbound_id: str) -> None:
+    """V636b — LA MEME BORNE, MAIS AU MOMENT QUI COMPTE : L'ENVOI.
+
+    LE DEFAUT QUE CECI CORRIGE, RELEVE A LA RELECTURE DU LOT. Exiger `validee`
+    a l'ECRITURE du brouillon (`_medias_valides_du_coach`) empeche un membre
+    afroboosteur de joindre un media non valide. Cela ne dit RIEN de ce qui
+    part reellement, pour deux raisons :
+
+      1. LE BROUILLON EST PARTAGE. Le coach attache ses medias depuis SON
+         tableau de bord, dont la route accepte tout sauf `archivee`
+         (`en_cours`, `a_verifier` compris). Un membre cliquant « Envoyer »
+         expediait alors un media que ce canal avait justement refuse.
+      2. L'INSTANTANE NE VIEILLIT PAS. Un media archive APRES avoir ete
+         attache reste dans le brouillon tel quel — c'est voulu pour le coach
+         (« changer ou supprimer le media plus tard ne le touche pas »,
+         V620), mais pour un tiers qui envoie au nom du coach, cela revient a
+         expedier un fichier retire entre-temps.
+
+    On relit donc la bibliotheque JUSTE AVANT l'envoi, et on refuse en 409
+    avec un motif lisible. Rien n'est reserve, rien ne part, et le coach garde
+    la possibilite d'envoyer lui-meme : son chemin n'est pas touche.
+
+    ⚠️ LIMITE ASSUMEE, A CONNAITRE. Un media que le coach a joint depuis ses
+       FICHIERS televerses (`origine: "fichier"`, hors mediatheque) fait aussi
+       refuser l'envoi par ce canal : il n'appartient a aucune ligne de
+       `prospection_medias`, donc rien ne permet de verifier qu'il est valide.
+       C'est le prix de la verification ; le message le dit explicitement pour
+       que personne ne cherche une panne.
+    """
+    from api.server import P3AI_BROUILLONS, V595_MEDIAS, v625_medias
+
+    brouillon = await db[P3AI_BROUILLONS].find_one({"inbound_id": inbound_id}, {"_id": 0})
+    if not brouillon:
+        return   # l'absence de brouillon est refusee plus loin, par la fonction d'envoi
+    for m in v625_medias(brouillon):
+        if not isinstance(m, dict):
+            raise HTTPException(status_code=409, detail="Média joint illisible — retirez-le avant l'envoi.")
+        media_id = str(m.get("media_id") or "").strip()
+        if m.get("origine") != "bibliotheque" or not media_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Un fichier joint à ce brouillon ne provient pas de la médiathèque : "
+                       "il ne peut pas être envoyé depuis afroboosteur.com. Retirez-le, ou "
+                       "demandez au coach d'envoyer cette réponse lui-même.")
+        ligne = await db[V595_MEDIAS].find_one(
+            dict(_portee(), id=media_id), {"_id": 0, "statut": 1})
+        if not ligne or ligne.get("statut") != "validee":
+            raise HTTPException(
+                status_code=409,
+                detail="Un média joint à ce brouillon n'est plus validé dans la médiathèque "
+                       "(retiré, archivé ou en cours de vérification). Retirez-le, puis réessayez.")
+
+
 async def _message_de_la_portee(inbound_id: str) -> dict:
     """Le message, dans la portee du coach configure. 404 sinon — jamais un
     indice sur l'existence d'un message hors portee."""
@@ -1239,6 +1292,13 @@ async def relais_envoyer_reponse(inbound_id: str, request: Request):
     # LA PORTEE D'ABORD : un dossier hors du coach configure n'existe pas pour
     # ce relais (404), avant meme que la fonction d'envoi ne soit appelee.
     message = await _message_de_la_portee(inbound_id)
+
+    # V636b — LES MEDIAS SONT REVERIFIES ICI, AVANT TOUTE RESERVATION. Exiger
+    # `validee` seulement a l'ecriture du brouillon ne disait rien de ce qui
+    # part : le coach peut attacher un media `en_cours` depuis son propre
+    # tableau de bord, et un media archive apres coup reste dans l'instantane.
+    # Voir `_refuser_medias_plus_valides`.
+    await _refuser_medias_plus_valides(message["id"])
 
     try:
         corps = await request.json()

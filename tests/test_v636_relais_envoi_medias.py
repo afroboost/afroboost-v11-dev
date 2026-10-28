@@ -566,6 +566,75 @@ verifier("3i la reponse du relais ne divulgue NI l'adresse du prospect NI le coa
          "partenaire@exemple.test" not in rendu and COACH_ID not in rendu, rendu[:200])
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n3bis. LA BORNE `validee` TIENT A L'ENVOI, PAS SEULEMENT A L'ECRITURE")
+#
+# EXIGER `validee` A L'ECRITURE NE SUFFIT PAS, et la section 1 ne pouvait pas
+# le voir. Le brouillon est PARTAGE : le coach attache ses medias depuis son
+# propre tableau de bord, dont la route accepte tout sauf `archivee`. Un
+# membre cliquant « Envoyer » expediait alors un media que ce canal avait
+# justement refuse. Deuxieme cas, independant : un media archive APRES avoir
+# ete attache reste dans l'instantane du brouillon — voulu pour le coach, mais
+# pas pour un tiers qui envoie en son nom.
+# ─────────────────────────────────────────────────────────────────────────────
+
+snapshot = {"media_id": "m-pose", "origine": "bibliotheque", "type": "image",
+            "url": "/api/files/f-1/m-pose.jpg", "miniature_url": None,
+            "titre": "m-pose.jpg", "format": "miniature", "duree": None,
+            "niche_nom": "Niche test", "public": "Public test",
+            "choisi_at": "2026-10-20T09:00:00+00:00"}
+
+for statut, libelle in (("en_cours", "attache par le COACH alors qu'il etait `en_cours`"),
+                        ("archivee", "ARCHIVE apres avoir ete attache")):
+    b = scenario(medias_bibliotheque=[media("m-pose", statut=statut)],
+                 brouillon_medias=[dict(snapshot)], flags_ouverts=True)
+    APPELS_TRANSPORT.clear()
+    try:
+        envoyer(b)
+        code = None
+    except HTTPException as e:
+        code = e.status_code
+    verifier("3j un media %s est REFUSE a l'envoi (409)" % libelle, code == 409,
+             "code=%r" % code)
+    verifier("3j-bis ... et rien n'a ete reserve ni envoye (%s)" % statut,
+             len(b[S.P3AI4_COLLECTION].documents) == 0 and len(APPELS_TRANSPORT) == 0)
+
+b = scenario(medias_bibliotheque=[],
+             brouillon_medias=[dict(snapshot)], flags_ouverts=True)
+APPELS_TRANSPORT.clear()
+try:
+    envoyer(b)
+    code = None
+except HTTPException as e:
+    code = e.status_code
+verifier("3k un media DISPARU de la mediatheque est refuse a l'envoi", code == 409)
+
+# LIMITE ASSUMEE, mesuree pour qu'elle ne soit pas decouverte en production :
+# un fichier televerse par le coach (hors mediatheque) ne peut pas partir par
+# ce canal — rien ne permet de verifier qu'il est valide.
+b = scenario(medias_bibliotheque=[media("m-ok")], flags_ouverts=True,
+             brouillon_medias=[{"origine": "fichier", "type": "image",
+                                "url": "/api/files/f-9/photo.jpg", "titre": "photo.jpg"}])
+APPELS_TRANSPORT.clear()
+try:
+    envoyer(b)
+    code, detail = None, ""
+except HTTPException as e:
+    code, detail = e.status_code, e.detail or ""
+verifier("3l LIMITE ASSUMEE : un fichier televerse hors mediatheque fait refuser l'envoi, "
+         "avec un motif qui dit quoi faire", code == 409 and "médiathèque" in detail,
+         "code=%r detail=%r" % (code, detail[:90]))
+
+b = scenario(medias_bibliotheque=[media("m-pose", statut="validee")],
+             brouillon_medias=[dict(snapshot)], flags_ouverts=True)
+APPELS_TRANSPORT.clear()
+res_ok = envoyer(b)
+verifier("3m DISCRIMINANCE : le MEME brouillon dont le media est bien `validee` part "
+         "normalement — la borne refuse ce qu'il faut, pas tout",
+         res_ok.get("deja_envoye") is False and len(APPELS_TRANSPORT) == 1,
+         "%d appel(s)" % len(APPELS_TRANSPORT))
+
+
 # ============================================================================
 print("\n4. LES DOUBLONS — UN REJEU NE REENVOIE RIEN")
 
