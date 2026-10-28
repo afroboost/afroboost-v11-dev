@@ -565,6 +565,31 @@ rendu = _json.dumps(res)
 verifier("3i la reponse du relais ne divulgue NI l'adresse du prospect NI le coach",
          "partenaire@exemple.test" not in rendu and COACH_ID not in rendu, rendu[:200])
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LE DESTINATAIRE DOIT POUVOIR OUVRIR LE LIEN — sinon la fonction est
+# cosmetique. Le media part en LIEN `/api/files/{id}/{nom}` (3h ci-dessus), et
+# la route qui sert ce chemin n'a AUCUNE garde d'authentification : un prospect
+# qui recoit l'e-mail peut donc l'ouvrir. C'est le fonctionnement DEJA en place
+# pour les reponses du coach, ce lot ne le change pas.
+#
+# ⚠️ COROLLAIRE A CONNAITRE, PAS A CORRIGER ICI : ce lien est donc ouvert a
+#    QUICONQUE le possede. L'identifiant est imprevisible, mais ce n'est pas un
+#    controle d'acces. Le durcir changerait le comportement des reponses du
+#    coach, hors du perimetre de ce lot — c'est une decision a prendre a part.
+# ─────────────────────────────────────────────────────────────────────────────
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "api", "server.py"), encoding="utf-8").read()
+_i = _src.index('@api_router.get("/files/{file_id}/{filename}")')
+_bloc_fichiers = _src[_i:_src.index("\n@api_router", _i + 10)]
+verifier("3n le media part sous la forme `/api/files/...`, servie par une route EXISTANTE",
+         '@api_router.get("/files/{file_id}/{filename}")' in _src
+         and str(params.get("html") or "").find("/api/files/") >= 0)
+verifier("3o cette route n'exige AUCUNE authentification — le destinataire peut donc "
+         "ouvrir le lien (fonctionnement deja en place pour le coach)",
+         not __import__("re").search(
+             r'_v309_require_coach_or_admin|require_auth|_v263_authenticated_coach',
+             _bloc_fichiers))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n3bis. LA BORNE `validee` TIENT A L'ENVOI, PAS SEULEMENT A L'ECRITURE")
