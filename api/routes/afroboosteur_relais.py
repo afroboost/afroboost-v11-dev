@@ -480,9 +480,24 @@ async def relais_lister_conversations(request: Request):
 # -----------------------------------------------------------------------------
 
 async def _medias_valides_du_coach(valeurs) -> list:
-    """V636 — Les medias que CE canal accepte de joindre a une reponse.
+    """V636 (seuil corrige, relecture du 28/10/2026) — Les medias que CE canal
+    accepte de joindre a une reponse.
 
-    Trois refus AVANT toute resolution, chacun pour une raison differente :
+    ⚠️ LE SEUIL A CHANGE, ET VOICI POURQUOI. La version precedente exigeait
+       `validee` — LA MEME frontiere que le PARTAGE DE CAMPAGNE
+       (`p3s3_medias_partages_valides`). C'etait la MAUVAISE comparaison.
+       Repondre a UN partenaire (6A/V636) est exactement le geste que fait LE
+       COACH LUI-MEME depuis son tableau de bord quand il repond a un message
+       — et CE geste-la n'a JAMAIS exige `validee` : `v620_resoudre_media`
+       accepte tout statut SAUF `archivee`. La campagne, elle, diffuse a
+       PLUSIEURS destinataires a la fois — c'est ce volume-la qui justifie une
+       barre plus haute, pas la nature de l'action « repondre ».
+       Consequence mesuree en production le 28/10/2026 : CHAQUE media nait
+       `en_cours` ou `a_verifier` (aucune validation automatique, voir
+       `V595_STATUTS_MEDIA`) — exiger `validee` ici revenait, en pratique, a
+       fermer ce canal en permanence.
+
+    DEUX refus AVANT toute resolution, chacun pour une raison differente :
 
       * forme inattendue (pas une liste, un element qui n'est pas un objet, ou
         un objet qui porte autre chose que `media_id`) -> 400. En particulier,
@@ -491,16 +506,19 @@ async def _medias_valides_du_coach(valeurs) -> list:
         n'en possede aucun — la lui laisser reviendrait a lui laisser designer
         le fichier d'un autre ;
       * trop de fichiers -> 400, avec la MEME borne que le coach
-        (`V625_MEDIAS_MAX`), jamais une seconde valeur qui pourrait diverger ;
-      * media non `validee` -> 400. C'est la borne PROPRE a ce canal : elle
-        reprend celle du partage de campagne (`p3s3_medias_partages_valides`),
-        pas celle de la reponse du coach (qui accepte tout sauf `archivee`).
+        (`V625_MEDIAS_MAX`), jamais une seconde valeur qui pourrait diverger.
 
-    Puis `v625_resoudre_medias` — la MEME fonction que la route du coach — fait
-    le reste : existence, appartenance au coach configure, adresse utilisable,
-    miniature, doublons. Aucune de ces regles n'est reecrite ici.
+    Puis `v625_resoudre_medias` — LA MEME FONCTION que la route du coach
+    (`p3ai_modifier_brouillon`) appelle pour SON PROPRE brouillon — fait TOUT
+    le reste : existence, appartenance au coach configure, statut (tout sauf
+    `archivee`, via `v620_resoudre_media`), adresse utilisable, miniature,
+    doublons. Plus aucune regle n'est dupliquee ici : la verification
+    manuelle du statut (une seconde lecture de `V595_MEDIAS`) a ete retiree,
+    parce qu'elle faisait DOUBLE EMPLOI avec ce que cette fonction verifie
+    deja — et qu'un seuil different aurait pu y diverger sans qu'un test ne
+    le remarque.
     """
-    from api.server import V595_MEDIAS, V625_MEDIAS_MAX, v625_resoudre_medias
+    from api.server import V625_MEDIAS_MAX, v625_resoudre_medias
 
     if valeurs is None:
         valeurs = []
@@ -523,48 +541,40 @@ async def _medias_valides_du_coach(valeurs) -> list:
         media_id = str(v.get("media_id") or "").strip()[:64]
         if not media_id:
             raise HTTPException(status_code=400, detail="`media_id` requis")
-        ligne = await db[V595_MEDIAS].find_one(
-            dict(_portee(), id=media_id), {"_id": 0, "id": 1, "statut": 1})
-        if not ligne:
-            raise HTTPException(status_code=400, detail="Média introuvable dans la bibliothèque")
-        if ligne.get("statut") != "validee":
-            raise HTTPException(
-                status_code=400,
-                detail="Ce média n'est pas validé : seuls les médias validés peuvent être "
-                       "joints à une réponse depuis afroboosteur.com.")
         references.append({"media_id": media_id})
 
     return await v625_resoudre_medias(references, _coach_id_configure())
 
 
 async def _refuser_medias_plus_valides(inbound_id: str) -> None:
-    """V636b — LA MEME BORNE, MAIS AU MOMENT QUI COMPTE : L'ENVOI.
+    """V636b (seuil corrige, relecture du 28/10/2026) — LA MEME BORNE QUE
+    `_medias_valides_du_coach`, RE-VERIFIEE AU MOMENT QUI COMPTE : L'ENVOI.
 
-    LE DEFAUT QUE CECI CORRIGE, RELEVE A LA RELECTURE DU LOT. Exiger `validee`
-    a l'ECRITURE du brouillon (`_medias_valides_du_coach`) empeche un membre
-    afroboosteur de joindre un media non valide. Cela ne dit RIEN de ce qui
-    part reellement, pour deux raisons :
+    LE SEUIL EST DESORMAIS CELUI DE `v620_resoudre_media` — N'IMPORTE QUEL
+    STATUT SAUF `archivee`, PAS `validee` seul. Voir le docstring de
+    `_medias_valides_du_coach` pour le motif complet du changement (repondre a
+    un partenaire est le meme geste que le coach repondant lui-meme, qui n'a
+    jamais exige `validee` — exiger `validee` revenait a fermer ce canal en
+    permanence, puisqu'aucun media n'est valide automatiquement).
 
-      1. LE BROUILLON EST PARTAGE. Le coach attache ses medias depuis SON
-         tableau de bord, dont la route accepte tout sauf `archivee`
-         (`en_cours`, `a_verifier` compris). Un membre cliquant « Envoyer »
-         expediait alors un media que ce canal avait justement refuse.
-      2. L'INSTANTANE NE VIEILLIT PAS. Un media archive APRES avoir ete
-         attache reste dans le brouillon tel quel — c'est voulu pour le coach
-         (« changer ou supprimer le media plus tard ne le touche pas »,
-         V620), mais pour un tiers qui envoie au nom du coach, cela revient a
-         expedier un fichier retire entre-temps.
-
-    On relit donc la bibliotheque JUSTE AVANT l'envoi, et on refuse en 409
-    avec un motif lisible. Rien n'est reserve, rien ne part, et le coach garde
-    la possibilite d'envoyer lui-meme : son chemin n'est pas touche.
+    CE QUI JUSTIFIE QUAND MEME UNE RE-VERIFICATION A L'ENVOI, MEME AVEC CE
+    SEUIL PLUS LARGE. Le brouillon est PARTAGE, et l'instantane ne vieillit
+    pas : un media peut passer `archivee` APRES avoir ete attache a un
+    brouillon (par le coach, depuis son propre tableau de bord, a tout
+    moment) — c'est voulu pour LUI (« changer ou supprimer le media plus tard
+    ne le touche pas », V620), mais pour un tiers qui envoie en son nom, cela
+    reviendrait a expedier un fichier retire entre-temps. On relit donc la
+    bibliotheque JUSTE AVANT l'envoi, et on refuse en 409 avec un motif
+    lisible si — et seulement si — le media est devenu `archivee` ou a
+    disparu. Rien n'est reserve, rien ne part, et le coach garde la
+    possibilite d'envoyer lui-meme : son chemin n'est pas touche.
 
     ⚠️ LIMITE ASSUMEE, A CONNAITRE. Un media que le coach a joint depuis ses
        FICHIERS televerses (`origine: "fichier"`, hors mediatheque) fait aussi
        refuser l'envoi par ce canal : il n'appartient a aucune ligne de
-       `prospection_medias`, donc rien ne permet de verifier qu'il est valide.
-       C'est le prix de la verification ; le message le dit explicitement pour
-       que personne ne cherche une panne.
+       `prospection_medias`, donc rien ne permet de verifier qu'il est encore
+       disponible. C'est le prix de la verification ; le message le dit
+       explicitement pour que personne ne cherche une panne.
     """
     from api.server import P3AI_BROUILLONS, V595_MEDIAS, v625_medias
 
@@ -583,11 +593,11 @@ async def _refuser_medias_plus_valides(inbound_id: str) -> None:
                        "demandez au coach d'envoyer cette réponse lui-même.")
         ligne = await db[V595_MEDIAS].find_one(
             dict(_portee(), id=media_id), {"_id": 0, "statut": 1})
-        if not ligne or ligne.get("statut") != "validee":
+        if not ligne or ligne.get("statut") == "archivee":
             raise HTTPException(
                 status_code=409,
-                detail="Un média joint à ce brouillon n'est plus validé dans la médiathèque "
-                       "(retiré, archivé ou en cours de vérification). Retirez-le, puis réessayez.")
+                detail="Un média joint à ce brouillon n'est plus disponible dans la médiathèque "
+                       "(retiré ou archivé). Retirez-le, puis réessayez.")
 
 
 async def _message_de_la_portee(inbound_id: str) -> dict:
@@ -666,25 +676,35 @@ async def relais_enregistrer_brouillon(inbound_id: str, request: Request):
        demande que ses membres autorises puissent repondre AVEC les medias
        deja presents dans la bibliotheque — ce qui exige d'ecrire ce champ.
 
-       TROIS BORNES, QUI N'EXISTENT PAS POUR LE COACH LUI-MEME :
+       DEUX BORNES, QUI N'EXISTENT PAS POUR LE COACH LUI-MEME (une troisieme,
+       `validee` exigee, a existe un temps — voir plus bas pourquoi elle a
+       ete retiree) :
 
        1. PAR IDENTIFIANT DE BIBLIOTHEQUE UNIQUEMENT. `{"media_id": "..."}`
           et rien d'autre : un `fichier_url` (`/api/files/...`) est REFUSE ici,
           parce qu'un membre afroboosteur n'a, par construction, aucun fichier
           televerse a lui sur afroboost.com — accepter cette forme reviendrait
           a lui laisser designer les fichiers d'un AUTRE.
-       2. `validee` EXIGE. `v620_resoudre_media` accepte tout statut sauf
-          `archivee` (donc `en_cours` et `a_verifier` aussi) : c'est le bon
-          compromis pour le coach, qui relit sa propre bibliotheque. Pour ce
-          canal on retient la MEME frontiere que le partage de campagne
-          (`p3s3_medias_partages_valides`) : seul un media que le coach a
-          explicitement valide peut partir vers un partenaire par la main d'un
-          tiers.
-       3. LA RESOLUTION RESTE CELLE DU COACH CONFIGURE. `v625_resoudre_medias`
+       2. LA RESOLUTION RESTE CELLE DU COACH CONFIGURE. `v625_resoudre_medias`
           est appelee avec `_coach_id_configure()`, jamais avec l'identite du
           membre : la bibliotheque engagee est celle du coach, et un
           identifiant qui ne lui appartient pas est refuse par la fonction
           elle-meme, sans que ce fichier ait a le reverifier.
+
+       ⚠️ LE STATUT ACCEPTE N'EST PLUS BORNE A `validee` (correction du
+          28/10/2026, mission du President). `v625_resoudre_medias` /
+          `v620_resoudre_media` acceptent ICI exactement ce qu'ils acceptent
+          pour LE COACH LUI-MEME repondant a un partenaire : tout statut SAUF
+          `archivee` (donc `en_cours` et `a_verifier` aussi). La premiere
+          version de ce canal exigeait `validee`, en calquant la frontiere du
+          PARTAGE DE CAMPAGNE (`p3s3_medias_partages_valides`) — la mauvaise
+          comparaison : une campagne diffuse a PLUSIEURS destinataires a la
+          fois, ce qui justifie une barre plus haute ; repondre a UN
+          partenaire est exactement le geste que le coach fait lui-meme, qui
+          n'a jamais exige `validee`. Mesure en production : chaque media nait
+          `en_cours` ou `a_verifier` (aucune validation automatique) — exiger
+          `validee` ici revenait, en pratique, a fermer ce canal en
+          permanence. Voir `_medias_valides_du_coach` pour le detail.
 
        Cle ABSENTE = champ inchange (meme semantique que la route du coach) ;
        liste VIDE = retirer les medias. `media` (singulier) est ecrit en meme

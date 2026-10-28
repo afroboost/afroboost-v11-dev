@@ -393,18 +393,39 @@ verifier("1c l'empreinte rendue tient compte du media joint "
          res.get("draft_hash") == empreinte_du_brouillon(b)
          and res.get("draft_hash") != S.v625_empreinte(doc["reponse_proposee"], []))
 
-for statut in ("en_cours", "a_verifier", "archivee"):
+# ─────────────────────────────────────────────────────────────────────────────
+# SEUIL CORRIGE LE 28/10/2026, SUR MISSION DU PRESIDENT. Ce bloc exigeait
+# `validee` et REFUSAIT `en_cours`/`a_verifier` — ce test passait alors pour
+# une MAUVAISE raison : il verrouillait un seuil different de celui qu'utilise
+# le coach pour REPONDRE lui-meme (`v620_resoudre_media` : tout sauf
+# `archivee`). Mesure en production le meme jour : chaque media nait
+# `en_cours` ou `a_verifier`, AUCUN n'est valide automatiquement — exiger
+# `validee` ici revenait, en pratique, a fermer ce canal en permanence (0
+# media selectionnable alors meme que la bibliotheque en contenait).
+#
+# Le bon seuil est desormais mesure ici : `en_cours`/`a_verifier` PASSENT
+# (comme pour le coach), seul `archivee` est refuse.
+# ─────────────────────────────────────────────────────────────────────────────
+for statut in ("en_cours", "a_verifier"):
     b = scenario(medias_bibliotheque=[media("m-x", statut=statut)])
-    avant = _json.dumps(b[S.P3AI_BROUILLONS].documents[0], sort_keys=True)
-    try:
-        enregistrer(b, medias=[{"media_id": "m-x"}])
-        refuse = False
-    except HTTPException as e:
-        refuse = e.status_code == 400
-    verifier("1d un media `%s` est REFUSE — seul `validee` peut partir par ce canal" % statut,
-             refuse)
-    verifier("1d-bis ... et le brouillon n'a pas bouge d'un octet (`%s`)" % statut,
-             _json.dumps(b[S.P3AI_BROUILLONS].documents[0], sort_keys=True) == avant)
+    res = enregistrer(b, medias=[{"media_id": "m-x"}])
+    doc = b[S.P3AI_BROUILLONS].documents[0]
+    verifier("1d un media `%s` est ACCEPTE — MEME seuil que le coach repondant lui-meme "
+             "(tout sauf `archivee`)" % statut,
+             len(doc.get("medias") or []) == 1 and (doc["medias"][0] or {}).get("media_id") == "m-x",
+             str(doc.get("medias")))
+
+b = scenario(medias_bibliotheque=[media("m-archivee", statut="archivee")])
+avant = _json.dumps(b[S.P3AI_BROUILLONS].documents[0], sort_keys=True)
+try:
+    enregistrer(b, medias=[{"media_id": "m-archivee"}])
+    refuse = False
+except HTTPException as e:
+    refuse = e.status_code == 400
+verifier("1d-ter DISCRIMINANCE : un media `archivee`, lui, reste REFUSE — le seuil "
+         "n'est pas devenu « tout accepter »", refuse)
+verifier("1d-quater ... et le brouillon n'a pas bouge d'un octet",
+         _json.dumps(b[S.P3AI_BROUILLONS].documents[0], sort_keys=True) == avant)
 
 b = scenario(medias_bibliotheque=[media("m-autre", coach=AUTRE_COACH)])
 try:
@@ -592,15 +613,21 @@ verifier("3o cette route n'exige AUCUNE authentification — le destinataire peu
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-print("\n3bis. LA BORNE `validee` TIENT A L'ENVOI, PAS SEULEMENT A L'ECRITURE")
+print("\n3bis. LE SEUIL RE-VERIFIE A L'ENVOI EST CELUI DU 28/10/2026 : "
+      "TOUT SAUF `archivee`")
 #
-# EXIGER `validee` A L'ECRITURE NE SUFFIT PAS, et la section 1 ne pouvait pas
-# le voir. Le brouillon est PARTAGE : le coach attache ses medias depuis son
-# propre tableau de bord, dont la route accepte tout sauf `archivee`. Un
-# membre cliquant « Envoyer » expediait alors un media que ce canal avait
-# justement refuse. Deuxieme cas, independant : un media archive APRES avoir
-# ete attache reste dans l'instantane du brouillon — voulu pour le coach, mais
-# pas pour un tiers qui envoie en son nom.
+# ⚠️ CETTE SECTION TESTAIT LE MAUVAIS SEUIL, ET CA A ETE CORRIGE SUR MISSION
+#    DU PRESIDENT (28/10/2026). Elle exigeait `validee` a l'envoi — cela
+#    REFUSAIT un media `en_cours`, alors que c'est exactement ce qu'accepte le
+#    coach repondant lui-meme (`v620_resoudre_media` : tout sauf `archivee`).
+#    Mesure en production : aucun media n'est valide automatiquement — exiger
+#    `validee` ici revenait a fermer ce canal en permanence.
+#
+# CE QUI RESTE VRAI, ET DOIT LE RESTER : re-verifier au moment de l'envoi est
+# toujours necessaire, meme avec ce seuil plus large. Le brouillon est
+# PARTAGE, et l'instantane ne vieillit pas — un media peut passer `archivee`
+# APRES avoir ete attache (par le coach, a tout moment). C'est CE cas-la, et
+# lui seul, que la re-verification doit encore refuser.
 # ─────────────────────────────────────────────────────────────────────────────
 
 snapshot = {"media_id": "m-pose", "origine": "bibliotheque", "type": "image",
@@ -609,20 +636,29 @@ snapshot = {"media_id": "m-pose", "origine": "bibliotheque", "type": "image",
             "niche_nom": "Niche test", "public": "Public test",
             "choisi_at": "2026-10-20T09:00:00+00:00"}
 
-for statut, libelle in (("en_cours", "attache par le COACH alors qu'il etait `en_cours`"),
-                        ("archivee", "ARCHIVE apres avoir ete attache")):
+for statut in ("en_cours", "a_verifier", "validee"):
     b = scenario(medias_bibliotheque=[media("m-pose", statut=statut)],
                  brouillon_medias=[dict(snapshot)], flags_ouverts=True)
     APPELS_TRANSPORT.clear()
-    try:
-        envoyer(b)
-        code = None
-    except HTTPException as e:
-        code = e.status_code
-    verifier("3j un media %s est REFUSE a l'envoi (409)" % libelle, code == 409,
-             "code=%r" % code)
-    verifier("3j-bis ... et rien n'a ete reserve ni envoye (%s)" % statut,
-             len(b[S.P3AI4_COLLECTION].documents) == 0 and len(APPELS_TRANSPORT) == 0)
+    res_ok = envoyer(b)
+    verifier("3j un media `%s` attache par le coach PART normalement a l'envoi — "
+             "MEME seuil que le coach repondant lui-meme" % statut,
+             res_ok.get("deja_envoye") is False and len(APPELS_TRANSPORT) == 1,
+             "%d appel(s)" % len(APPELS_TRANSPORT))
+
+b = scenario(medias_bibliotheque=[media("m-pose", statut="archivee")],
+             brouillon_medias=[dict(snapshot)], flags_ouverts=True)
+APPELS_TRANSPORT.clear()
+try:
+    envoyer(b)
+    code = None
+except HTTPException as e:
+    code = e.status_code
+verifier("3j-ter DISCRIMINANCE : un media ARCHIVE apres avoir ete attache reste REFUSE "
+         "a l'envoi (409) — le seuil plus large n'ouvre pas tout",
+         code == 409, "code=%r" % code)
+verifier("3j-quater ... et rien n'a ete reserve ni envoye dans ce cas",
+         len(b[S.P3AI4_COLLECTION].documents) == 0 and len(APPELS_TRANSPORT) == 0)
 
 b = scenario(medias_bibliotheque=[],
              brouillon_medias=[dict(snapshot)], flags_ouverts=True)
@@ -636,7 +672,7 @@ verifier("3k un media DISPARU de la mediatheque est refuse a l'envoi", code == 4
 
 # LIMITE ASSUMEE, mesuree pour qu'elle ne soit pas decouverte en production :
 # un fichier televerse par le coach (hors mediatheque) ne peut pas partir par
-# ce canal — rien ne permet de verifier qu'il est valide.
+# ce canal — rien ne permet de verifier qu'il est encore disponible.
 b = scenario(medias_bibliotheque=[media("m-ok")], flags_ouverts=True,
              brouillon_medias=[{"origine": "fichier", "type": "image",
                                 "url": "/api/files/f-9/photo.jpg", "titre": "photo.jpg"}])
@@ -649,15 +685,6 @@ except HTTPException as e:
 verifier("3l LIMITE ASSUMEE : un fichier televerse hors mediatheque fait refuser l'envoi, "
          "avec un motif qui dit quoi faire", code == 409 and "médiathèque" in detail,
          "code=%r detail=%r" % (code, detail[:90]))
-
-b = scenario(medias_bibliotheque=[media("m-pose", statut="validee")],
-             brouillon_medias=[dict(snapshot)], flags_ouverts=True)
-APPELS_TRANSPORT.clear()
-res_ok = envoyer(b)
-verifier("3m DISCRIMINANCE : le MEME brouillon dont le media est bien `validee` part "
-         "normalement — la borne refuse ce qu'il faut, pas tout",
-         res_ok.get("deja_envoye") is False and len(APPELS_TRANSPORT) == 1,
-         "%d appel(s)" % len(APPELS_TRANSPORT))
 
 
 # ============================================================================
