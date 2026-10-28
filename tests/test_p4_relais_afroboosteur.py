@@ -436,12 +436,25 @@ print("\n9. ECRITURE MONGO — reevaluee une troisieme fois (phase 6B : campagne
 # donc PAS — d'ou le test 9c-bis, qui verrouille la liste EXACTE des
 # fonctions d'ecriture deleguees, pour qu'une quatrieme ne s'ajoute jamais
 # sans qu'un test echoue ici pour le signaler.
+#
+# PHASE 6D ajoute une SIXIEME methode d'ecriture HTTP (POST
+# ia/ameliorer-texte) qui n'ECRIT RIEN EN BASE — c'est un CALCUL (le texte
+# ameliore est rendu, jamais enregistre d'ici). Elle compte donc dans 9a
+# (la methode HTTP est bien POST), mais JAMAIS dans 9c/9c-bis (aucune
+# ecriture Mongo litterale, aucune fonction `*_pour` deleguee) : voir
+# tests/test_p6d_relais_ia.py section 5, qui verrouille ce point precisement.
 
+# V636 — une CINQUIEME route POST : l'envoi reel d'une reponse (section 8).
+# Elle n'ecrit rien EN PROPRE dans ce fichier (9c/9d le prouvent toujours) :
+# toute l'ecriture vit dans `p3ai4_envoyer_reponse_pour`, la fonction du
+# coach, reutilisee telle quelle. Son interrupteur est ferme par defaut.
 methodes_ecriture = re.findall(r'@router\.(post|patch|put|delete)\(', source)
 verifier(
-    "9a exactement QUATRE routes POST (campaigns, brouillon, apercu-reponse, medias) "
-    "et UNE PATCH (campaigns/{id}) — toujours aucun PUT/DELETE",
-    methodes_ecriture == ["post", "patch", "post", "post", "post"], str(methodes_ecriture)
+    "9a exactement SIX routes POST (campaigns, brouillon, apercu-reponse, medias, "
+    "ia/ameliorer-texte — un CALCUL, jamais une ecriture, voir phase 6D — et envoyer, "
+    "V636) et UNE PATCH (campaigns/{id}) — toujours aucun PUT/DELETE",
+    methodes_ecriture == ["post", "patch", "post", "post", "post", "post", "post"],
+    str(methodes_ecriture)
 )
 verifier(
     "9b neuf routes GET (3 lecture P4/5 + brouillon 6A + campaigns/{id}, medias, niches 6B "
@@ -468,9 +481,11 @@ verifier(
 appels_delegues = sorted(set(re.findall(r'\b([a-z0-9_]+_pour)\(', source)))
 verifier(
     "9c-bis les SEULES ecritures deleguees (fonctions *_pour importees d'api.server) sont "
-    "exactement ces trois — jamais une quatrieme sans qu'un test le signale ici",
-    appels_delegues == ["p3s3_modifier_campagne_pour", "p3s3_preparer_campagne_pour",
-                        "v595_ajouter_media_pour"],
+    "exactement ces quatre — jamais une cinquieme sans qu'un test le signale ici. "
+    "`p3ai4_envoyer_reponse_pour` (V636) est la quatrieme : l'envoi d'une reponse, "
+    "derriere `AFROBOOSTEUR_RELAIS_ENVOI_ACTIF` ferme par defaut.",
+    appels_delegues == ["p3ai4_envoyer_reponse_pour", "p3s3_modifier_campagne_pour",
+                        "p3s3_preparer_campagne_pour", "v595_ajouter_media_pour"],
     str(appels_delegues)
 )
 

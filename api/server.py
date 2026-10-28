@@ -36385,11 +36385,11 @@ def v608_reessai_permis(trace: dict) -> bool:
     return t.get("send_status") == P3AI4_ENVOYE and t.get("provider_status") == "failed"
 
 
-@api_router.post("/prospect-inbound/{inbound_id}/envoyer-reponse")
-async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
+async def p3ai4_envoyer_reponse_pour(email: str, inbound_id: str, corps: dict,
+                                      membre_externe: str = None) -> dict:
     """Le coach a valide : la reponse part. UN dossier, UNE fois.
 
-    L'ORDRE DES CONTROLES EST L'ESSENTIEL DE CETTE ROUTE. Tout ce qui peut
+    L'ORDRE DES CONTROLES EST L'ESSENTIEL DE CETTE FONCTION. Tout ce qui peut
     refuser refuse AVANT que le verrou ne soit pose et AVANT tout appel
     sortant : proprietaire, brouillon present, contexte a jour, empreinte
     concordante, destinataire resolu, registre STOP. Un refus tardif laisserait
@@ -36399,18 +36399,30 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
     LE VERROU EST POSE AVANT L'APPEL, PAS APRES. C'est ce qui rend le double
     clic inoffensif : la seconde requete trouve la reservation et s'arrete,
     meme si la premiere est encore en vol.
+
+    ⚠️ EXTRAITE DE LA ROUTE `/prospect-inbound/{id}/envoyer-reponse` (V636),
+       ligne pour ligne, pour qu'un SECOND appelant puisse l'utiliser sans
+       qu'aucune de ces regles ne soit reecrite ailleurs : le relais
+       afroboosteur (`api/routes/afroboosteur_relais.py`, section 8). La route
+       du coach, juste en dessous, n'est plus qu'une enveloppe — elle garde sa
+       garde JWT et lit le corps, puis appelle cette fonction. Meme motif que
+       `p3s3_preparer_campagne_pour` / `v595_ajouter_media_pour`, deja partages
+       entre le dashboard et le relais.
+
+    `membre_externe` : L'IDENTITE HUMAINE DU MEMBRE AFROBOOSTEUR, quand l'envoi
+    vient de la-bas. Elle est ENREGISTREE DANS LA TRACE (`approved_by_membre`),
+    jamais substituee a `approved_by` — qui reste le coach proprietaire, car
+    c'est LUI dont la tenance, la bibliotheque de medias et les quotas sont
+    engages. Deux champs, deux questions differentes : « au nom de qui » et
+    « par la main de qui ». Les confondre rendrait le journal illisible le jour
+    ou il faudra repondre a la seconde.
     """
-    email = await _v309_require_coach_or_admin(request)
     dossier = await p3ai_dossier(inbound_id, email)
     message, action = dossier["message"], dossier["action"]
     if not p3ai_est_proprietaire(message, email):
         raise HTTPException(status_code=403,
                             detail="Seul le proprietaire de ce dossier peut y repondre")
 
-    try:
-        corps = await request.json()
-    except (ValueError, TypeError):
-        corps = None
     if not isinstance(corps, dict):
         raise HTTPException(status_code=400, detail="Corps de requete invalide")
     if corps.get("confirme") is not True:
@@ -36514,6 +36526,11 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
         # V625 : TOUS les fichiers partis ; `media` = le premier (lecteurs V620).
         "medias": v625_instantanes(medias_joints, maintenant),
         "approved_at": maintenant, "approved_by": email,
+        # V636 — QUI A CLIQUE, quand ce n'est pas le coach lui-meme. `None`
+        # pour un envoi depuis le dashboard : le champ n'apparait alors que
+        # pour les envois venus d'afroboosteur.com, et sa seule presence suffit
+        # a les distinguer sans relire autre chose.
+        "approved_by_membre": membre_externe or None,
         "send_status": P3AI4_RESERVE, "provider": None, "provider_message_id": None,
         "sent_at": None, "error_code": None, "created_at": maintenant,
     }
@@ -36527,7 +36544,8 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
             repris = await db[P3AI4_COLLECTION].update_one(
                 {"id": cle, "send_status": reprise_de.get("send_status"),
                  "tentative": reprise_de.get("tentative"), "provider_status": reprise_de.get("provider_status")},
-                {"$set": dict({k: trace[k] for k in ("approved_text", "approved_at", "approved_by", "to_email",
+                {"$set": dict({k: trace[k] for k in ("approved_text", "approved_at", "approved_by",
+                                                     "approved_by_membre", "to_email",
                                                      "subject", "intention", "media", "medias")},
                               send_status=P3AI4_RESERVE, tentative=tentative, provider_status=None,
                               provider_message_id=None, error_code=None, sent_at=None, updated_at=maintenant),
@@ -36602,13 +36620,28 @@ async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
             # partenaire : elle ne doit donc pas perimer le brouillon envoye.
             "origine": "envoi",
         })
-    logger.info("%s reponse %s -> %s (%s) par %s", P3AI4_PREFIXE,
+    logger.info("%s reponse %s -> %s (%s) par %s%s", P3AI4_PREFIXE,
                 message.get("recipient_key") or "-", resultat["verdict"],
-                destinataire[:32], email[:24])
+                destinataire[:32], email[:24],
+                (" (membre afroboosteur=%s)" % membre_externe[:40]) if membre_externe else "")
     return {"deja_envoye": False,
             "envoi": await db[P3AI4_COLLECTION].find_one({"id": cle}, {"_id": 0}),
             "statut_commercial": await p3n_statut_courant(message),
             **await p3ai_compteurs(email)}
+
+
+@api_router.post("/prospect-inbound/{inbound_id}/envoyer-reponse")
+async def p3ai4_envoyer_reponse(inbound_id: str, request: Request):
+    """Enveloppe HTTP du coach : garde JWT, lecture du corps, puis
+    `p3ai4_envoyer_reponse_pour` — qui porte TOUTES les regles (V636).
+    Aucun controle n'a ete deplace dans cette enveloppe : si une regle doit
+    changer, elle change a UN seul endroit, pour les deux appelants."""
+    email = await _v309_require_coach_or_admin(request)
+    try:
+        corps = await request.json()
+    except (ValueError, TypeError):
+        corps = None
+    return await p3ai4_envoyer_reponse_pour(email, inbound_id, corps)
 
 
 async def p3n_statut_courant(message: dict) -> str:
@@ -43832,40 +43865,22 @@ def _v633_debit_ok(cle: str) -> bool:
     return True
 
 
-@api_router.post("/ai/enhance-text")
-async def enhance_text_with_ai(request: Request):
+_V633_PROMPTS_PAR_CONTEXTE_DOC = """Contextes connus: offer, pack, legal, seo, faq_answer,
+general, afroboost, expert. Tout contexte inconnu retombe sur "general"."""
+
+
+async def _v633_ameliorer_texte(text: str, context: str, lang: str) -> dict:
+    """LE calcul d'amélioration de texte — extrait, caractère pour caractère
+    (mêmes prompts, même modèle, mêmes `max_tokens`), de `enhance_text_with_ai`
+    lors de l'AJOUT du relais afroboosteur (voir `api/routes/afroboosteur_relais.py`,
+    section IA). AUCUNE divergence de comportement : la route `/ai/enhance-text`
+    appelle désormais cette même fonction, au lieu de porter sa propre copie —
+    c'est le motif "réutiliser EXACTEMENT, jamais une seconde implémentation"
+    déjà suivi pour `v619_fil`/`p3r2_garde_relance` ailleurs dans ce dépôt.
+
+    Ne lève jamais : une panne OpenAI rend `{"fallback": True, ...}` avec le
+    texte ORIGINAL, jamais une exception qui remonterait jusqu'à l'appelant.
     """
-    v17.0 — Assistant rédaction IA générique.
-    Contextes: offer, pack, legal, seo, faq_answer, general
-    V633 : coach/admin authentifié par JWT signé, débit limité, entrées bornées.
-    """
-    # V633 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
-    coach_email = await _v309_require_coach_or_admin(request)
-    if not _v633_debit_ok(coach_email):
-        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
-
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    texte_brut = body.get("text", "")
-    if not isinstance(texte_brut, str):
-        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
-    text = texte_brut.strip()
-    context = body.get("context") or body.get("style") or "general"
-    lang = body.get("lang", "fr")
-
-    if not text:
-        raise HTTPException(status_code=400, detail="Le texte est requis")
-    if len(text) > _V633_TEXTE_MAX:
-        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
-    if not isinstance(context, str) or len(context) > 40:
-        raise HTTPException(status_code=400, detail="Contexte invalide")
-    if not isinstance(lang, str) or not _V633_LANG.match(lang):
-        raise HTTPException(status_code=400, detail="Langue invalide")
-
     try:
         from openai import OpenAI
 
@@ -43951,6 +43966,43 @@ Réponds UNIQUEMENT avec le prompt système généré."""
     except Exception as e:
         logger.error(f"[ENHANCE-TEXT] Erreur: {str(e)}")
         return {"enhanced_text": text, "original": text, "context": context, "fallback": True, "error": str(e)}
+
+
+@api_router.post("/ai/enhance-text")
+async def enhance_text_with_ai(request: Request):
+    """
+    v17.0 — Assistant rédaction IA générique.
+    Contextes: offer, pack, legal, seo, faq_answer, general
+    V633 : coach/admin authentifié par JWT signé, débit limité, entrées bornées.
+    """
+    # V633 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
+    coach_email = await _v309_require_coach_or_admin(request)
+    if not _v633_debit_ok(coach_email):
+        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    texte_brut = body.get("text", "")
+    if not isinstance(texte_brut, str):
+        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
+    text = texte_brut.strip()
+    context = body.get("context") or body.get("style") or "general"
+    lang = body.get("lang", "fr")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Le texte est requis")
+    if len(text) > _V633_TEXTE_MAX:
+        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
+    if not isinstance(context, str) or len(context) > 40:
+        raise HTTPException(status_code=400, detail="Contexte invalide")
+    if not isinstance(lang, str) or not _V633_LANG.match(lang):
+        raise HTTPException(status_code=400, detail="Langue invalide")
+
+    return await _v633_ameliorer_texte(text, context, lang)
 
 
 # --- Intelligent Chat Entry Point ---

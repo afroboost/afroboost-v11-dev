@@ -601,8 +601,28 @@ verifier(
          if __import__("re").search(r'\.(insert_one|insert_many|update_one|update_many)\(', l)]
     )
 )
-verifier("7c le fichier documente explicitement que l'envoi n'est pas cable",
-         "N'EST PAS CÂBLÉ" in source or "deliberement PAS" in source)
+# V636 — CE TEST DISAIT L'INVERSE, ET IL PASSAIT ENCORE POUR UNE MAUVAISE
+# RAISON. Il cherchait « deliberement PAS », une chaine que le nouveau
+# docstring contient toujours… parce qu'il CITE l'ancienne reserve pour dire
+# qu'elle est levee. Un test qui passe sur une citation ne prouve plus rien.
+# Ce qu'il faut verrouiller maintenant n'est plus « l'envoi n'existe pas »,
+# mais « l'envoi existe et reste ferme par defaut » : c'est la garantie qui
+# protege reellement, et elle se mesure sur le CODE, pas sur la prose.
+verifier("7c l'envoi depuis le relais existe, et son interrupteur est ferme par defaut",
+         "_envoi_actif()" in source
+         and 'AFROBOOSTEUR_RELAIS_ENVOI_ACTIF' in source
+         and "p3ai4_envoyer_reponse_pour" in source)
+# ⚠️ CE TEST A D'ABORD ETE ECRIT TROP LARGE, ET IL A EU RAISON DE TOMBER.
+# Il refusait aussi `p3ai4_destinataire(` et `p3ai4_cle_envoi(` — or la route
+# d'APERCU (phase 6A, section 4) les appelle LEGITIMEMENT depuis toujours,
+# pour dire si un envoi POURRAIT partir sans rien reserver. Les interdire
+# aurait condamne du code anterieur et sain. Ce qui doit rester absent, c'est
+# le FOURNISSEUR : si ce fichier instanciait `P3AI4FournisseurReponse`, il
+# aurait son propre chemin d'envoi, et les regles divergeraient le jour d'un
+# durcissement.
+verifier("7c-bis l'envoi reutilise la fonction du coach, sans fournisseur a lui",
+         "p3ai4_envoyer_reponse_pour(" in source
+         and "P3AI4FournisseurReponse" not in source)
 
 os.environ.pop("AFROBOOSTEUR_RELAY_SECRET", None)
 os.environ.pop("AFROBOOSTEUR_RELAY_COACH_ID", None)

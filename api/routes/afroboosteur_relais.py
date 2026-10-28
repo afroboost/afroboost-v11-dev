@@ -30,13 +30,17 @@ coach (`p3ai_dossier`, `v625_empreinte`, `p3ai4_refuse_par_stop`,
 `p3n_contexte_obsolete`, `p3ai_sujets_sensibles`...), jamais une réécriture
 parallèle qui pourrait diverger.
 
-⚠️ L'ENVOI RÉEL N'EST PAS CÂBLÉ ICI. `apercu-reponse` valide tout ce qu'un
-envoi validerait (brouillon présent, empreinte à jour, destinataire joignable,
-registre STOP, contexte non périmé) mais NE RÉSERVE NI N'ENVOIE RIEN — aucune
-ligne n'est écrite dans `prospect_reply_sends`. La réservation et l'appel au
-fournisseur, qui existent déjà et fonctionnent pour le coach, ne sont
-délibérément PAS repris ici tant qu'un GO explicite et séparé n'autorise pas
-l'envoi réel depuis ce relais.
+⚠️ L'ENVOI RÉEL EST CÂBLÉ DEPUIS V636 — ET FERMÉ PAR TROIS VERROUS. La réserve
+écrite ici depuis la phase 6A (« la réservation et l'appel au fournisseur […]
+ne sont délibérément PAS repris ici tant qu'un GO explicite et séparé
+n'autorise pas l'envoi réel ») a été levée sur GO du Président. `apercu-reponse`
+reste ce qu'elle était — une validation qui ne réserve ni n'envoie rien — et la
+section 8 ajoute, À CÔTÉ, une route d'envoi qui réutilise
+`p3ai4_envoyer_reponse_pour` (api/server.py), la MÊME fonction que la route du
+coach. Trois verrous indépendants, tous fermés par défaut, doivent être ouverts
+pour qu'un seul e-mail parte : `AFROBOOSTEUR_RELAIS_ENVOI_ACTIF` (ici),
+`P3_REPONSE_ACTIF` et `P3_REPONSE_ENVOI_REEL` (drapeaux en base, côté coach).
+Voir l'en-tête de la section 8.
 
 ──────────────────────── L'AUTHENTIFICATION : SIGNATURE LIÉE À LA REQUÊTE ────────────────────────
 
@@ -134,6 +138,14 @@ def _fil_actif() -> bool:
 
 def _relances_actif() -> bool:
     return _interrupteur_actif("AFROBOOSTEUR_RELAIS_RELANCES_ACTIF")
+
+
+def _ia_actif() -> bool:
+    return _interrupteur_actif("AFROBOOSTEUR_RELAIS_IA_ACTIF")
+
+
+def _envoi_actif() -> bool:
+    return _interrupteur_actif("AFROBOOSTEUR_RELAIS_ENVOI_ACTIF")
 
 
 def _empreinte_corps(corps_brut: bytes) -> str:
@@ -467,6 +479,117 @@ async def relais_lister_conversations(request: Request):
 #    — voir l'avertissement en tete de module.
 # -----------------------------------------------------------------------------
 
+async def _medias_valides_du_coach(valeurs) -> list:
+    """V636 — Les medias que CE canal accepte de joindre a une reponse.
+
+    Trois refus AVANT toute resolution, chacun pour une raison differente :
+
+      * forme inattendue (pas une liste, un element qui n'est pas un objet, ou
+        un objet qui porte autre chose que `media_id`) -> 400. En particulier,
+        `fichier_url` est refuse NOMMEMENT : c'est la forme qui designe un
+        fichier deja televerse SUR afroboost.com, et un membre afroboosteur
+        n'en possede aucun — la lui laisser reviendrait a lui laisser designer
+        le fichier d'un autre ;
+      * trop de fichiers -> 400, avec la MEME borne que le coach
+        (`V625_MEDIAS_MAX`), jamais une seconde valeur qui pourrait diverger ;
+      * media non `validee` -> 400. C'est la borne PROPRE a ce canal : elle
+        reprend celle du partage de campagne (`p3s3_medias_partages_valides`),
+        pas celle de la reponse du coach (qui accepte tout sauf `archivee`).
+
+    Puis `v625_resoudre_medias` — la MEME fonction que la route du coach — fait
+    le reste : existence, appartenance au coach configure, adresse utilisable,
+    miniature, doublons. Aucune de ces regles n'est reecrite ici.
+    """
+    from api.server import V595_MEDIAS, V625_MEDIAS_MAX, v625_resoudre_medias
+
+    if valeurs is None:
+        valeurs = []
+    if not isinstance(valeurs, list):
+        raise HTTPException(status_code=400, detail="Liste de médias invalide")
+    if len(valeurs) > V625_MEDIAS_MAX:
+        raise HTTPException(status_code=400,
+                            detail="%d fichiers au maximum par réponse" % V625_MEDIAS_MAX)
+
+    references = []
+    for v in valeurs:
+        if not isinstance(v, dict):
+            raise HTTPException(status_code=400, detail="Média invalide")
+        inconnues = set(v.keys()) - {"media_id"}
+        if inconnues:
+            raise HTTPException(
+                status_code=400,
+                detail="Seul `media_id` est accepté depuis ce relais — "
+                       "un fichier d'afroboost.com ne peut pas y être désigné directement.")
+        media_id = str(v.get("media_id") or "").strip()[:64]
+        if not media_id:
+            raise HTTPException(status_code=400, detail="`media_id` requis")
+        ligne = await db[V595_MEDIAS].find_one(
+            dict(_portee(), id=media_id), {"_id": 0, "id": 1, "statut": 1})
+        if not ligne:
+            raise HTTPException(status_code=400, detail="Média introuvable dans la bibliothèque")
+        if ligne.get("statut") != "validee":
+            raise HTTPException(
+                status_code=400,
+                detail="Ce média n'est pas validé : seuls les médias validés peuvent être "
+                       "joints à une réponse depuis afroboosteur.com.")
+        references.append({"media_id": media_id})
+
+    return await v625_resoudre_medias(references, _coach_id_configure())
+
+
+async def _refuser_medias_plus_valides(inbound_id: str) -> None:
+    """V636b — LA MEME BORNE, MAIS AU MOMENT QUI COMPTE : L'ENVOI.
+
+    LE DEFAUT QUE CECI CORRIGE, RELEVE A LA RELECTURE DU LOT. Exiger `validee`
+    a l'ECRITURE du brouillon (`_medias_valides_du_coach`) empeche un membre
+    afroboosteur de joindre un media non valide. Cela ne dit RIEN de ce qui
+    part reellement, pour deux raisons :
+
+      1. LE BROUILLON EST PARTAGE. Le coach attache ses medias depuis SON
+         tableau de bord, dont la route accepte tout sauf `archivee`
+         (`en_cours`, `a_verifier` compris). Un membre cliquant « Envoyer »
+         expediait alors un media que ce canal avait justement refuse.
+      2. L'INSTANTANE NE VIEILLIT PAS. Un media archive APRES avoir ete
+         attache reste dans le brouillon tel quel — c'est voulu pour le coach
+         (« changer ou supprimer le media plus tard ne le touche pas »,
+         V620), mais pour un tiers qui envoie au nom du coach, cela revient a
+         expedier un fichier retire entre-temps.
+
+    On relit donc la bibliotheque JUSTE AVANT l'envoi, et on refuse en 409
+    avec un motif lisible. Rien n'est reserve, rien ne part, et le coach garde
+    la possibilite d'envoyer lui-meme : son chemin n'est pas touche.
+
+    ⚠️ LIMITE ASSUMEE, A CONNAITRE. Un media que le coach a joint depuis ses
+       FICHIERS televerses (`origine: "fichier"`, hors mediatheque) fait aussi
+       refuser l'envoi par ce canal : il n'appartient a aucune ligne de
+       `prospection_medias`, donc rien ne permet de verifier qu'il est valide.
+       C'est le prix de la verification ; le message le dit explicitement pour
+       que personne ne cherche une panne.
+    """
+    from api.server import P3AI_BROUILLONS, V595_MEDIAS, v625_medias
+
+    brouillon = await db[P3AI_BROUILLONS].find_one({"inbound_id": inbound_id}, {"_id": 0})
+    if not brouillon:
+        return   # l'absence de brouillon est refusee plus loin, par la fonction d'envoi
+    for m in v625_medias(brouillon):
+        if not isinstance(m, dict):
+            raise HTTPException(status_code=409, detail="Média joint illisible — retirez-le avant l'envoi.")
+        media_id = str(m.get("media_id") or "").strip()
+        if m.get("origine") != "bibliotheque" or not media_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Un fichier joint à ce brouillon ne provient pas de la médiathèque : "
+                       "il ne peut pas être envoyé depuis afroboosteur.com. Retirez-le, ou "
+                       "demandez au coach d'envoyer cette réponse lui-même.")
+        ligne = await db[V595_MEDIAS].find_one(
+            dict(_portee(), id=media_id), {"_id": 0, "statut": 1})
+        if not ligne or ligne.get("statut") != "validee":
+            raise HTTPException(
+                status_code=409,
+                detail="Un média joint à ce brouillon n'est plus validé dans la médiathèque "
+                       "(retiré, archivé ou en cours de vérification). Retirez-le, puis réessayez.")
+
+
 async def _message_de_la_portee(inbound_id: str) -> dict:
     """Le message, dans la portee du coach configure. 404 sinon — jamais un
     indice sur l'existence d'un message hors portee."""
@@ -529,15 +652,43 @@ async def relais_enregistrer_brouillon(inbound_id: str, request: Request):
     """Enregistre le TEXTE d'une reponse — jamais le media, jamais l'envoi.
 
     ─────────────────────────────────────────────────────────────────────────────
-    LA SEULE ECRITURE MONGO DE CE FICHIER, ET DELIBEREMENT ETROITE
+    L'ECRITURE MONGO DU BROUILLON, ET DELIBEREMENT ETROITE
 
     Reprend `p3ai_modifier_brouillon` (meme troncature P3AI_REPONSE_MAX, memes
     `motifs_validation`/`validation_requise` recalcules, meme `upsert=True` qui
     permet d'ECRIRE le tout premier brouillon d'une reponse — pas seulement
-    corriger un brouillon ne de l'IA) — a UNE difference pres, delibere pour ce
-    canal : AUCUN champ media n'est jamais touche. `corps.get("medias")` et
-    `corps.get("media")` ne sont meme pas lus : un brouillon deja joint d'un
-    fichier le reste strictement tel quel apres un passage par ce relais.
+    corriger un brouillon ne de l'IA).
+
+    ⚠️ V636 — LES MEDIAS DEVIENNENT JOIGNABLES DEPUIS CE RELAIS, ET C'EST UN
+       CHANGEMENT ASSUME. La version precedente de cette route ne lisait NI
+       `medias` NI `media` : un brouillon deja joint d'un fichier restait
+       strictement tel quel apres un passage par le relais. Le President a
+       demande que ses membres autorises puissent repondre AVEC les medias
+       deja presents dans la bibliotheque — ce qui exige d'ecrire ce champ.
+
+       TROIS BORNES, QUI N'EXISTENT PAS POUR LE COACH LUI-MEME :
+
+       1. PAR IDENTIFIANT DE BIBLIOTHEQUE UNIQUEMENT. `{"media_id": "..."}`
+          et rien d'autre : un `fichier_url` (`/api/files/...`) est REFUSE ici,
+          parce qu'un membre afroboosteur n'a, par construction, aucun fichier
+          televerse a lui sur afroboost.com — accepter cette forme reviendrait
+          a lui laisser designer les fichiers d'un AUTRE.
+       2. `validee` EXIGE. `v620_resoudre_media` accepte tout statut sauf
+          `archivee` (donc `en_cours` et `a_verifier` aussi) : c'est le bon
+          compromis pour le coach, qui relit sa propre bibliotheque. Pour ce
+          canal on retient la MEME frontiere que le partage de campagne
+          (`p3s3_medias_partages_valides`) : seul un media que le coach a
+          explicitement valide peut partir vers un partenaire par la main d'un
+          tiers.
+       3. LA RESOLUTION RESTE CELLE DU COACH CONFIGURE. `v625_resoudre_medias`
+          est appelee avec `_coach_id_configure()`, jamais avec l'identite du
+          membre : la bibliotheque engagee est celle du coach, et un
+          identifiant qui ne lui appartient pas est refuse par la fonction
+          elle-meme, sans que ce fichier ait a le reverifier.
+
+       Cle ABSENTE = champ inchange (meme semantique que la route du coach) ;
+       liste VIDE = retirer les medias. `media` (singulier) est ecrit en meme
+       temps, comme le fait la route du coach, pour les lecteurs V620.
 
     ⚠️ JAMAIS D'ECRASEMENT SILENCIEUX. Le brouillon EXISTANT (s'il y en a un)
     est fourni avec une empreinte (`draft_hash`, GET .../brouillon) : enregistrer
@@ -573,6 +724,14 @@ async def relais_enregistrer_brouillon(inbound_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Un brouillon vide ne se garde pas")
     empreinte_recue = str(corps.get("draft_hash") or "").strip()
 
+    # V636 — LES MEDIAS, RESOLUS AVANT TOUTE ECRITURE. Voir les trois bornes du
+    # docstring. Tout refus (identifiant inconnu, media non valide, forme
+    # inattendue) part en 400 AVANT que quoi que ce soit ne soit ecrit : un
+    # brouillon ne doit jamais se retrouver a moitie modifie.
+    champ_media = None
+    if "medias" in corps:
+        champ_media = await _medias_valides_du_coach(corps.get("medias"))
+
     brouillon_actuel = await db[P3AI_BROUILLONS].find_one(
         {"inbound_id": message["id"]}, {"_id": 0})
 
@@ -597,16 +756,22 @@ async def relais_enregistrer_brouillon(inbound_id: str, request: Request):
     maintenant = datetime.now(timezone.utc).isoformat()
     membre = (request.headers.get("X-Afroboosteur-Membre", "") or "").strip()[:200]
     texte_tronque = texte[:P3AI_REPONSE_MAX]
+    a_ecrire = {"reponse_proposee": texte_tronque,
+                "motifs_validation": p3ai_sujets_sensibles(texte_tronque),
+                "validation_requise": bool(p3ai_sujets_sensibles(texte_tronque)),
+                "edite_le": maintenant,
+                # INFORMATIF, comme X-Afroboosteur-Membre partout ailleurs dans ce
+                # fichier — jamais une identite verifiee par afroboost.com.
+                "edite_par": "afroboosteur:%s" % (membre or _coach_id_configure()),
+                "updated_at": maintenant}
+    if champ_media is not None:
+        # MEMES DEUX CHAMPS QUE LA ROUTE DU COACH : `medias` fait foi,
+        # `media` = le premier, pour tout lecteur V620 reste en place.
+        a_ecrire["medias"] = champ_media
+        a_ecrire["media"] = champ_media[0] if champ_media else None
     await db[P3AI_BROUILLONS].update_one(
         {"inbound_id": message["id"]},
-        {"$set": {"reponse_proposee": texte_tronque,
-                  "motifs_validation": p3ai_sujets_sensibles(texte_tronque),
-                  "validation_requise": bool(p3ai_sujets_sensibles(texte_tronque)),
-                  "edite_le": maintenant,
-                  # INFORMATIF, comme X-Afroboosteur-Membre partout ailleurs dans ce
-                  # fichier — jamais une identite verifiee par afroboost.com.
-                  "edite_par": "afroboosteur:%s" % (membre or _coach_id_configure()),
-                  "updated_at": maintenant},
+        {"$set": a_ecrire,
          "$setOnInsert": {"inbound_id": message["id"], "origine": "coach",
                           "created_at": maintenant}},
         upsert=True)
@@ -1069,3 +1234,181 @@ async def relais_relances_campagne(campaign_id: str, request: Request):
         "total": total, "returned": len(lignes), "limit": limite, "offset": depart,
         "actions": lignes,
     }
+
+
+# -----------------------------------------------------------------------------
+# 7. PHASE 6D — AIDE IA POUR RÉDIGER UNE RÉPONSE : UNE SEULE ROUTE, UN SEUL
+#    CALCUL, AUCUNE ÉCRITURE. INTERRUPTEUR SÉPARÉ, FERMÉ PAR DÉFAUT — MÊME
+#    CONVENTION QUE LE FIL ET LES RELANCES (SECTION 6 CI-DESSUS).
+#
+# POURQUOI UNE ROUTE DE RELAIS DÉDIÉE, PAS UN RELAIS GÉNÉRIQUE VERS
+# `/ai/enhance-text`. Cette route-là exige un JWT coach (`_v309_require_coach_
+# or_admin`) — une notion que ce relais n'a pas : son secret HMAC agit POUR le
+# coach configuré, jamais pour un membre afroboosteur précis (même raison que
+# `/api/coach/upload-asset` plus haut, voir section 5). Reconstruire la MÊME
+# logique derrière une porte différente serait une divergence ; l'appeler
+# directement depuis ce fichier, EN RÉUTILISANT sa fonction de calcul
+# (`_v633_ameliorer_texte`, extraite lors de ce lot sans changer son
+# comportement), ferme ce trou sans dupliquer les prompts ni le modèle.
+#
+# AUCUNE ÉCRITURE MONGO DANS CETTE SECTION. Le texte amélioré est rendu à
+# l'appelant ; c'est `POST .../brouillon` (section 4) qui l'enregistre, si le
+# membre choisit de le garder — deux gestes distincts, comme pour le coach
+# (le bouton "Améliorer" du dashboard n'enregistre rien non plus tout seul).
+#
+# LE MÊME BUDGET QUE LE COACH, PAS UN SUPPLÉMENTAIRE. `_v633_debit_ok` est
+# RÉUTILISÉE telle quelle, avec une clé préfixée `relais:` — un membre
+# afroboosteur et le coach lui-même ne partagent donc pas le même compteur
+# (éviter qu'un pic d'un côté referme l'assistant de l'autre), mais aucun des
+# deux ne peut consommer plus que les bornes déjà fixées par V633
+# (20/minute, 300/jour). Le secret HMAC agit pour LE coach configuré : sans
+# ce préfixe, un seul compteur partagé aurait pu être vidé par l'un des deux
+# canaux au détriment de l'autre.
+#
+# ENTRÉES BORNÉES À L'IDENTIQUE DE V633 (`_V633_TEXTE_MAX`, `_V633_LANG`) —
+# jamais une seconde borne qui pourrait diverger de celle déjà prouvée par le
+# dashboard coach.
+# -----------------------------------------------------------------------------
+
+_V633_CONTEXTES_CONNUS = (
+    "offer", "pack", "legal", "seo", "faq_answer", "general", "afroboost", "expert",
+)
+
+
+@router.post("/api/afroboosteur-relais/ia/ameliorer-texte")
+async def relais_ameliorer_texte(request: Request):
+    """Améliore/corrige/reformule un texte de réponse — AUCUNE écriture, AUCUN
+    envoi. Reprend `_v633_ameliorer_texte` (api/server.py), la MÊME fonction
+    que `/ai/enhance-text` appelle pour le coach — mêmes prompts, même modèle,
+    jamais une seconde implémentation.
+    """
+    membre = await _garde(request)
+    if not _ia_actif():
+        raise HTTPException(status_code=503, detail="Assistance IA non activée")
+
+    from api.server import _v633_ameliorer_texte, _v633_debit_ok, _V633_LANG, _V633_TEXTE_MAX
+
+    cle_debit = "relais:%s" % (membre or _coach_id_configure())
+    if not _v633_debit_ok(cle_debit):
+        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+
+    texte_brut = corps.get("text", "")
+    if not isinstance(texte_brut, str):
+        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
+    texte = texte_brut.strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Le texte est requis")
+    if len(texte) > _V633_TEXTE_MAX:
+        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
+
+    contexte = corps.get("context") or "general"
+    if not isinstance(contexte, str) or contexte not in _V633_CONTEXTES_CONNUS:
+        contexte = "general"
+
+    langue = corps.get("lang", "fr")
+    if not isinstance(langue, str) or not _V633_LANG.match(langue):
+        langue = "fr"
+
+    resultat = await _v633_ameliorer_texte(texte, contexte, langue)
+    logger.info("%s amelioration IA demandee par membre afroboosteur=%s (contexte=%s)",
+               PREFIXE, membre or "(non precise)", contexte)
+    return resultat
+
+# -----------------------------------------------------------------------------
+# 8. V636 — L'ENVOI REEL D'UNE REPONSE, DEPUIS AFROBOOSTEUR.COM
+#
+# ⚠️ CECI LEVE LA RESERVE ECRITE EN TETE DE CE MODULE DEPUIS LA PHASE 6A.
+#    Elle disait : « La reservation et l'appel au fournisseur, qui existent
+#    deja et fonctionnent pour le coach, ne sont deliberement PAS repris ici
+#    tant qu'un GO explicite et separe n'autorise pas l'envoi reel depuis ce
+#    relais. » Ce GO a ete donne. La reserve est donc levee — mais remplacee
+#    par TROIS verrous independants, dont aucun n'est ouvert par ce commit :
+#
+#      1. `AFROBOOSTEUR_RELAIS_ENVOI_ACTIF` (ici, variable d'environnement) —
+#         ferme par defaut, comme FIL_ACTIF et RELANCES_ACTIF. Ferme, cette
+#         route repond 503 et ne touche RIEN ;
+#      2. `P3_REPONSE_ACTIF` (drapeau EN BASE, defaut False) ;
+#      3. `P3_REPONSE_ENVOI_REEL` (drapeau EN BASE, defaut False).
+#
+#    Les deux derniers sont ceux du coach, lus a CHAQUE envoi dans
+#    `p3ai4_envoyer_reponse_pour` : ils ferment l'envoi reel en une seconde
+#    depuis le tableau de bord, pour le coach ET pour ce relais, sans
+#    redeploiement. Les trois doivent etre ouverts pour qu'un seul e-mail
+#    parte. Tant qu'ils ne le sont pas, un appel ici REUSSIT mais le
+#    fournisseur est court-circuite (`ENVOI_NON_AUTORISE`) — la trace est
+#    posee, l'e-mail ne part pas.
+#
+# AUCUNE REGLE N'EST REECRITE ICI. Proprietaire, brouillon present, champ
+# « [A COMPLETER] », empreinte concordante, idempotence, contexte perime,
+# destinataire resolu, registre STOP, corbeille V627 : tout cela vit dans
+# `p3ai4_envoyer_reponse_pour` (api/server.py), la MEME fonction que la route
+# du coach appelle — extraite pour ce lot, sans qu'une seule de ses lignes ne
+# change. Un durcissement futur profitera aux deux appelants le meme jour.
+#
+# QUI A ENVOYE, ET AU NOM DE QUI. `approved_by` reste le coach configure
+# (c'est sa tenance, sa bibliotheque, ses quotas) ; `approved_by_membre` porte
+# l'identite du membre afroboosteur transmise dans `X-Afroboosteur-Membre`.
+# Cette en-tete reste INFORMATIVE — elle n'autorise rien : l'autorite a deja
+# tranche cote afroboosteur.com (le droit « repondre aux partenaires »,
+# reverifie a chaque requete) AVANT que cette route ne soit appelee.
+# -----------------------------------------------------------------------------
+
+
+@router.post("/api/afroboosteur-relais/conversations/{inbound_id}/envoyer")
+async def relais_envoyer_reponse(inbound_id: str, request: Request):
+    """Envoie la reponse preparee — reservation, fournisseur, trace, note.
+
+    Corps attendu : `{"draft_hash": "...", "confirme": true}` — exactement
+    celui de la route du coach, a qui le corps est transmis tel quel.
+
+    Rend ce que rend la route du coach : `{"deja_envoye": bool, "envoi": {...},
+    "statut_commercial": "..."}`. Un rejeu rend `deja_envoye: true` et un 200,
+    jamais une erreur : c'est ce qui rend le double clic inoffensif.
+    """
+    membre = await _garde(request)
+    if not _envoi_actif():
+        raise HTTPException(status_code=503, detail="Envoi depuis afroboosteur non activé")
+
+    from api.server import p3ai4_envoyer_reponse_pour
+
+    # LA PORTEE D'ABORD : un dossier hors du coach configure n'existe pas pour
+    # ce relais (404), avant meme que la fonction d'envoi ne soit appelee.
+    message = await _message_de_la_portee(inbound_id)
+
+    # V636b — LES MEDIAS SONT REVERIFIES ICI, AVANT TOUTE RESERVATION. Exiger
+    # `validee` seulement a l'ecriture du brouillon ne disait rien de ce qui
+    # part : le coach peut attacher un media `en_cours` depuis son propre
+    # tableau de bord, et un media archive apres coup reste dans l'instantane.
+    # Voir `_refuser_medias_plus_valides`.
+    await _refuser_medias_plus_valides(message["id"])
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+
+    resultat = await p3ai4_envoyer_reponse_pour(
+        _coach_id_configure(), message["id"], corps, membre_externe=membre or None)
+
+    # `compteurs` et tout autre champ propre au tableau de bord du coach ne
+    # traversent pas : ce relais ne rend que ce dont l'ecran afroboosteur a
+    # besoin pour dire ce qui s'est passe.
+    envoi = resultat.get("envoi") or {}
+    return {
+        "deja_envoye": bool(resultat.get("deja_envoye")),
+        "statut_commercial": resultat.get("statut_commercial"),
+        "envoi": {cle: envoi.get(cle) for cle in (
+            "id", "send_status", "provider_status", "sent_at", "error_code",
+            "subject", "approved_at", "approved_by_membre", "medias", "media",
+        )},
+    }
+
