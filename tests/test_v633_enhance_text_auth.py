@@ -240,8 +240,15 @@ debut = SRC.index('@api_router.post("/ai/enhance-text")')
 corps_route = SRC[debut:SRC.index("@api_router.post", debut + 10)]
 i_garde = corps_route.find("_v309_require_coach_or_admin(request)")
 i_json = corps_route.find("await request.json()")
-i_openai = corps_route.find("from openai import OpenAI")
-verifier("6a la garde passe AVANT la lecture du corps et AVANT OpenAI", -1 < i_garde < i_json < i_openai)
+# PHASE 6D — le calcul OpenAI (prompts, modele, appel) a ete EXTRAIT dans
+# `_v633_ameliorer_texte` (fonction pure, reutilisee aussi par le relais
+# afroboosteur), pour ne jamais en porter une seconde implementation. La
+# route elle-meme n'importe donc plus `openai` directement : elle APPELLE la
+# fonction extraite, apres la garde et la lecture du corps — c'est cet appel
+# qui doit venir en dernier, pas la chaine d'import qui a migre avec le calcul.
+i_appel_calcul = corps_route.find("_v633_ameliorer_texte(")
+verifier("6a la garde passe AVANT la lecture du corps et AVANT le calcul IA",
+         -1 < i_garde < i_json < i_appel_calcul)
 verifier("6b aucune identité lue dans X-User-Email par cette route", "X-User-Email" not in corps_route.split('"""', 2)[-1])
 verifier("6c aucune sortie réseau pendant le banc", not _TENTATIVES, str(_TENTATIVES))
 

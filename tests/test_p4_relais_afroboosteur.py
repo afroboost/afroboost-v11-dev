@@ -436,12 +436,20 @@ print("\n9. ECRITURE MONGO — reevaluee une troisieme fois (phase 6B : campagne
 # donc PAS — d'ou le test 9c-bis, qui verrouille la liste EXACTE des
 # fonctions d'ecriture deleguees, pour qu'une quatrieme ne s'ajoute jamais
 # sans qu'un test echoue ici pour le signaler.
+#
+# PHASE 6D ajoute une SIXIEME methode d'ecriture HTTP (POST
+# ia/ameliorer-texte) qui n'ECRIT RIEN EN BASE — c'est un CALCUL (le texte
+# ameliore est rendu, jamais enregistre d'ici). Elle compte donc dans 9a
+# (la methode HTTP est bien POST), mais JAMAIS dans 9c/9c-bis (aucune
+# ecriture Mongo litterale, aucune fonction `*_pour` deleguee) : voir
+# tests/test_p6d_relais_ia.py section 5, qui verrouille ce point precisement.
 
 methodes_ecriture = re.findall(r'@router\.(post|patch|put|delete)\(', source)
 verifier(
-    "9a exactement QUATRE routes POST (campaigns, brouillon, apercu-reponse, medias) "
+    "9a exactement CINQ routes POST (campaigns, brouillon, apercu-reponse, medias, "
+    "ia/ameliorer-texte — cette derniere un CALCUL, jamais une ecriture, voir phase 6D) "
     "et UNE PATCH (campaigns/{id}) — toujours aucun PUT/DELETE",
-    methodes_ecriture == ["post", "patch", "post", "post", "post"], str(methodes_ecriture)
+    methodes_ecriture == ["post", "patch", "post", "post", "post", "post"], str(methodes_ecriture)
 )
 verifier(
     "9b neuf routes GET (3 lecture P4/5 + brouillon 6A + campaigns/{id}, medias, niches 6B "

@@ -136,6 +136,10 @@ def _relances_actif() -> bool:
     return _interrupteur_actif("AFROBOOSTEUR_RELAIS_RELANCES_ACTIF")
 
 
+def _ia_actif() -> bool:
+    return _interrupteur_actif("AFROBOOSTEUR_RELAIS_IA_ACTIF")
+
+
 def _empreinte_corps(corps_brut: bytes) -> str:
     """SHA-256 hexadecimal du CORPS BRUT exact — `b""` pour un GET (constante
     bien connue, `e3b0c4...`), les octets exacts envoyes pour un POST. Jamais
@@ -1069,3 +1073,89 @@ async def relais_relances_campagne(campaign_id: str, request: Request):
         "total": total, "returned": len(lignes), "limit": limite, "offset": depart,
         "actions": lignes,
     }
+
+
+# -----------------------------------------------------------------------------
+# 7. PHASE 6D — AIDE IA POUR RÉDIGER UNE RÉPONSE : UNE SEULE ROUTE, UN SEUL
+#    CALCUL, AUCUNE ÉCRITURE. INTERRUPTEUR SÉPARÉ, FERMÉ PAR DÉFAUT — MÊME
+#    CONVENTION QUE LE FIL ET LES RELANCES (SECTION 6 CI-DESSUS).
+#
+# POURQUOI UNE ROUTE DE RELAIS DÉDIÉE, PAS UN RELAIS GÉNÉRIQUE VERS
+# `/ai/enhance-text`. Cette route-là exige un JWT coach (`_v309_require_coach_
+# or_admin`) — une notion que ce relais n'a pas : son secret HMAC agit POUR le
+# coach configuré, jamais pour un membre afroboosteur précis (même raison que
+# `/api/coach/upload-asset` plus haut, voir section 5). Reconstruire la MÊME
+# logique derrière une porte différente serait une divergence ; l'appeler
+# directement depuis ce fichier, EN RÉUTILISANT sa fonction de calcul
+# (`_v633_ameliorer_texte`, extraite lors de ce lot sans changer son
+# comportement), ferme ce trou sans dupliquer les prompts ni le modèle.
+#
+# AUCUNE ÉCRITURE MONGO DANS CETTE SECTION. Le texte amélioré est rendu à
+# l'appelant ; c'est `POST .../brouillon` (section 4) qui l'enregistre, si le
+# membre choisit de le garder — deux gestes distincts, comme pour le coach
+# (le bouton "Améliorer" du dashboard n'enregistre rien non plus tout seul).
+#
+# LE MÊME BUDGET QUE LE COACH, PAS UN SUPPLÉMENTAIRE. `_v633_debit_ok` est
+# RÉUTILISÉE telle quelle, avec une clé préfixée `relais:` — un membre
+# afroboosteur et le coach lui-même ne partagent donc pas le même compteur
+# (éviter qu'un pic d'un côté referme l'assistant de l'autre), mais aucun des
+# deux ne peut consommer plus que les bornes déjà fixées par V633
+# (20/minute, 300/jour). Le secret HMAC agit pour LE coach configuré : sans
+# ce préfixe, un seul compteur partagé aurait pu être vidé par l'un des deux
+# canaux au détriment de l'autre.
+#
+# ENTRÉES BORNÉES À L'IDENTIQUE DE V633 (`_V633_TEXTE_MAX`, `_V633_LANG`) —
+# jamais une seconde borne qui pourrait diverger de celle déjà prouvée par le
+# dashboard coach.
+# -----------------------------------------------------------------------------
+
+_V633_CONTEXTES_CONNUS = (
+    "offer", "pack", "legal", "seo", "faq_answer", "general", "afroboost", "expert",
+)
+
+
+@router.post("/api/afroboosteur-relais/ia/ameliorer-texte")
+async def relais_ameliorer_texte(request: Request):
+    """Améliore/corrige/reformule un texte de réponse — AUCUNE écriture, AUCUN
+    envoi. Reprend `_v633_ameliorer_texte` (api/server.py), la MÊME fonction
+    que `/ai/enhance-text` appelle pour le coach — mêmes prompts, même modèle,
+    jamais une seconde implémentation.
+    """
+    membre = await _garde(request)
+    if not _ia_actif():
+        raise HTTPException(status_code=503, detail="Assistance IA non activée")
+
+    from api.server import _v633_ameliorer_texte, _v633_debit_ok, _V633_LANG, _V633_TEXTE_MAX
+
+    cle_debit = "relais:%s" % (membre or _coach_id_configure())
+    if not _v633_debit_ok(cle_debit):
+        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
+
+    try:
+        corps = await request.json()
+    except Exception:
+        corps = {}
+    if not isinstance(corps, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+
+    texte_brut = corps.get("text", "")
+    if not isinstance(texte_brut, str):
+        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
+    texte = texte_brut.strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Le texte est requis")
+    if len(texte) > _V633_TEXTE_MAX:
+        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
+
+    contexte = corps.get("context") or "general"
+    if not isinstance(contexte, str) or contexte not in _V633_CONTEXTES_CONNUS:
+        contexte = "general"
+
+    langue = corps.get("lang", "fr")
+    if not isinstance(langue, str) or not _V633_LANG.match(langue):
+        langue = "fr"
+
+    resultat = await _v633_ameliorer_texte(texte, contexte, langue)
+    logger.info("%s amelioration IA demandee par membre afroboosteur=%s (contexte=%s)",
+               PREFIXE, membre or "(non precise)", contexte)
+    return resultat

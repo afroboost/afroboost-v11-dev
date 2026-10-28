@@ -43832,40 +43832,22 @@ def _v633_debit_ok(cle: str) -> bool:
     return True
 
 
-@api_router.post("/ai/enhance-text")
-async def enhance_text_with_ai(request: Request):
+_V633_PROMPTS_PAR_CONTEXTE_DOC = """Contextes connus: offer, pack, legal, seo, faq_answer,
+general, afroboost, expert. Tout contexte inconnu retombe sur "general"."""
+
+
+async def _v633_ameliorer_texte(text: str, context: str, lang: str) -> dict:
+    """LE calcul d'amélioration de texte — extrait, caractère pour caractère
+    (mêmes prompts, même modèle, mêmes `max_tokens`), de `enhance_text_with_ai`
+    lors de l'AJOUT du relais afroboosteur (voir `api/routes/afroboosteur_relais.py`,
+    section IA). AUCUNE divergence de comportement : la route `/ai/enhance-text`
+    appelle désormais cette même fonction, au lieu de porter sa propre copie —
+    c'est le motif "réutiliser EXACTEMENT, jamais une seconde implémentation"
+    déjà suivi pour `v619_fil`/`p3r2_garde_relance` ailleurs dans ce dépôt.
+
+    Ne lève jamais : une panne OpenAI rend `{"fallback": True, ...}` avec le
+    texte ORIGINAL, jamais une exception qui remonterait jusqu'à l'appelant.
     """
-    v17.0 — Assistant rédaction IA générique.
-    Contextes: offer, pack, legal, seo, faq_answer, general
-    V633 : coach/admin authentifié par JWT signé, débit limité, entrées bornées.
-    """
-    # V633 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
-    coach_email = await _v309_require_coach_or_admin(request)
-    if not _v633_debit_ok(coach_email):
-        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
-
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Corps JSON attendu")
-    texte_brut = body.get("text", "")
-    if not isinstance(texte_brut, str):
-        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
-    text = texte_brut.strip()
-    context = body.get("context") or body.get("style") or "general"
-    lang = body.get("lang", "fr")
-
-    if not text:
-        raise HTTPException(status_code=400, detail="Le texte est requis")
-    if len(text) > _V633_TEXTE_MAX:
-        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
-    if not isinstance(context, str) or len(context) > 40:
-        raise HTTPException(status_code=400, detail="Contexte invalide")
-    if not isinstance(lang, str) or not _V633_LANG.match(lang):
-        raise HTTPException(status_code=400, detail="Langue invalide")
-
     try:
         from openai import OpenAI
 
@@ -43951,6 +43933,43 @@ Réponds UNIQUEMENT avec le prompt système généré."""
     except Exception as e:
         logger.error(f"[ENHANCE-TEXT] Erreur: {str(e)}")
         return {"enhanced_text": text, "original": text, "context": context, "fallback": True, "error": str(e)}
+
+
+@api_router.post("/ai/enhance-text")
+async def enhance_text_with_ai(request: Request):
+    """
+    v17.0 — Assistant rédaction IA générique.
+    Contextes: offer, pack, legal, seo, faq_answer, general
+    V633 : coach/admin authentifié par JWT signé, débit limité, entrées bornées.
+    """
+    # V633 — l'identite AVANT tout : un anonyme n'atteint ni le corps ni le modele.
+    coach_email = await _v309_require_coach_or_admin(request)
+    if not _v633_debit_ok(coach_email):
+        raise HTTPException(status_code=429, detail="Trop de demandes à l'assistant IA — réessayez dans un instant")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Corps JSON attendu")
+    texte_brut = body.get("text", "")
+    if not isinstance(texte_brut, str):
+        raise HTTPException(status_code=400, detail="Le texte doit être une chaîne")
+    text = texte_brut.strip()
+    context = body.get("context") or body.get("style") or "general"
+    lang = body.get("lang", "fr")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Le texte est requis")
+    if len(text) > _V633_TEXTE_MAX:
+        raise HTTPException(status_code=400, detail="Texte trop long pour l'assistant IA")
+    if not isinstance(context, str) or len(context) > 40:
+        raise HTTPException(status_code=400, detail="Contexte invalide")
+    if not isinstance(lang, str) or not _V633_LANG.match(lang):
+        raise HTTPException(status_code=400, detail="Langue invalide")
+
+    return await _v633_ameliorer_texte(text, context, lang)
 
 
 # --- Intelligent Chat Entry Point ---
