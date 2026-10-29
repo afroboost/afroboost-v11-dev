@@ -568,7 +568,8 @@ async def vue_partenaire(token: str, request: Request, response: Response):
     # V639c — Liens publics d'invitation pour le partage (jamais le jeton privé)
     invitations_publiques = []
     if partner_id:
-        _fe = os.environ.get("FRONTEND_URL", "https://afroboost.com")
+        _fe = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
+        # Liens Intelligents (chat_sessions)
         for inv_id in (partner.get("invitation_ids") or []):
             sess = await _db.chat_sessions.find_one(
                 {"id": inv_id, "is_deleted": {"$ne": True}},
@@ -578,6 +579,19 @@ async def vue_partenaire(token: str, request: Request, response: Response):
                 invitations_publiques.append({
                     "title": sess.get("title") or "Invitation Afroboost",
                     "share_url": f"{_fe}/chat/{sess['link_token']}",
+                })
+        # Invitations natives (referral_campaigns)
+        for camp_id in (partner.get("campagne_ids") or []):
+            camp = await _db.referral_campaigns.find_one(
+                {"id": camp_id, "status": {"$ne": "archived"}},
+                {"_id": 0, "share_token": 1, "title": 1, "version": 1}
+            )
+            if camp and camp.get("share_token"):
+                _tok = camp["share_token"]
+                _v = int(camp.get("version") or 1)
+                invitations_publiques.append({
+                    "title": camp.get("title") or "Invitation Afroboost",
+                    "share_url": f"{_fe}/i/{_tok}?v={_v}",
                 })
 
     return {
@@ -601,7 +615,8 @@ class PartenaireData(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     pct: int = Field(40, ge=0, le=100)
     codes: list = Field(default_factory=list)          # list[str]
-    invitation_ids: list = Field(default_factory=list)  # list[str]
+    invitation_ids: list = Field(default_factory=list)  # list[str] — Liens Intelligents (chat_sessions)
+    campagne_ids: list = Field(default_factory=list)   # list[str] — Invitations natives (referral_campaigns)
 
 
 # ─── Helpers V638 ─────────────────────────────────────────────────────────────
@@ -669,6 +684,64 @@ async def _lignes_pour_invitation(inv_id: str, coach_id: str, strict: bool = Fal
     return list(lignes_par_session.values())
 
 
+async def _lignes_pour_campagne(camp_id: str, coach_id: str, strict: bool = False) -> list:
+    """Inscriptions liées à une invitation native (referral_campaigns) via invitation_relais."""
+    lignes: dict = {}
+    filtre_rel = {"campagne_id": camp_id}
+    if strict or not is_super_admin(coach_id):
+        filtre_rel["coach_id"] = coach_id
+    async for rel in _db.invitation_relais.find(filtre_rel, {"_id": 0}):
+        rid = _sanitiser_str(rel.get("reservation_id") or "")
+        pmt = rel.get("paiement") or {}
+        nom = _sanitiser_str(rel.get("nom") or "")
+        email_h = _sanitiser_str(rel.get("email_empreinte") or "")
+        key = rid or f"rel:{rel.get('jeton', '')}"
+        if key in lignes:
+            continue
+        montant = _arrondir_chf(float(pmt.get("montant") or 0))
+        if rid:
+            r = await _db.reservations.find_one({"id": rid}, {"_id": 0}) or {}
+            sid = _sanitiser_str(r.get("stripeSessionId") or r.get("stripe_session_id") or "")
+            if sid:
+                tx = await _db.payment_transactions.find_one({"session_id": sid}, {"_id": 0})
+                if tx:
+                    qte = int(tx.get("quantity") or 1)
+                    montant = _arrondir_chf(float(tx.get("tarif_applique") or tx.get("amount") or montant) * qte)
+                    nom = _sanitiser_str(tx.get("customer_name") or nom)
+            lignes[key] = {
+                "session_id": None,
+                "nom": nom,
+                "email": email_h,
+                "montant_chf": montant,
+                "reduction_chf": 0.0,
+                "statut": "paye" if montant > 0 else "reservation_sans_paiement",
+                "moyen": "en_ligne",
+                "source": "campagne",
+                "date_seance": _sanitiser_str(r.get("datetime") or r.get("date") or ""),
+                "cours_nom": _sanitiser_str(r.get("courseName") or r.get("course_name") or ""),
+                "reservation_id": rid,
+                "has_reservation": True,
+                "created_at": _sanitiser_str(rel.get("created_at") or ""),
+            }
+        elif montant > 0:
+            lignes[key] = {
+                "session_id": None,
+                "nom": nom,
+                "email": email_h,
+                "montant_chf": montant,
+                "reduction_chf": 0.0,
+                "statut": "paye",
+                "moyen": "en_ligne",
+                "source": "campagne",
+                "date_seance": "",
+                "cours_nom": "",
+                "reservation_id": "",
+                "has_reservation": False,
+                "created_at": _sanitiser_str(rel.get("created_at") or ""),
+            }
+    return list(lignes.values())
+
+
 async def _lignes_pour_partenaire(partner_doc: dict, coach_id: str, strict: bool = False) -> list:
     """Agrège les inscriptions de tous les codes + invitations d'un partenaire.
 
@@ -683,10 +756,17 @@ async def _lignes_pour_partenaire(partner_doc: dict, coach_id: str, strict: bool
             if key and key not in all_by_session:
                 all_by_session[key] = l
 
-    # 2. Par invitations (Liens Intelligents)
+    # 2. Par invitations (Liens Intelligents — chat_sessions)
     for inv_id in partner_doc.get("invitation_ids") or []:
         for l in await _lignes_pour_invitation(inv_id, coach_id, strict=strict):
             key = l.get("session_id") or f"inv_resa:{l.get('reservation_id', '')}"
+            if key and key not in all_by_session:
+                all_by_session[key] = l
+
+    # 2b. Par invitations natives (referral_campaigns)
+    for camp_id in partner_doc.get("campagne_ids") or []:
+        for l in await _lignes_pour_campagne(camp_id, coach_id, strict=strict):
+            key = l.get("session_id") or f"camp_resa:{l.get('reservation_id', '')}"
             if key and key not in all_by_session:
                 all_by_session[key] = l
 
@@ -775,6 +855,7 @@ async def creer_partenaire(data: PartenaireData, request: Request):
         "pct": data.pct,
         "codes": [c.upper() for c in data.codes],
         "invitation_ids": list(data.invitation_ids),
+        "campagne_ids": list(data.campagne_ids),
         "created_at": now,
         "updated_at": now,
         "deleted": False,
@@ -829,6 +910,7 @@ async def modifier_partenaire(partner_id: str, data: PartenaireData, request: Re
         "pct": data.pct,
         "codes": [c.upper() for c in data.codes],
         "invitation_ids": list(data.invitation_ids),
+        "campagne_ids": list(data.campagne_ids),
         "updated_at": now,
     }})
     updated = await _db.partners.find_one({"id": partner_id}, {"_id": 0, "deleted": 0})

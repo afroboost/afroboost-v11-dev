@@ -142,12 +142,13 @@ function SelecteurMulti({ items, selected, onToggle, labelKey, valueKey, autresP
   );
 }
 
-function FormulairePartenaire({ initial, allCodes, allLinks, autresPartenaires, onSave, onCancel, chargement }) {
+function FormulairePartenaire({ initial, allCodes, allLinks, allCampagnes, autresPartenaires, onSave, onCancel, chargement }) {
   const currentPartnerId = initial?.id || null;
   const [nom, setNom] = useState(initial?.name || '');
   const [pct, setPct] = useState(initial?.pct ?? 40);
   const [selectedCodes, setSelectedCodes] = useState(initial?.codes || []);
   const [selectedInvs, setSelectedInvs] = useState(initial?.invitation_ids || []);
+  const [selectedCamps, setSelectedCamps] = useState(initial?.campagne_ids || []);
   const [err, setErr] = useState('');
 
   function toggleCode(val) {
@@ -156,13 +157,16 @@ function FormulairePartenaire({ initial, allCodes, allLinks, autresPartenaires, 
   function toggleInv(val) {
     setSelectedInvs((prev) => prev.includes(val) ? prev.filter((i) => i !== val) : [...prev, val]);
   }
+  function toggleCamp(val) {
+    setSelectedCamps((prev) => prev.includes(val) ? prev.filter((i) => i !== val) : [...prev, val]);
+  }
 
   function handleSave() {
     if (!nom.trim()) { setErr('Le nom est requis.'); return; }
     const p = parseInt(pct, 10);
     if (isNaN(p) || p < 0 || p > 100) { setErr('Le pourcentage doit être entre 0 et 100.'); return; }
     setErr('');
-    onSave({ name: nom.trim(), pct: p, codes: selectedCodes, invitation_ids: selectedInvs });
+    onSave({ name: nom.trim(), pct: p, codes: selectedCodes, invitation_ids: selectedInvs, campagne_ids: selectedCamps });
   }
 
   const inputStyle = {
@@ -224,6 +228,24 @@ function FormulairePartenaire({ initial, allCodes, allLinks, autresPartenaires, 
           <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', margin: '4px 0 0' }}>Chargement des liens…</p>
         )}
       </div>
+      <div style={sectionStyle}>
+        <label style={labelStyle}>
+          Invitations natives associées
+          {selectedCamps.length > 0 && <span style={{ color: 'var(--primary-color,#D91CD2)', marginLeft: 6 }}>({selectedCamps.length} sélectionnée{selectedCamps.length > 1 ? 's' : ''})</span>}
+        </label>
+        <SelecteurMulti
+          items={(allCampagnes || []).map((c) => ({ value: c.id, label: c.title || c.id }))}
+          selected={selectedCamps}
+          onToggle={toggleCamp}
+          labelKey="label"
+          valueKey="value"
+          autresPartenaires={autresPartenaires}
+          currentPartnerId={currentPartnerId}
+        />
+        {(!allCampagnes || allCampagnes.length === 0) && (
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', margin: '4px 0 0' }}>Aucune invitation active…</p>
+        )}
+      </div>
       {err && <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>{err}</p>}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
         <button onClick={onCancel} disabled={chargement} style={{ background: 'rgba(255,255,255,0.07)', border: 'none', borderRadius: 8, color: 'rgba(255,255,255,0.7)', padding: '9px 18px', cursor: 'pointer', fontSize: 14 }}>
@@ -239,7 +261,7 @@ function FormulairePartenaire({ initial, allCodes, allLinks, autresPartenaires, 
 
 // ─── Modal détails d'un partenaire ───────────────────────────────────────────
 
-function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, autresPartenaires }) {
+function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, allCampagnes, autresPartenaires }) {
   const [details, setDetails] = useState(null);
   const [chargement, setChargement] = useState(true);
   const [err, setErr] = useState('');
@@ -312,12 +334,19 @@ function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, au
   const lignes = details?.lignes || [];
   const pct = details?.pct_partenaire ?? partner.pct;
 
-  // V639c — liens publics d'invitation (partage)
-  const liensPartage = (partner.invitation_ids || []).reduce((acc, invId) => {
-    const lk = (allLinks || []).find((l) => l.id === invId);
-    if (lk && lk.link_token) acc.push({ id: invId, title: lk.title || 'Invitation', url: `https://afroboost.com/chat/${lk.link_token}` });
-    return acc;
-  }, []);
+  // V639c — liens publics d'invitation (partage) — Liens Intelligents + Invitations natives
+  const liensPartage = [
+    ...(partner.invitation_ids || []).reduce((acc, invId) => {
+      const lk = (allLinks || []).find((l) => l.id === invId);
+      if (lk && lk.link_token) acc.push({ id: `sl:${invId}`, title: lk.title || 'Invitation', url: `https://afroboost.com/chat/${lk.link_token}` });
+      return acc;
+    }, []),
+    ...(partner.campagne_ids || []).reduce((acc, campId) => {
+      const c = (allCampagnes || []).find((x) => x.id === campId);
+      if (c && c.share_url) acc.push({ id: `rc:${campId}`, title: c.title || 'Invitation', url: c.share_url });
+      return acc;
+    }, []),
+  ];
 
   function copierUrlInv(invId, url) {
     navigator.clipboard.writeText(url).then(() => {
@@ -515,6 +544,7 @@ function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, au
             initial={details}
             allCodes={allCodes}
             allLinks={allLinks}
+            allCampagnes={allCampagnes}
             autresPartenaires={autresPartenaires}
             onCancel={() => setEditeur(false)}
             onSave={async (data) => {
@@ -574,6 +604,7 @@ export default function PartnersSection() {
   // V639 : options pour le formulaire
   const [allCodes, setAllCodes] = useState([]);
   const [allLinks, setAllLinks] = useState([]);
+  const [allCampagnes, setAllCampagnes] = useState([]);
 
   const charger = useCallback(async () => {
     setChargement(true); setErr('');
@@ -588,14 +619,17 @@ export default function PartnersSection() {
     finally { setChargement(false); }
   }, []);
 
-  // V639 : charger les codes et liens intelligents une seule fois
+  // V639 : charger les codes, liens intelligents et invitations natives une seule fois
   useEffect(() => {
     Promise.all([
       apiFetch('/api/discount-codes').catch(() => []),
       apiFetch('/api/chat/links').catch(() => []),
-    ]).then(([codes, links]) => {
+      apiFetch('/api/referral/campaigns').catch(() => ({ items: [] })),
+    ]).then(([codes, links, camps]) => {
       setAllCodes(Array.isArray(codes) ? codes : []);
       setAllLinks(Array.isArray(links) ? links : []);
+      const campItems = Array.isArray(camps) ? camps : (camps?.items || []);
+      setAllCampagnes(campItems.filter((c) => c.status !== 'archived'));
     });
   }, []);
 
@@ -695,6 +729,7 @@ export default function PartnersSection() {
           <FormulairePartenaire
             allCodes={allCodes}
             allLinks={allLinks}
+            allCampagnes={allCampagnes}
             autresPartenaires={partenaires}
             onCancel={() => setCreation(false)}
             onSave={creerPartenaire}
@@ -710,6 +745,7 @@ export default function PartnersSection() {
           onUpdated={charger}
           allCodes={allCodes}
           allLinks={allLinks}
+          allCampagnes={allCampagnes}
           autresPartenaires={partenaires.filter((p) => p.id !== details.id)}
         />
       )}
