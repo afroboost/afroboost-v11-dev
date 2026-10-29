@@ -12,7 +12,8 @@
 
 export const ONGLETS_COMMUNS = [
   'reservations', 'offers', 'codes', 'contacts', 'campaigns',
-  'prospection', 'conversations', 'corbeille', 'partenaires',
+  'prospection', 'conversations', 'corbeille',
+  // V639 : 'partenaires' retiré — intégré dans Gestion → Invitation & partage
 ];
 
 // Onglets propres au coach partenaire (le super-admin ne paie pas de crédits

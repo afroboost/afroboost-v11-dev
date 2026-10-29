@@ -87,22 +87,81 @@ function Modal({ titre, onClose, children }) {
 
 // ─── Formulaire partenaire ────────────────────────────────────────────────────
 
-function FormulairePartenaire({ initial, allCodes, onSave, onCancel, chargement }) {
+// V639 : sélecteur multi-valeurs (codes promo ou liens intelligents)
+function SelecteurMulti({ items, selected, onToggle, labelKey, valueKey, autresPartenaires, currentPartnerId }) {
+  if (!items || items.length === 0) {
+    return <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', margin: '4px 0 0' }}>Aucun élément disponible.</p>;
+  }
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+      {items.map((item) => {
+        const val = item[valueKey];
+        const label = item[labelKey] || val;
+        const isSelected = selected.includes(val);
+        // Détecter si un autre partenaire utilise déjà cet item
+        const conflit = (autresPartenaires || []).find((p) =>
+          p.id !== currentPartnerId &&
+          (p.codes || []).concat(p.invitation_ids || []).includes(val)
+        );
+        return (
+          <button
+            key={val}
+            type="button"
+            onClick={() => onToggle(val)}
+            title={conflit ? `Déjà utilisé par : ${conflit.name}` : ''}
+            style={{
+              padding: '5px 12px',
+              borderRadius: 20,
+              border: isSelected
+                ? '1.5px solid var(--primary-color,#D91CD2)'
+                : conflit
+                  ? '1.5px solid #f59e0b'
+                  : '1px solid rgba(255,255,255,0.15)',
+              background: isSelected
+                ? 'rgba(var(--primary-rgb,217,28,210),0.15)'
+                : 'rgba(255,255,255,0.04)',
+              color: isSelected ? 'var(--primary-color,#D91CD2)' : conflit ? '#f59e0b' : 'rgba(255,255,255,0.8)',
+              fontSize: 13,
+              cursor: 'pointer',
+              fontWeight: isSelected ? 600 : 400,
+              display: 'flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            {conflit && !isSelected && (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            )}
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FormulairePartenaire({ initial, allCodes, allLinks, autresPartenaires, onSave, onCancel, chargement }) {
+  const currentPartnerId = initial?.id || null;
   const [nom, setNom] = useState(initial?.name || '');
   const [pct, setPct] = useState(initial?.pct ?? 40);
-  const [codes, setCodes] = useState((initial?.codes || []).join(', '));
-  const [invIds, setInvIds] = useState((initial?.invitation_ids || []).join(', '));
+  const [selectedCodes, setSelectedCodes] = useState(initial?.codes || []);
+  const [selectedInvs, setSelectedInvs] = useState(initial?.invitation_ids || []);
   const [err, setErr] = useState('');
 
-  function parseListe(s) {
-    return s.split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+  function toggleCode(val) {
+    setSelectedCodes((prev) => prev.includes(val) ? prev.filter((c) => c !== val) : [...prev, val]);
+  }
+  function toggleInv(val) {
+    setSelectedInvs((prev) => prev.includes(val) ? prev.filter((i) => i !== val) : [...prev, val]);
   }
 
   function handleSave() {
     if (!nom.trim()) { setErr('Le nom est requis.'); return; }
-    if (pct < 0 || pct > 100) { setErr('Le pourcentage doit être entre 0 et 100.'); return; }
+    const p = parseInt(pct, 10);
+    if (isNaN(p) || p < 0 || p > 100) { setErr('Le pourcentage doit être entre 0 et 100.'); return; }
     setErr('');
-    onSave({ name: nom.trim(), pct: parseInt(pct, 10), codes: parseListe(codes), invitation_ids: parseListe(invIds) });
+    onSave({ name: nom.trim(), pct: p, codes: selectedCodes, invitation_ids: selectedInvs });
   }
 
   const inputStyle = {
@@ -111,6 +170,7 @@ function FormulairePartenaire({ initial, allCodes, onSave, onCancel, chargement 
     boxSizing: 'border-box',
   };
   const labelStyle = { fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 4, display: 'block' };
+  const sectionStyle = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '12px 14px' };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -120,18 +180,48 @@ function FormulairePartenaire({ initial, allCodes, onSave, onCancel, chargement 
       </div>
       <div>
         <label style={labelStyle}>Commission partenaire (%) *</label>
-        <input type="number" min="0" max="100" value={pct} onChange={(e) => setPct(e.target.value)} style={{ ...inputStyle, maxWidth: 120 }} />
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginLeft: 8 }}>
-          Afroboost garde {100 - parseInt(pct, 10)} %
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input type="number" min="0" max="100" value={pct} onChange={(e) => setPct(e.target.value)} style={{ ...inputStyle, maxWidth: 100 }} />
+          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>
+            → Afroboost garde <strong style={{ color: '#fff' }}>{100 - (parseInt(pct, 10) || 0)} %</strong>
+          </span>
+        </div>
       </div>
-      <div>
-        <label style={labelStyle}>Codes promo associés (séparés par virgule)</label>
-        <input value={codes} onChange={(e) => setCodes(e.target.value)} style={inputStyle} placeholder="ex. HETAIRA10, HETAIRA20" />
+      <div style={sectionStyle}>
+        <label style={labelStyle}>
+          Codes promo associés
+          {selectedCodes.length > 0 && <span style={{ color: 'var(--primary-color,#D91CD2)', marginLeft: 6 }}>({selectedCodes.length} sélectionné{selectedCodes.length > 1 ? 's' : ''})</span>}
+        </label>
+        <SelecteurMulti
+          items={(allCodes || []).map((c) => ({ value: c.code, label: c.code }))}
+          selected={selectedCodes}
+          onToggle={toggleCode}
+          labelKey="label"
+          valueKey="value"
+          autresPartenaires={autresPartenaires}
+          currentPartnerId={currentPartnerId}
+        />
+        {(!allCodes || allCodes.length === 0) && (
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', margin: '4px 0 0' }}>Chargement des codes…</p>
+        )}
       </div>
-      <div>
-        <label style={labelStyle}>IDs de liens intelligents (séparés par virgule)</label>
-        <input value={invIds} onChange={(e) => setInvIds(e.target.value)} style={inputStyle} placeholder="Laisser vide si non applicable" />
+      <div style={sectionStyle}>
+        <label style={labelStyle}>
+          Liens intelligents associés
+          {selectedInvs.length > 0 && <span style={{ color: 'var(--primary-color,#D91CD2)', marginLeft: 6 }}>({selectedInvs.length} sélectionné{selectedInvs.length > 1 ? 's' : ''})</span>}
+        </label>
+        <SelecteurMulti
+          items={(allLinks || []).map((l) => ({ value: l.id, label: l.title || l.link_token || l.id }))}
+          selected={selectedInvs}
+          onToggle={toggleInv}
+          labelKey="label"
+          valueKey="value"
+          autresPartenaires={autresPartenaires}
+          currentPartnerId={currentPartnerId}
+        />
+        {(!allLinks || allLinks.length === 0) && (
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', margin: '4px 0 0' }}>Chargement des liens…</p>
+        )}
       </div>
       {err && <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>{err}</p>}
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -148,7 +238,7 @@ function FormulairePartenaire({ initial, allCodes, onSave, onCancel, chargement 
 
 // ─── Modal détails d'un partenaire ───────────────────────────────────────────
 
-function DetailsPartenaire({ partner, onClose, onUpdated }) {
+function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, autresPartenaires }) {
   const [details, setDetails] = useState(null);
   const [chargement, setChargement] = useState(true);
   const [err, setErr] = useState('');
@@ -350,6 +440,9 @@ function DetailsPartenaire({ partner, onClose, onUpdated }) {
         <Modal titre={`Modifier — ${partner.name}`} onClose={() => setEditeur(false)}>
           <FormulairePartenaire
             initial={details}
+            allCodes={allCodes}
+            allLinks={allLinks}
+            autresPartenaires={autresPartenaires}
             onCancel={() => setEditeur(false)}
             onSave={async (data) => {
               try {
@@ -405,6 +498,9 @@ export default function PartnersSection() {
   const [creation, setCreation] = useState(false);
   const [details, setDetails] = useState(null);
   const [creOk, setCreOk] = useState(false);
+  // V639 : options pour le formulaire
+  const [allCodes, setAllCodes] = useState([]);
+  const [allLinks, setAllLinks] = useState([]);
 
   const charger = useCallback(async () => {
     setChargement(true); setErr('');
@@ -417,6 +513,17 @@ export default function PartnersSection() {
       setConflits(r2.conflits || []);
     } catch (e) { setErr(e.message); }
     finally { setChargement(false); }
+  }, []);
+
+  // V639 : charger les codes et liens intelligents une seule fois
+  useEffect(() => {
+    Promise.all([
+      apiFetch('/api/discount-codes').catch(() => []),
+      apiFetch('/api/chat/links').catch(() => []),
+    ]).then(([codes, links]) => {
+      setAllCodes(Array.isArray(codes) ? codes : []);
+      setAllLinks(Array.isArray(links) ? links : []);
+    });
   }, []);
 
   useEffect(() => { charger(); }, [charger]);
@@ -512,7 +619,13 @@ export default function PartnersSection() {
       {/* Modal création */}
       {creation && (
         <Modal titre="Créer un partenaire" onClose={() => setCreation(false)}>
-          <FormulairePartenaire onCancel={() => setCreation(false)} onSave={creerPartenaire} />
+          <FormulairePartenaire
+            allCodes={allCodes}
+            allLinks={allLinks}
+            autresPartenaires={partenaires}
+            onCancel={() => setCreation(false)}
+            onSave={creerPartenaire}
+          />
         </Modal>
       )}
 
@@ -522,6 +635,9 @@ export default function PartnersSection() {
           partner={details}
           onClose={() => setDetails(null)}
           onUpdated={charger}
+          allCodes={allCodes}
+          allLinks={allLinks}
+          autresPartenaires={partenaires.filter((p) => p.id !== details.id)}
         />
       )}
     </div>

@@ -1703,6 +1703,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
   // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
   const [offersSubTab, setOffersSubTab] = useState('contenus');
+  // V639 : sous-onglet interne de l'onglet « Invitation & partage »
+  const [parrainageSubTab, setParrainageSubTab] = useState('invitation');
 
   // V226: la gestion des horaires se fait desormais UNIQUEMENT dans le wizard
   // d'offre (OfferWizard, etape 2 « Logistique »), qui couvre tout le cycle de
@@ -6819,7 +6821,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
     // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
     { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> },
-    { id: "partenaires", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Partenaires</span> } // V638
+    // V638 : onglet partenaires intégré dans « Invitation & partage » (V639)
     // V260d: l'onglet « Preuves » a quitte cette barre — il est desormais une
     // carte de la page Gestion, au meme rang que « Offres & Cours » ou
     // « Ma Vitrine ». La barre principale reste ainsi lisible sur mobile.
@@ -8987,10 +8989,43 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               </div>
             )}
 
-            {/* V551 : Parrainage V2 — « Invitation & partage ». Identite = jeton. */}
+            {/* V551 : Parrainage V2 — « Invitation & partage ». V639 : + onglet Partenaires. */}
             {offersSubTab === 'parrainage' && (
               <div style={{ marginTop: 12 }}>
-                <InvitationPartageCard API={API} />
+                {/* Sous-navigation interne */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 12 }}>
+                  {[
+                    { id: 'invitation', label: 'Invitation & partage' },
+                    { id: 'partenaires', label: 'Partenaires' },
+                  ].map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setParrainageSubTab(s.id)}
+                      style={{
+                        padding: '7px 16px',
+                        borderRadius: 20,
+                        border: parrainageSubTab === s.id
+                          ? '1.5px solid rgba(var(--primary-rgb,217,28,210),0.7)'
+                          : '1px solid rgba(255,255,255,0.12)',
+                        background: parrainageSubTab === s.id
+                          ? 'rgba(var(--primary-rgb,217,28,210),0.12)'
+                          : 'transparent',
+                        color: parrainageSubTab === s.id ? 'var(--primary-color,#D91CD2)' : 'rgba(255,255,255,0.6)',
+                        fontSize: 13,
+                        fontWeight: parrainageSubTab === s.id ? 700 : 400,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                {parrainageSubTab === 'invitation' && <InvitationPartageCard API={API} />}
+                {parrainageSubTab === 'partenaires' && (
+                  <div style={{ maxWidth: 760 }}>
+                    <PartnersSection />
+                  </div>
+                )}
               </div>
             )}
 
@@ -9721,11 +9756,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             )}
           </div>
         )}
-        {tab === "partenaires" && (
-          <div style={{ maxWidth: 760, margin: '0 auto' }}>
-            <PartnersSection />
-          </div>
-        )}
+        {/* V639 : l'onglet partenaires est maintenant dans Gestion → Invitation & partage */}
       </div>
     </div>
   );
