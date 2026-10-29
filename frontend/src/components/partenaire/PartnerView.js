@@ -155,8 +155,8 @@ export default function PartnerView({ token }) {
             {nomPartenaire}
           </h1>
           <p className="cr-sous">
-            Suivi des inscriptions liées au code <strong style={{ color: '#fff' }}>{code}</strong>
-            {' '}— Commission <strong style={{ color: 'var(--primary-color, #D91CD2)' }}>{pct} %</strong>
+            {code ? <>Suivi des inscriptions liées {code.includes(',') ? 'aux codes' : 'au code'} <strong style={{ color: '#fff' }}>{code}</strong>{' '}— </> : 'Commission '}
+            <strong style={{ color: 'var(--primary-color, #D91CD2)' }}>{pct} %</strong>
           </p>
         </div>
 

@@ -526,18 +526,31 @@ async def vue_partenaire(token: str, request: Request, response: Response):
     if not tok_doc:
         raise HTTPException(404, "Lien invalide ou révoqué")
 
-    code_upper = tok_doc["code_upper"]
+    partner_id = tok_doc.get("partner_id")
     coach_id = tok_doc["coach_id"]
 
-    # Config filtrée par le coach propriétaire (jamais super-admin global)
-    cfg = await _db.partner_configs.find_one(
-        {"code_upper": code_upper, "coach_id": coach_id}, {"_id": 0}
-    ) or {}
-    pct = int(cfg.get("partner_pct") or 40)
-    partner_name = cfg.get("partner_name") or ""
+    if partner_id:
+        # ── Chemin multi-partenaire (V638) ────────────────────────────────
+        partner = await _db.partners.find_one(
+            {"id": partner_id, "deleted": {"$ne": True}}, {"_id": 0}
+        )
+        if not partner:
+            raise HTTPException(404, "Partenaire introuvable")
+        pct = int(partner.get("pct") or 40)
+        partner_name = partner.get("name") or ""
+        code_display = ", ".join(partner.get("codes") or [])
+        lignes = await _lignes_pour_partenaire(partner, coach_id, strict=True)
+    else:
+        # ── Chemin legacy par code (V637, backward compat) ────────────────
+        code_upper = tok_doc.get("code_upper", "")
+        cfg = await _db.partner_configs.find_one(
+            {"code_upper": code_upper, "coach_id": coach_id}, {"_id": 0}
+        ) or {}
+        pct = int(cfg.get("partner_pct") or 40)
+        partner_name = cfg.get("partner_name") or ""
+        code_display = code_upper
+        lignes = await _lignes_pour_code(code_upper, coach_id, strict=True)
 
-    # strict=True : ne jamais appliquer le bypass super-admin sur le chemin jeton public
-    lignes = await _lignes_pour_code(code_upper, coach_id, strict=True)
     totaux = _totaux(lignes, pct)
 
     # Anonymiser : supprimer emails, masquer noms
@@ -553,9 +566,448 @@ async def vue_partenaire(token: str, request: Request, response: Response):
         })
 
     return {
-        "code": code_upper,
+        "code": code_display,
+        "codes": (partner.get("codes") if partner_id else None),
         "partner_name": partner_name,
         "pct_partenaire": pct,
         "lignes": lignes_pub,
         "totaux": totaux,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V638 — SYSTÈME MULTI-PARTENAIRES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── Modèle Pydantic ─────────────────────────────────────────────────────────
+
+class PartenaireData(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    pct: int = Field(40, ge=0, le=100)
+    codes: list = Field(default_factory=list)          # list[str]
+    invitation_ids: list = Field(default_factory=list)  # list[str]
+
+
+# ─── Helpers V638 ─────────────────────────────────────────────────────────────
+
+async def _lignes_pour_invitation(inv_id: str, coach_id: str, strict: bool = False) -> list:
+    """Inscriptions liées à un identifiant d'invitation (Lien Intelligent)."""
+    lignes_par_session: dict = {}
+    filtre_r = {"$or": [
+        {"invitation_id": inv_id},
+        {"smart_link_id": inv_id},
+        {"link_id": inv_id},
+    ]}
+    if strict or not is_super_admin(coach_id):
+        filtre_r["coach_id"] = coach_id
+    async for r in _db.reservations.find(filtre_r, {"_id": 0}):
+        sid = _sanitiser_str(r.get("stripeSessionId") or r.get("stripe_session_id") or "")
+        nom_res = _sanitiser_str(r.get("userName") or r.get("user_name") or "")
+        email_res = _sanitiser_str(r.get("userEmail") or r.get("user_email") or "")
+        cours_nom = _sanitiser_str(r.get("courseName") or r.get("course_name") or "")
+        date_seance = _sanitiser_str(r.get("datetime") or r.get("date") or "")
+        rid = _sanitiser_str(r.get("id") or str(r.get("_id", "")) or "")
+        if sid:
+            filtre_tx = {"session_id": sid}
+            if strict or not is_super_admin(coach_id):
+                filtre_tx["coach_id"] = coach_id
+            tx = await _db.payment_transactions.find_one(filtre_tx, {"_id": 0})
+            if tx and sid not in lignes_par_session:
+                qte = int(tx.get("quantity") or 1)
+                montant = _arrondir_chf(float(tx.get("tarif_applique") or tx.get("amount") or 0) * qte)
+                statut_raw = _sanitiser_str(tx.get("payment_status") or "")
+                statut = "paye" if statut_raw in ("paid", "completed") else ("rembourse" if statut_raw == "refunded" else "en_attente")
+                lignes_par_session[sid] = {
+                    "session_id": sid,
+                    "nom": _sanitiser_str(tx.get("customer_name") or nom_res or ""),
+                    "email": _sanitiser_str(tx.get("customer_email") or email_res or ""),
+                    "montant_chf": montant,
+                    "reduction_chf": 0.0,
+                    "statut": statut,
+                    "moyen": "en_ligne",
+                    "source": "invitation",
+                    "date_seance": date_seance,
+                    "cours_nom": cours_nom,
+                    "reservation_id": rid,
+                    "has_reservation": True,
+                    "created_at": _sanitiser_str(tx.get("created_at") or ""),
+                }
+        else:
+            pseudo_id = f"inv_resa:{rid}"
+            if pseudo_id not in lignes_par_session:
+                lignes_par_session[pseudo_id] = {
+                    "session_id": None,
+                    "nom": nom_res,
+                    "email": email_res,
+                    "montant_chf": 0.0,
+                    "reduction_chf": 0.0,
+                    "statut": "reservation_sans_paiement",
+                    "moyen": "inconnu",
+                    "source": "invitation",
+                    "date_seance": date_seance,
+                    "cours_nom": cours_nom,
+                    "reservation_id": rid,
+                    "has_reservation": True,
+                    "created_at": _sanitiser_str(r.get("created_at") or ""),
+                }
+    return list(lignes_par_session.values())
+
+
+async def _lignes_pour_partenaire(partner_doc: dict, coach_id: str, strict: bool = False) -> list:
+    """Agrège les inscriptions de tous les codes + invitations d'un partenaire.
+
+    Déduplication par session_id : même Stripe session dans N codes = une seule ligne.
+    """
+    all_by_session: dict = {}
+
+    # 1. Par codes promo
+    for code in partner_doc.get("codes") or []:
+        for l in await _lignes_pour_code(code.upper(), coach_id, strict=strict):
+            key = l.get("session_id") or f"resa:{l.get('reservation_id', '')}"
+            if key and key not in all_by_session:
+                all_by_session[key] = l
+
+    # 2. Par invitations (Liens Intelligents)
+    for inv_id in partner_doc.get("invitation_ids") or []:
+        for l in await _lignes_pour_invitation(inv_id, coach_id, strict=strict):
+            key = l.get("session_id") or f"inv_resa:{l.get('reservation_id', '')}"
+            if key and key not in all_by_session:
+                all_by_session[key] = l
+
+    # 3. Espèces déclarées au niveau du partenaire
+    pid = partner_doc.get("id", "")
+    if pid:
+        filtre_cash = {"partner_id": pid}
+        if strict or not is_super_admin(coach_id):
+            filtre_cash["coach_id"] = coach_id
+        async for c in _db.partner_cash_payments.find(filtre_cash, {"_id": 0}):
+            cid = f"cash_p:{c.get('id', '')}"
+            all_by_session[cid] = {
+                "session_id": None,
+                "nom": f"{_sanitiser_str(c.get('prenom', ''))} {_sanitiser_str(c.get('nom', ''))}".strip(),
+                "email": "",
+                "montant_chf": _arrondir_chf(float(c.get("montant_chf") or 0)),
+                "reduction_chf": 0.0,
+                "statut": "paye",
+                "moyen": "especes",
+                "source": "especes_partenaire",
+                "date_seance": _sanitiser_str(c.get("date_seance") or ""),
+                "cours_nom": None,
+                "reservation_id": None,
+                "has_reservation": False,
+                "created_at": _sanitiser_str(c.get("created_at") or ""),
+            }
+
+    return list(all_by_session.values())
+
+
+async def _detecter_conflits(coach_id: str) -> list:
+    """Détecte les session_id revendiqués par plusieurs partenaires du même coach.
+
+    Ne répartit jamais le montant — signale uniquement le conflit.
+    """
+    partners = await _db.partners.find(
+        {"coach_id": coach_id, "deleted": {"$ne": True}}, {"_id": 0}
+    ).to_list(200)
+
+    sid_to_partners: dict = {}
+    for p in partners:
+        pinfo = {"id": p["id"], "name": p.get("name", "?")}
+        for code in p.get("codes") or []:
+            filtre = {"promo_code": code.upper(), "coach_id": coach_id}
+            async for tx in _db.payment_transactions.find(filtre, {"session_id": 1, "_id": 0}):
+                sid = tx.get("session_id")
+                if sid:
+                    if sid not in sid_to_partners:
+                        sid_to_partners[sid] = []
+                    if not any(x["id"] == pinfo["id"] for x in sid_to_partners[sid]):
+                        sid_to_partners[sid].append(pinfo)
+
+    return [
+        {"session_id": sid, "partenaires": plist}
+        for sid, plist in sid_to_partners.items()
+        if len(plist) > 1
+    ]
+
+
+# ─── Routes CRUD partenaires ──────────────────────────────────────────────────
+
+@partner_router.get("/partners")
+async def lister_partenaires(request: Request):
+    """Liste tous les partenaires du coach authentifié."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"coach_id": coach, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    docs = await _db.partners.find(filtre, {"_id": 0, "token_hash": 0}).to_list(200)
+    return {"partenaires": docs}
+
+
+@partner_router.post("/partners")
+async def creer_partenaire(data: PartenaireData, request: Request):
+    """Crée un nouveau partenaire pour le coach authentifié."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "coach_id": coach,
+        "name": data.name.strip(),
+        "pct": data.pct,
+        "codes": [c.upper() for c in data.codes],
+        "invitation_ids": list(data.invitation_ids),
+        "created_at": now,
+        "updated_at": now,
+        "deleted": False,
+    }
+    await _db.partners.insert_one(doc)
+    return_doc = {k: v for k, v in doc.items() if k != "_id"}
+    return_doc.pop("deleted", None)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(return_doc, status_code=201)
+
+
+@partner_router.get("/partners/conflicts")
+async def conflits_partenaires(request: Request):
+    """Retourne les conflits (session_id revendiqués par plusieurs partenaires)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    conflits = await _detecter_conflits(coach)
+    return {"conflits": conflits, "nb_conflits": len(conflits)}
+
+
+@partner_router.get("/partners/{partner_id}")
+async def obtenir_partenaire(partner_id: str, request: Request):
+    """Retourne un partenaire par son id (coach authentifié uniquement)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    doc = await _db.partners.find_one(filtre, {"_id": 0, "deleted": 0})
+    if not doc:
+        raise HTTPException(404, "Partenaire introuvable")
+    return doc
+
+
+@partner_router.put("/partners/{partner_id}")
+async def modifier_partenaire(partner_id: str, data: PartenaireData, request: Request):
+    """Met à jour un partenaire (nom, pct, codes, invitations)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    doc = await _db.partners.find_one(filtre)
+    if not doc:
+        raise HTTPException(404, "Partenaire introuvable")
+    now = datetime.now(timezone.utc).isoformat()
+    await _db.partners.update_one(filtre, {"$set": {
+        "name": data.name.strip(),
+        "pct": data.pct,
+        "codes": [c.upper() for c in data.codes],
+        "invitation_ids": list(data.invitation_ids),
+        "updated_at": now,
+    }})
+    updated = await _db.partners.find_one({"id": partner_id}, {"_id": 0, "deleted": 0})
+    return updated
+
+
+@partner_router.delete("/partners/{partner_id}")
+async def supprimer_partenaire(partner_id: str, request: Request):
+    """Suppression logique d'un partenaire (soft delete)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    doc = await _db.partners.find_one(filtre)
+    if not doc:
+        raise HTTPException(404, "Partenaire introuvable")
+    now = datetime.now(timezone.utc).isoformat()
+    await _db.partners.update_one(filtre, {"$set": {"deleted": True, "deleted_at": now}})
+    # Révoquer les jetons actifs
+    await _db.partner_tokens.update_many(
+        {"partner_id": partner_id, "revoked_at": None},
+        {"$set": {"revoked_at": now}}
+    )
+    return {"ok": True, "deleted_at": now}
+
+
+@partner_router.get("/partners/{partner_id}/details")
+async def details_partenaire(partner_id: str, request: Request):
+    """Détails agrégés du partenaire : toutes les inscriptions (codes + invitations)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    partner = await _db.partners.find_one(filtre, {"_id": 0})
+    if not partner:
+        raise HTTPException(404, "Partenaire introuvable")
+
+    # Lien partenaire actif
+    tok_doc = await _db.partner_tokens.find_one(
+        {"partner_id": partner_id, "coach_id": partner["coach_id"], "revoked_at": None},
+        {"_id": 0, "token_hash": 0}
+    )
+
+    lignes = await _lignes_pour_partenaire(partner, coach)
+    totaux = _totaux(lignes, partner.get("pct", 40))
+
+    return {
+        "id": partner_id,
+        "name": partner.get("name", ""),
+        "pct_partenaire": partner.get("pct", 40),
+        "codes": partner.get("codes", []),
+        "invitation_ids": partner.get("invitation_ids", []),
+        "lien_actif": tok_doc is not None,
+        "token_id": tok_doc.get("id") if tok_doc else None,
+        "lignes": lignes,
+        "totaux": totaux,
+    }
+
+
+@partner_router.post("/partners/{partner_id}/generate-token")
+async def generer_token_partenaire_v2(partner_id: str, request: Request):
+    """Génère un lien partenaire pour un partenaire (révoque l'ancien)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    partner = await _db.partners.find_one(filtre, {"_id": 0})
+    if not partner:
+        raise HTTPException(404, "Partenaire introuvable")
+
+    now = datetime.now(timezone.utc).isoformat()
+    # Révoquer les anciens jetons de ce partenaire
+    await _db.partner_tokens.update_many(
+        {"partner_id": partner_id, "coach_id": coach, "revoked_at": None},
+        {"$set": {"revoked_at": now}}
+    )
+    token = secrets.token_urlsafe(32)
+    token_id = str(uuid.uuid4())
+    await _db.partner_tokens.insert_one({
+        "id": token_id,
+        "partner_id": partner_id,
+        "code_upper": None,           # V638 : partenaire global, pas lié à un code
+        "coach_id": coach,
+        "token_hash": _hash_token(token),
+        "created_at": now,
+        "revoked_at": None,
+    })
+    return {"ok": True, "token": token, "token_id": token_id}
+
+
+@partner_router.delete("/partners/{partner_id}/revoke-token")
+async def revoquer_token_partenaire_v2(partner_id: str, request: Request):
+    """Révoque tous les liens actifs d'un partenaire."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    partner = await _db.partners.find_one(filtre)
+    if not partner:
+        raise HTTPException(404, "Partenaire introuvable")
+    now = datetime.now(timezone.utc).isoformat()
+    await _db.partner_tokens.update_many(
+        {"partner_id": partner_id, "coach_id": coach, "revoked_at": None},
+        {"$set": {"revoked_at": now}}
+    )
+    return {"ok": True, "revoked_at": now}
+
+
+@partner_router.post("/partners/{partner_id}/cash")
+async def declarer_especes_partenaire(partner_id: str, data: EspecesDeclaration, request: Request):
+    """Déclare un encaissement en espèces pour un partenaire (avec anti-doublon)."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    partner = await _db.partners.find_one(filtre, {"_id": 0})
+    if not partner:
+        raise HTTPException(404, "Partenaire introuvable")
+
+    # Anti-doublon
+    ikey = f"{partner_id}:{data.idempotence_key}"
+    existing = await _db.partner_cash_payments.find_one({"idempotence_key": ikey})
+    if existing:
+        return {"ok": True, "id": existing.get("id"), "doublon": True}
+
+    pid_cash = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    await _db.partner_cash_payments.insert_one({
+        "id": pid_cash,
+        "partner_id": partner_id,
+        "coach_id": coach,
+        "prenom": data.prenom.strip(),
+        "nom": data.nom.strip(),
+        "date_seance": data.date_seance.strip(),
+        "montant_chf": _arrondir_chf(data.montant_chf),
+        "idempotence_key": ikey,
+        "created_at": now,
+        "created_by": coach,
+    })
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"ok": True, "id": pid_cash, "doublon": False}, status_code=201)
+
+
+@partner_router.get("/partners/{partner_id}/export.csv")
+async def export_csv_partenaire(partner_id: str, request: Request):
+    """Export CSV agrégé pour un partenaire."""
+    coach = coach_jwt_email(request)
+    if not coach:
+        raise HTTPException(403, "Authentification coach requise")
+    filtre = {"id": partner_id, "deleted": {"$ne": True}}
+    if not is_super_admin(coach):
+        filtre["coach_id"] = coach
+    partner = await _db.partners.find_one(filtre, {"_id": 0})
+    if not partner:
+        raise HTTPException(404, "Partenaire introuvable")
+
+    pct = int(partner.get("pct") or 40)
+    lignes = await _lignes_pour_partenaire(partner, coach)
+
+    _FORMULA_CHARS = ('=', '-', '+', '@', '\t', '\r')
+
+    def esc(v):
+        v = str(v or "")
+        if v and v[0] in _FORMULA_CHARS:
+            v = "'" + v
+        if any(c in v for c in (',', '"', '\n', '\r')):
+            v = '"' + v.replace('"', '""') + '"'
+        return v
+
+    entete = "Nom,Date séance,Montant CHF,Réduction CHF,Moyen,Statut,Source\n"
+    rows = "\n".join(
+        f"{esc(l['nom'])},{esc(l['date_seance'])},{esc(l['montant_chf'])},"
+        f"{esc(l['reduction_chf'])},{esc(l['moyen'])},{esc(l['statut'])},{esc(l['source'])}"
+        for l in sorted(lignes, key=lambda x: x.get("created_at") or "")
+    )
+    totaux = _totaux(lignes, pct)
+    summary = (
+        f"\n\nTotal net CHF,{totaux['total_net_chf']}\n"
+        f"Part partenaire {pct}%,{totaux['part_partenaire_chf']}\n"
+        f"Part Afroboost {100-pct}%,{totaux['part_afroboost_chf']}\n"
+    )
+    contenu = entete + rows + summary
+    nom_fichier = _sanitiser_str(partner.get("name", partner_id)).replace(" ", "_")[:30]
+    return Response(
+        content=contenu.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f'attachment; filename="partenaire_{nom_fichier}.csv"'},
+    )
