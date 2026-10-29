@@ -81,7 +81,7 @@ def _sanitiser_str(v) -> str:
 # Lecture combinée : transactions + réservations + espèces + attribution
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _lignes_pour_code(code_upper: str, coach_id: str) -> list:
+async def _lignes_pour_code(code_upper: str, coach_id: str, strict: bool = False) -> list:
     """Construit la liste unifiée des inscriptions pour un code promo.
 
     Sources croisées (lecture seule) :
@@ -91,12 +91,14 @@ async def _lignes_pour_code(code_upper: str, coach_id: str) -> list:
 
     Règle d'unicité : un session_id Stripe ne produit qu'une seule ligne.
     Un paiement sans réservation finalisée est affiché avec statut spécifique.
+
+    strict=True : force le filtre coach_id même pour le super-admin (chemin jeton public).
     """
     lignes_par_session: dict = {}  # session_id -> ligne
 
     # 1 — transactions Stripe qui portent ce code
     filtre_tx = {"promo_code": code_upper}
-    if not is_super_admin(coach_id):
+    if strict or not is_super_admin(coach_id):
         filtre_tx["coach_id"] = coach_id
     async for tx in _db.payment_transactions.find(filtre_tx, {"_id": 0}):
         sid = _sanitiser_str(tx.get("session_id") or tx.get("id") or "")
@@ -273,14 +275,20 @@ async def details_code(code: str, request: Request):
     if not fiche:
         raise HTTPException(404, "Code introuvable ou non autorisé")
 
-    # Config partenaire pour ce code
-    cfg = await _db.partner_configs.find_one({"code_upper": code_upper}, {"_id": 0}) or {}
+    # Config partenaire pour ce code — filtrée par coach (IDOR fix V637b)
+    filtre_cfg = {"code_upper": code_upper}
+    if not is_super_admin(coach):
+        filtre_cfg["coach_id"] = coach
+    cfg = await _db.partner_configs.find_one(filtre_cfg, {"_id": 0}) or {}
     pct = int(cfg.get("partner_pct") or 40)
     partner_name = cfg.get("partner_name") or ""
 
-    # Lien partenaire actif
+    # Lien partenaire actif — filtrée par coach (IDOR fix V637b)
+    filtre_tok = {"code_upper": code_upper, "revoked_at": None}
+    if not is_super_admin(coach):
+        filtre_tok["coach_id"] = coach
     tok_doc = await _db.partner_tokens.find_one(
-        {"code_upper": code_upper, "revoked_at": None}, {"_id": 0, "token_hash": 0}
+        filtre_tok, {"_id": 0, "token_hash": 0}
     )
     lien_actif = tok_doc is not None
     token_id = tok_doc.get("id") if tok_doc else None
@@ -317,12 +325,14 @@ async def config_partenaire(code: str, cfg: ConfigPartenaire, request: Request):
         raise HTTPException(404, "Code introuvable ou non autorisé")
 
     now = datetime.now(timezone.utc).isoformat()
-    existing = await _db.partner_configs.find_one({"code_upper": code_upper})
+    # Filtre par (code_upper, coach_id) pour éviter les écrasements cross-tenant (IDOR fix V637b)
+    filtre_upsert = {"code_upper": code_upper, "coach_id": coach}
+    existing = await _db.partner_configs.find_one(filtre_upsert)
     if existing:
         await _db.partner_configs.update_one(
-            {"code_upper": code_upper},
+            filtre_upsert,
             {"$set": {"partner_name": cfg.partner_name, "partner_pct": cfg.partner_pct,
-                      "coach_id": coach, "updated_at": now}}
+                      "updated_at": now}}
         )
     else:
         await _db.partner_configs.insert_one({
@@ -354,9 +364,9 @@ async def generer_token_partenaire(code: str, request: Request):
         raise HTTPException(404, "Code introuvable ou non autorisé")
 
     now = datetime.now(timezone.utc).isoformat()
-    # Révoquer les anciens jetons
+    # Révoquer uniquement les jetons du même coach (IDOR fix V637b)
     await _db.partner_tokens.update_many(
-        {"code_upper": code_upper, "revoked_at": None},
+        {"code_upper": code_upper, "coach_id": coach, "revoked_at": None},
         {"$set": {"revoked_at": now}}
     )
     # Nouveau jeton
@@ -390,8 +400,9 @@ async def revoquer_token_partenaire(code: str, request: Request):
         raise HTTPException(404, "Code introuvable ou non autorisé")
 
     now = datetime.now(timezone.utc).isoformat()
+    # Révoquer uniquement les jetons du même coach (IDOR fix V637b)
     await _db.partner_tokens.update_many(
-        {"code_upper": code_upper, "revoked_at": None},
+        {"code_upper": code_upper, "coach_id": coach, "revoked_at": None},
         {"$set": {"revoked_at": now}}
     )
     return {"ok": True, "revoked_at": now}
@@ -452,14 +463,23 @@ async def export_csv(code: str, request: Request):
     if not fiche:
         raise HTTPException(404, "Code introuvable ou non autorisé")
 
-    cfg = await _db.partner_configs.find_one({"code_upper": code_upper}, {"_id": 0}) or {}
+    filtre_cfg_exp = {"code_upper": code_upper}
+    if not is_super_admin(coach):
+        filtre_cfg_exp["coach_id"] = coach
+    cfg = await _db.partner_configs.find_one(filtre_cfg_exp, {"_id": 0}) or {}
     pct = int(cfg.get("partner_pct") or 40)
 
     lignes = await _lignes_pour_code(code_upper, coach)
 
+    _FORMULA_CHARS = ('=', '-', '+', '@', '\t', '\r')
+
     def esc(v):
+        """Échappe une valeur CSV + neutralise l'injection de formule (V637b)."""
         v = str(v or "")
-        if any(c in v for c in (',', '"', '\n')):
+        # Préfixe anti-injection : empêche Excel/LibreOffice d'interpréter la cellule
+        if v and v[0] in _FORMULA_CHARS:
+            v = "'" + v
+        if any(c in v for c in (',', '"', '\n', '\r')):
             v = '"' + v.replace('"', '""') + '"'
         return v
 
@@ -509,11 +529,15 @@ async def vue_partenaire(token: str, request: Request, response: Response):
     code_upper = tok_doc["code_upper"]
     coach_id = tok_doc["coach_id"]
 
-    cfg = await _db.partner_configs.find_one({"code_upper": code_upper}, {"_id": 0}) or {}
+    # Config filtrée par le coach propriétaire (jamais super-admin global)
+    cfg = await _db.partner_configs.find_one(
+        {"code_upper": code_upper, "coach_id": coach_id}, {"_id": 0}
+    ) or {}
     pct = int(cfg.get("partner_pct") or 40)
     partner_name = cfg.get("partner_name") or ""
 
-    lignes = await _lignes_pour_code(code_upper, coach_id)
+    # strict=True : ne jamais appliquer le bypass super-admin sur le chemin jeton public
+    lignes = await _lignes_pour_code(code_upper, coach_id, strict=True)
     totaux = _totaux(lignes, pct)
 
     # Anonymiser : supprimer emails, masquer noms
