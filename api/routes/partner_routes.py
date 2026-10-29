@@ -890,10 +890,10 @@ async def generer_token_partenaire_v2(partner_id: str, request: Request):
         raise HTTPException(404, "Partenaire introuvable")
 
     now = datetime.now(timezone.utc).isoformat()
-    owner_id = partner["coach_id"]  # V638b : source de vérité, pas le caller (super-admin safe)
-    # Révoquer les anciens jetons de ce partenaire
+    owner_id = partner["coach_id"]  # V638b : source de vérité pour l'émission du jeton
+    # Révoquer les anciens jetons de ce partenaire (filtre sur partner_id seul — accès déjà contrôlé)
     await _db.partner_tokens.update_many(
-        {"partner_id": partner_id, "coach_id": owner_id, "revoked_at": None},
+        {"partner_id": partner_id, "revoked_at": None},
         {"$set": {"revoked_at": now}}
     )
     token = secrets.token_urlsafe(32)
@@ -923,9 +923,9 @@ async def revoquer_token_partenaire_v2(partner_id: str, request: Request):
     if not partner:
         raise HTTPException(404, "Partenaire introuvable")
     now = datetime.now(timezone.utc).isoformat()
-    owner_id = partner["coach_id"]  # V638b : source de vérité
+    # Révoquer tous les jetons de ce partenaire (accès déjà contrôlé par la recherche ci-dessus)
     res = await _db.partner_tokens.update_many(
-        {"partner_id": partner_id, "coach_id": owner_id, "revoked_at": None},
+        {"partner_id": partner_id, "revoked_at": None},
         {"$set": {"revoked_at": now}}
     )
     revoked_count = res.modified_count if hasattr(res, "modified_count") else 0
