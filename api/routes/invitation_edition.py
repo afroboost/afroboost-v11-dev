@@ -245,7 +245,10 @@ async def _edition(_c, camp, offre, cours) -> dict:
             "heure": str((cours or {}).get("time") or "")[:5] if await _cours_dedie(cours, offre) else _occ[11:16],
             "lieu": camp.get("lieu") or (cours or {}).get("locationName") or (cours or {}).get("location")
             or (offre or {}).get("location") or "",
-            "date_modifiable": await _cours_dedie(cours, offre),
+            # V640 : un cours récurrent autorise le choix d'une AUTRE séance
+            # (date + heure d'occurrence), sans toucher au cours lui-même.
+            "date_modifiable": True if (await _cours_dedie(cours, offre) or cours) else False,
+            "cours_recurrent": bool(cours and not await _cours_dedie(cours, offre)),
             "tarifs": _tarifs(offre) if camp.get("type") == "event_paid" else None,
             "membres": ({"configuree": True, "actif": (offre or {}).get("gratuit_membres_actif") is not False,
                          "libelle": "Avantages membres"}
@@ -297,21 +300,35 @@ async def edition_evenement(inv_id: str, request: Request):
     _date = str(_b.get("date") or "").strip() if "date" in _b else None
     _heure = str(_b.get("heure") or "").strip() if "heure" in _b else None
     if _date is not None or _heure is not None:
-        _d = _date if _date is not None else str(_o.get("countdown_date") or "")
-        _h = _heure if _heure is not None else str(_o.get("countdown_time") or "")[:5]
+        # V640 : pour un cours récurrent, les valeurs par défaut viennent de
+        # l'occurrence de la campagne, pas de l'offre (qui n'a pas de countdown).
+        _occ_existante = str(_camp.get("occurrence") or "")
+        _d = _date if _date is not None else (
+            str(_o.get("countdown_date") or "")[:10] if _dedie
+            else _occ_existante[:10])
+        _h = _heure if _heure is not None else (
+            str(_o.get("countdown_time") or "")[:5] if _dedie
+            else _occ_existante[11:16])
         if not RE_DATE.match(_d) or not RE_HEURE.match(_h):
             raise HTTPException(status_code=422, detail="Date (AAAA-MM-JJ) et heure (HH:MM) de l'événement attendues.")
-        if (_d, _h) != (str(_offre.get("countdown_date") or ""), str(_offre.get("countdown_time") or "")[:5]):
-            if not _dedie:
-                raise HTTPException(status_code=409, detail=(
-                    "La date de ce cours ne se change pas ici : il n'est pas propre à cet événement."))
-            if _vers_utc("%sT%s" % (_d, _h)) <= datetime.now(timezone.utc):
+        _nouvelle_occ = "%sT%s" % (_d, _h)
+        _ancienne = str(_camp.get("occurrence") or "")[:16]
+        if _nouvelle_occ != _ancienne:
+            if _vers_utc(_nouvelle_occ) <= datetime.now(timezone.utc):
                 raise HTTPException(status_code=422, detail="La nouvelle date doit être dans le futur.")
             _sensible = True
-            _o.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
-            _set_offre.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
-            _set_cours.update(date=_d, time=_h)
-            _set_camp["occurrence"] = IC.normaliser_occurrence("%sT%s" % (_d, _h))
+            if _dedie:
+                # V640 : cours dédié → on modifie aussi le cours et l'offre
+                _o.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
+                _set_offre.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
+                _set_cours.update(date=_d, time=_h)
+            elif _cours:
+                # V640 : cours RÉCURRENT → vérifier que c'est une séance valide
+                if not IC.seance_du_cours(_cours, _nouvelle_occ + ":00"):
+                    raise HTTPException(status_code=422, detail=(
+                        "Cette date ne correspond pas à une séance de ce cours "
+                        "(vérifie le jour et l'heure)."))
+            _set_camp["occurrence"] = IC.normaliser_occurrence(_nouvelle_occ)
 
     # ── Lieu ────────────────────────────────────────────────────────────────
     if "lieu" in _b:

@@ -98,6 +98,8 @@ export function changementsEvenement(form, evt) {
   const c = {};
   if (evt.date_modifiable && form.date && form.date !== evt.date) c.date = form.date;
   if (evt.date_modifiable && form.heure && form.heure !== evt.heure) c.heure = form.heure;
+  // V640 : pour un cours récurrent, on envoie date ET heure ensemble
+  if (evt.cours_recurrent && (c.date || c.heure)) { c.date = form.date; c.heure = form.heure; }
   if (String(form.lieu || '').trim() && String(form.lieu).trim() !== String(evt.lieu || '')) c.lieu = String(form.lieu).trim();
   const t = evt.tarifs;
   if (t) {

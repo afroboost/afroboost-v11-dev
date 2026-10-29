@@ -350,7 +350,8 @@ export default function EditeurInvitation({ invitationId, onClose, onEnregistre 
               <input id="ed-heure" data-testid="ed-heure" type="time" style={Object.assign({}, styleChamp, { minWidth: 0 })} value={form.heure} onChange={(e) => maj('heure', e.target.value)} disabled={archivee || !evt.date_modifiable} />
             </Champ>
           </div>
-          {!evt.date_modifiable ? <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', margin: '-6px 0 12px' }}>Cette séance appartient à un cours régulier : sa date se change dans le cours, pas ici.</div> : null}
+          {!evt.date_modifiable ? <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', margin: '-6px 0 12px' }}>Aucun cours lié : la date n'est pas modifiable.</div> : null}
+          {evt.cours_recurrent ? <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', margin: '-6px 0 12px' }}>Cours régulier : choisis une date qui correspond à une séance existante.</div> : null}
           <Champ id="ed-lieu" label="Lieu">
             <input id="ed-lieu" data-testid="ed-lieu" style={styleChamp} maxLength={160} value={form.lieu} onChange={(e) => maj('lieu', e.target.value)} disabled={archivee} />
           </Champ>
