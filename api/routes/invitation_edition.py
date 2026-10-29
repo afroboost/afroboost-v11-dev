@@ -318,6 +318,7 @@ async def edition_evenement(inv_id: str, request: Request):
     _o = dict(_offre)            # l'offre CANDIDATE (rien n'est écrit avant validation complète)
     _set_offre, _set_cours, _set_camp = {}, {}, {}
     _sensible = False
+    _v640b_params = None
 
     # ── Date / heure ────────────────────────────────────────────────────────
     _date = str(_b.get("date") or "").strip() if "date" in _b else None
@@ -347,14 +348,10 @@ async def edition_evenement(inv_id: str, request: Request):
                 _set_cours.update(date=_d, time=_h)
             elif _cours:
                 # V640b : cours récurrent — date libre. Si l'horaire ne correspond
-                # pas à une séance existante, on crée une séance ponctuelle dédiée.
+                # pas à une séance existante, on PRÉPARE la création d'une séance
+                # ponctuelle (différée après les gates simuler/confirmer).
                 if not IC.seance_du_cours(_cours, _nouvelle_occ + ":00"):
-                    _ponctuel = await _seance_ponctuelle(_cours, _d, _h, _c)
-                    _set_camp["course_id"] = _ponctuel["id"]
-                    _ids = list(_o.get("linked_course_ids") or [])
-                    if _ponctuel["id"] not in _ids:
-                        _ids.append(_ponctuel["id"])
-                        _set_offre["linked_course_ids"] = _ids
+                    _v640b_params = (_cours, _d, _h, _c, _o)
             _set_camp["occurrence"] = IC.normaliser_occurrence(_nouvelle_occ)
 
     # ── Lieu ────────────────────────────────────────────────────────────────
@@ -479,6 +476,18 @@ async def edition_evenement(inv_id: str, request: Request):
     if _sensible and (_part["reservations"] or _part["paiements"]) and _b.get("confirmer") is not True:
         raise HTTPException(status_code=409, detail={"code": "confirmation_requise", "message": MSG_CONFIRMATION,
                                                      "participants": _part})
+
+    # V640b : créer la séance ponctuelle APRÈS les gates (idempotent : même source+date → réutilise).
+    if _v640b_params:
+        _src, _pd, _ph, _pc, _po = _v640b_params
+        _existant = await _db()["courses"].find_one(
+            {"_v640b_ponctuel": True, "copie_de": _src.get("id"), "date": _pd, "time": _ph})
+        _ponctuel = _existant or await _seance_ponctuelle(_src, _pd, _ph, _pc)
+        _set_camp["course_id"] = _ponctuel["id"]
+        _ids = list(_po.get("linked_course_ids") or [])
+        if _ponctuel["id"] not in _ids:
+            _ids.append(_ponctuel["id"])
+            _set_offre["linked_course_ids"] = _ids
 
     _maintenant = datetime.now(timezone.utc).isoformat()
     if _set_offre:
