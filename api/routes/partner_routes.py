@@ -565,6 +565,21 @@ async def vue_partenaire(token: str, request: Request, response: Response):
             "source": l["source"],
         })
 
+    # V639c — Liens publics d'invitation pour le partage (jamais le jeton privé)
+    invitations_publiques = []
+    if partner_id:
+        _fe = os.environ.get("FRONTEND_URL", "https://afroboost.com")
+        for inv_id in (partner.get("invitation_ids") or []):
+            sess = await _db.chat_sessions.find_one(
+                {"id": inv_id, "is_deleted": {"$ne": True}},
+                {"_id": 0, "link_token": 1, "title": 1}
+            )
+            if sess and sess.get("link_token"):
+                invitations_publiques.append({
+                    "title": sess.get("title") or "Invitation Afroboost",
+                    "share_url": f"{_fe}/chat/{sess['link_token']}",
+                })
+
     return {
         "code": code_display,
         "codes": (partner.get("codes") if partner_id else None),
@@ -572,6 +587,7 @@ async def vue_partenaire(token: str, request: Request, response: Response):
         "pct_partenaire": pct,
         "lignes": lignes_pub,
         "totaux": totaux,
+        "invitations_publiques": invitations_publiques,
     }
 
 

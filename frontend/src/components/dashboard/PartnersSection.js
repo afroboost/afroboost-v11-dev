@@ -15,6 +15,7 @@
  * - La vue partenaire (publique) est sur /partenaire/{token}.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import SvgIcon from '../SvgIcon';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -248,6 +249,9 @@ function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, au
   const [frm, setFrm] = useState({ prenom: '', nom: '', date: '', montant: '' });
   const [frmErr, setFrmErr] = useState('');
   const [frmOk, setFrmOk] = useState(false);
+  const [qrVisible, setQrVisible] = useState(null); // inv_id affiché
+  const [copieInv, setCopieInv] = useState(null);   // inv_id copié
+  const qrRefs = useRef({});
 
   const charger = useCallback(async () => {
     setChargement(true); setErr('');
@@ -308,6 +312,32 @@ function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, au
   const lignes = details?.lignes || [];
   const pct = details?.pct_partenaire ?? partner.pct;
 
+  // V639c — liens publics d'invitation (partage)
+  const liensPartage = (partner.invitation_ids || []).reduce((acc, invId) => {
+    const lk = (allLinks || []).find((l) => l.id === invId);
+    if (lk && lk.link_token) acc.push({ id: invId, title: lk.title || 'Invitation', url: `https://afroboost.com/chat/${lk.link_token}` });
+    return acc;
+  }, []);
+
+  function copierUrlInv(invId, url) {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopieInv(invId); setTimeout(() => setCopieInv(null), 2500);
+    }).catch(() => {});
+  }
+
+  function telechargerQR(invId, titre) {
+    const wrapper = qrRefs.current[invId];
+    if (!wrapper) return;
+    const svg = wrapper.querySelector('svg');
+    if (!svg) return;
+    const data = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([data], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `qr-${(titre || 'invitation').replace(/[^a-z0-9]/gi, '-').toLowerCase()}.svg`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
   return (
     <Modal titre={partner.name} onClose={onClose}>
       {chargement && !details && (
@@ -340,6 +370,49 @@ function DetailsPartenaire({ partner, onClose, onUpdated, allCodes, allLinks, au
             <div style={{ background: 'rgba(234,179,8,0.12)', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#fde047', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
               <SvgIcon name="warning" size={16} style={{ flexShrink: 0, marginTop: 1 }} />
               <span>{t.nb_paiements_sans_reservation} paiement{t.nb_paiements_sans_reservation > 1 ? 's' : ''} sans réservation confirmée (statut « en attente »). Vérifier dans les transactions.</span>
+            </div>
+          )}
+
+          {/* V639c — Inviter des participants */}
+          {liensPartage.length > 0 && (
+            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                <SvgIcon name="gift" size={13} /> Inviter des participants
+              </div>
+              {liensPartage.map((lien) => (
+                <div key={lien.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {lien.title}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button onClick={() => copierUrlInv(lien.id, lien.url)}
+                            style={{ flex: 1, minWidth: 90, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, color: '#fff', padding: '8px 10px', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                      <SvgIcon name="copy" size={13} /> {copieInv === lien.id ? 'Copié ✓' : 'Copier'}
+                    </button>
+                    <a href={`https://wa.me/?text=${encodeURIComponent('Rejoins Afroboost : ' + lien.url)}`} target="_blank" rel="noopener noreferrer"
+                       style={{ flex: 1, minWidth: 90, background: 'rgba(37,211,102,0.12)', border: '1px solid rgba(37,211,102,0.25)', borderRadius: 8, color: '#86efac', padding: '8px 10px', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, textDecoration: 'none' }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.136.562 4.134 1.541 5.869L.057 23.986l6.305-1.483A11.953 11.953 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.75a9.75 9.75 0 110-19.5 9.75 9.75 0 010 19.5z"/></svg>
+                      WhatsApp
+                    </a>
+                    <button onClick={() => setQrVisible((v) => v === lien.id ? null : lien.id)}
+                            style={{ flex: 1, minWidth: 90, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, color: '#fff', padding: '8px 10px', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                      QR code
+                    </button>
+                  </div>
+                  {qrVisible === lien.id && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                      <div ref={(el) => { qrRefs.current[lien.id] = el; }} style={{ background: '#fff', padding: 10, borderRadius: 8, display: 'inline-block' }}>
+                        <QRCodeSVG value={lien.url} size={160} bgColor="#ffffff" fgColor="#1a0a1f" level="M" />
+                      </div>
+                      <button onClick={() => telechargerQR(lien.id, lien.title)}
+                              style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, color: 'rgba(255,255,255,0.75)', padding: '7px 14px', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <SvgIcon name="download" size={13} /> Télécharger le QR
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
