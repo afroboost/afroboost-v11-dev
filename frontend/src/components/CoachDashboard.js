@@ -55,6 +55,7 @@ import { etatMetierCode, finAfficheeCode } from "../utils/etatCodeV618"; // V618
 import { useDialogueAbonnement, formaterJour } from "./dashboard/DialogueAbonnement"; // V618i
 import useCockpitProspection, { ECRANS_A_PART as P3_ECRANS_A_PART } from "../hooks/useCockpitProspection"; // V587c + V595
 import MessagesRelancesSection from "./coach/MessagesRelancesSection"; // V588
+import PartnersSection from "./dashboard/PartnersSection"; // V638
 import ProspectionApercu from "./coach/prospection/ProspectionApercu"; // V595
 import ProspectionMedias from "./coach/prospection/ProspectionMedias"; // V595
 import ProspectionLiens from "./coach/prospection/ProspectionLiens"; // V595
@@ -6817,7 +6818,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     // bandeau y mènent toujours, et sont redirigés vers Campagnes → Prospection.
     { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
     // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
-    { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> }
+    { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> },
+    { id: "partenaires", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="users" size={14} /> Partenaires</span> } // V638
     // V260d: l'onglet « Preuves » a quitte cette barre — il est desormais une
     // carte de la page Gestion, au meme rang que « Offres & Cours » ou
     // « Ma Vitrine ». La barre principale reste ainsi lisible sur mobile.
@@ -9717,6 +9719,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 </div>
               </>
             )}
+          </div>
+        )}
+        {tab === "partenaires" && (
+          <div style={{ maxWidth: 760, margin: '0 auto' }}>
+            <PartnersSection />
           </div>
         )}
       </div>

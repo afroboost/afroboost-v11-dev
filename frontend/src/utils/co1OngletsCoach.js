@@ -12,7 +12,7 @@
 
 export const ONGLETS_COMMUNS = [
   'reservations', 'offers', 'codes', 'contacts', 'campaigns',
-  'prospection', 'conversations', 'corbeille',
+  'prospection', 'conversations', 'corbeille', 'partenaires',
 ];
 
 // Onglets propres au coach partenaire (le super-admin ne paie pas de crédits

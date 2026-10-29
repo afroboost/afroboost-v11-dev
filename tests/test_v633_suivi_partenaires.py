@@ -291,11 +291,11 @@ async def partie_vue_coach():
     # Recalcul: Alice(20) + Bruno(20) + Emma espèces(30) = 70 CHF net
     verifier("coach/totaux: nb_inscriptions >= 4", totaux.get("nb_inscriptions", 0) >= 4)
     verifier("coach/totaux: nb_rembourses == 1", totaux.get("nb_rembourses") == 1)
-    verifier("coach/totaux: total_net_chf = 70.0", totaux.get("total_net_chf") == 70.0)
+    verifier("coach/totaux: total_net_chf = 70.0", totaux.get("total_net_chf") == 90.0)
     verifier("coach/totaux: part_partenaire = 28.0",
-             abs(totaux.get("part_partenaire_chf", 0) - 28.0) < 0.01)
+             abs(totaux.get("part_partenaire_chf", 0) - 36.0) < 0.01)
     verifier("coach/totaux: part_afroboost = 42.0",
-             abs(totaux.get("part_afroboost_chf", 0) - 42.0) < 0.01)
+             abs(totaux.get("part_afroboost_chf", 0) - 54.0) < 0.01)
 
     # 5. Encaissement espèces
     emmas = [l for l in lignes if "Emma" in (l.get("nom") or "")]
@@ -343,9 +343,9 @@ async def partie_config():
     _, r4 = await appel(PR.details_code(HETAIRA10, req({}, admin())))
     verifier("config/details après update: pct 35%", r4.get("pct_partenaire") == 35)
     totaux = r4.get("totaux", {})
-    # 70 CHF net * 35% = 24.5
+    # 90 CHF net (V638: paiement_sans_reservation inclus) * 35% = 31.5
     verifier("config/totaux à 35%: part_partenaire",
-             abs(totaux.get("part_partenaire_chf", 0) - 24.5) < 0.01)
+             abs(totaux.get("part_partenaire_chf", 0) - 31.5) < 0.01)
 
     # Valeur invalide (> 100)
     try:
@@ -458,15 +458,14 @@ async def partie_calcul():
     verifier("calcul/session_id unique dans lignes",
              len(non_none_sessions) == len(set(non_none_sessions)))
 
-    # Arrondi déterministe : 70 CHF * 40% = 28.00 CHF exact
+    # V638 : paiement_sans_reservation inclus. Alice(20)+Bruno(20)+David(20)+Gaëlle(40)+Emma(30)=130
     totaux = r.get("totaux", {})
-    # Avec Gaëlle: Alice(20)+Bruno(20)+Gaëlle(40)+Emma espèces(30) = 110 CHF
     verifier("calcul/total_net avec Gaëlle = 110",
-             abs(totaux.get("total_net_chf", 0) - 110.0) < 0.01)
+             abs(totaux.get("total_net_chf", 0) - 130.0) < 0.01)
     verifier("calcul/40% de 110 = 44.0",
-             abs(totaux.get("part_partenaire_chf", 0) - 44.0) < 0.01)
+             abs(totaux.get("part_partenaire_chf", 0) - 52.0) < 0.01)
     verifier("calcul/60% de 110 = 66.0",
-             abs(totaux.get("part_afroboost_chf", 0) - 66.0) < 0.01)
+             abs(totaux.get("part_afroboost_chf", 0) - 78.0) < 0.01)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

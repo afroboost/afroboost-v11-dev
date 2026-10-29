@@ -214,7 +214,7 @@ def _totaux(lignes: list, pct_partenaire: int) -> dict:
     """Calcule les totaux financiers depuis la liste des lignes."""
     total_inscriptions = len(lignes)
     payes = [l for l in lignes if l["statut"] in ("paye", "paiement_sans_reservation")]
-    confirmes = [l for l in lignes if l["statut"] == "paye"]
+    confirmes = [l for l in lignes if l["statut"] in ("paye", "paiement_sans_reservation")]
     rembourses = [l for l in lignes if l["statut"] == "rembourse"]
 
     total_net = _arrondir_chf(sum(l["montant_chf"] for l in confirmes))

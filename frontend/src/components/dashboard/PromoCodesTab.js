@@ -1378,15 +1378,14 @@ const PromoCodesTab = ({
       </div>
       </>
       )}
+      {/* V637 : Panneau détail partenaire (modal) */}
+      {codePartenaire && (
+        <PartnerCodeDetails
+          code={codePartenaire}
+          onFermer={() => setCodePartenaire(null)}
+        />
+      )}
     </div>
-
-    {/* V637 : Panneau détail partenaire (modal) */}
-    {codePartenaire && (
-      <PartnerCodeDetails
-        code={codePartenaire}
-        onFermer={() => setCodePartenaire(null)}
-      />
-    )}
   );
 };
 
