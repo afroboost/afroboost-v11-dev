@@ -635,14 +635,17 @@ export default function PartnersSection() {
 
   useEffect(() => { charger(); }, [charger]);
 
+  const [creEnCours, setCreEnCours] = useState(false);  // V641 : anti-double-clic + feedback
   async function creerPartenaire(data) {
-    setCreOk(false);
+    if (creEnCours) return;                              // V641 : clic déjà en cours
+    setCreOk(false); setCreEnCours(true); setErr('');
     try {
       await apiFetch('/api/partner/partners', { method: 'POST', body: JSON.stringify(data) });
       setCreation(false); setCreOk(true);
       await charger();
       setTimeout(() => setCreOk(false), 3000);
-    } catch (e) { alert('Erreur : ' + e.message); }
+    } catch (e) { setErr(e.message); }                   // V641 : plus d'alert() (PWA fige)
+    finally { setCreEnCours(false); }
   }
 
   async function supprimerPartenaire(p) {
@@ -650,7 +653,7 @@ export default function PartnersSection() {
     try {
       await apiFetch(`/api/partner/partners/${p.id}`, { method: 'DELETE' });
       await charger();
-    } catch (e) { alert('Erreur : ' + e.message); }
+    } catch (e) { setErr(e.message); }
   }
 
   if (chargement) {
@@ -725,14 +728,15 @@ export default function PartnersSection() {
 
       {/* Modal création */}
       {creation && (
-        <Modal titre="Créer un partenaire" onClose={() => setCreation(false)}>
+        <Modal titre="Créer un partenaire" onClose={() => !creEnCours && setCreation(false)}>
           <FormulairePartenaire
             allCodes={allCodes}
             allLinks={allLinks}
             allCampagnes={allCampagnes}
             autresPartenaires={partenaires}
-            onCancel={() => setCreation(false)}
+            onCancel={() => !creEnCours && setCreation(false)}
             onSave={creerPartenaire}
+            chargement={creEnCours}
           />
         </Modal>
       )}
