@@ -235,7 +235,7 @@ function Corbeille({ version, onRestaure }) {
   );
 }
 
-export default function MesInvitations({ API }) {
+export default function MesInvitations({ API, onPartenaires }) {
   const [liste, setListe] = useState(null);
   const [erreur, setErreur] = useState('');
   const [edition, setEdition] = useState(null);
@@ -256,7 +256,14 @@ export default function MesInvitations({ API }) {
           <div style={{ fontWeight: 800, fontSize: 17 }}>Mes invitations</div>
           <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)' }}>Modifie textes, médias, date et tarifs sans rien casser des liens déjà partagés.</div>
         </div>
-        <button type="button" style={btn(true)} onClick={() => setCreation(true)} data-testid="mes-inv-nouvelle"><SvgIcon name="plus" size={15} /> Nouvelle invitation</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {onPartenaires && (
+            <button type="button" style={btn(false)} onClick={onPartenaires} data-testid="mes-inv-partenaires">
+              <SvgIcon name="users" size={15} /> Partenaires
+            </button>
+          )}
+          <button type="button" style={btn(true)} onClick={() => setCreation(true)} data-testid="mes-inv-nouvelle"><SvgIcon name="plus" size={15} /> Nouvelle invitation</button>
+        </div>
       </div>
       {erreur ? <p role="alert" style={{ color: 'rgba(255,200,190,0.95)', fontSize: 14 }}>{erreur}</p> : null}
       {liste === null && !erreur ? <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14 }}>Chargement…</p> : null}

@@ -1704,7 +1704,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // v37.2: Sous-onglet du HUB "Gestion" — 4 sections centralisées
   const [offersSubTab, setOffersSubTab] = useState('contenus');
   // V639 : sous-onglet interne de l'onglet « Invitation & partage »
-  const [parrainageSubTab, setParrainageSubTab] = useState('invitation');
+  const [showPartenaires, setShowPartenaires] = useState(false);
 
   // V226: la gestion des horaires se fait desormais UNIQUEMENT dans le wizard
   // d'offre (OfferWizard, etape 2 « Logistique »), qui couvre tout le cycle de
@@ -6821,7 +6821,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     { id: "conversations", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="messageCircle" size={14} /> {unreadCount > 0 ? `Conversations (${unreadCount})` : "Conversations"}</span> },
     // V314 : corbeille (récupération des suppressions). Visible pour tous — le backend cloisonne.
     { id: "corbeille", label: <span className="inline-flex items-center gap-1.5"><SvgIcon name="trash" size={14} /> Corbeille</span> },
-    // V638 : onglet partenaires intégré dans « Invitation & partage » (V639)
+    // V638/V639b : onglet partenaires remplacé par bouton discret dans Campagnes → Invitation & Parrainage
     // V260d: l'onglet « Preuves » a quitte cette barre — il est desormais une
     // carte de la page Gestion, au meme rang que « Offres & Cours » ou
     // « Ma Vitrine ». La barre principale reste ainsi lisible sur mobile.
@@ -8989,43 +8989,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               </div>
             )}
 
-            {/* V551 : Parrainage V2 — « Invitation & partage ». V639 : + onglet Partenaires. */}
+            {/* V551 : Parrainage V2 — « Invitation & partage ». */}
             {offersSubTab === 'parrainage' && (
               <div style={{ marginTop: 12 }}>
-                {/* Sous-navigation interne */}
-                <div style={{ display: 'flex', gap: 6, marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 12 }}>
-                  {[
-                    { id: 'invitation', label: 'Invitation & partage' },
-                    { id: 'partenaires', label: 'Partenaires' },
-                  ].map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => setParrainageSubTab(s.id)}
-                      style={{
-                        padding: '7px 16px',
-                        borderRadius: 20,
-                        border: parrainageSubTab === s.id
-                          ? '1.5px solid rgba(var(--primary-rgb,217,28,210),0.7)'
-                          : '1px solid rgba(255,255,255,0.12)',
-                        background: parrainageSubTab === s.id
-                          ? 'rgba(var(--primary-rgb,217,28,210),0.12)'
-                          : 'transparent',
-                        color: parrainageSubTab === s.id ? 'var(--primary-color,#D91CD2)' : 'rgba(255,255,255,0.6)',
-                        fontSize: 13,
-                        fontWeight: parrainageSubTab === s.id ? 700 : 400,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-                {parrainageSubTab === 'invitation' && <InvitationPartageCard API={API} />}
-                {parrainageSubTab === 'partenaires' && (
-                  <div style={{ maxWidth: 760 }}>
-                    <PartnersSection />
-                  </div>
-                )}
+                <InvitationPartageCard API={API} />
               </div>
             )}
 
@@ -9278,7 +9245,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
               return (
                 <button key={m.id} type="button" role="tab" aria-selected={actif}
                         data-testid={`campagnes-mode-${m.id}`}
-                        onClick={() => setCampagnesMode(m.id)}
+                        onClick={() => { setCampagnesMode(m.id); setShowPartenaires(false); }}
                         style={{ flex: '1 0 auto', minHeight: '44px', padding: '0 14px', borderRadius: '10px',
                                  border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
@@ -9294,8 +9261,24 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         )}
         {tab === "campaigns" && campagnesMode === "invitation" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-invitation">
-            <MesInvitations API={API} />
-            <AmbassadeursCoach />
+            {/* V639b : Partenaires accessible depuis Mes invitations — bouton discret à gauche de « + Nouvelle invitation ». */}
+            {showPartenaires ? (
+              <>
+                <button type="button" onClick={() => setShowPartenaires(false)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 16, padding: '7px 14px',
+                                 borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'rgba(255,255,255,0.8)',
+                                 background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)' }}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                  Mes invitations
+                </button>
+                <PartnersSection />
+              </>
+            ) : (
+              <>
+                <MesInvitations API={API} onPartenaires={() => setShowPartenaires(true)} />
+                <AmbassadeursCoach />
+              </>
+            )}
           </div>
         )}
 
@@ -9756,7 +9739,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             )}
           </div>
         )}
-        {/* V639 : l'onglet partenaires est maintenant dans Gestion → Invitation & partage */}
+        {/* V639b : le bouton Partenaires est dans Campagnes → Invitation & Parrainage → Mes invitations */}
       </div>
     </div>
   );
