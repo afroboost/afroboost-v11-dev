@@ -268,9 +268,11 @@ async def _edition(_c, camp, offre, cours) -> dict:
             "heure": str((cours or {}).get("time") or "")[:5] if await _cours_dedie(cours, offre) else _occ[11:16],
             "lieu": camp.get("lieu") or (cours or {}).get("locationName") or (cours or {}).get("location")
             or (offre or {}).get("location") or "",
-            # V640 : un cours récurrent autorise le choix d'une AUTRE séance
-            # (date + heure d'occurrence), sans toucher au cours lui-même.
-            "date_modifiable": True if (await _cours_dedie(cours, offre) or cours) else False,
+            # V640b-fix : la date est TOUJOURS modifiable pour un événement.
+            # Sans cours lié, on modifie l'offre + l'occurrence de la campagne.
+            # Avec cours dédié, on modifie aussi le cours.
+            # Avec cours récurrent, on crée une séance ponctuelle si besoin.
+            "date_modifiable": True,
             "cours_recurrent": bool(cours and not await _cours_dedie(cours, offre)),
             "tarifs": _tarifs(offre) if camp.get("type") == "event_paid" else None,
             "membres": ({"configuree": True, "actif": (offre or {}).get("gratuit_membres_actif") is not False,
@@ -342,7 +344,7 @@ async def edition_evenement(inv_id: str, request: Request):
                 raise HTTPException(status_code=422, detail="La nouvelle date doit être dans le futur.")
             _sensible = True
             if _dedie:
-                # V640 : cours dédié → on modifie aussi le cours et l'offre
+                # Cours dédié → on modifie le cours, l'offre ET l'occurrence
                 _o.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
                 _set_offre.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
                 _set_cours.update(date=_d, time=_h)
@@ -352,6 +354,10 @@ async def edition_evenement(inv_id: str, request: Request):
                 # ponctuelle (différée après les gates simuler/confirmer).
                 if not IC.seance_du_cours(_cours, _nouvelle_occ + ":00"):
                     _v640b_params = (_cours, _d, _h, _c, _o)
+            # V640b-fix : sans cours lié, on met à jour l'offre (countdown)
+            if not _dedie and not _cours:
+                _o.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
+                _set_offre.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
             _set_camp["occurrence"] = IC.normaliser_occurrence(_nouvelle_occ)
 
     # ── Lieu ────────────────────────────────────────────────────────────────
