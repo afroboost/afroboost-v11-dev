@@ -26,6 +26,7 @@ import hashlib
 import logging
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -102,6 +103,28 @@ async def _cours_dedie(cours, offre) -> bool:
         return False
     _n = await _db()["offers"].count_documents({"linked_course_ids": cours.get("id")})
     return _n <= 1 and cours.get("id") in (offre.get("linked_course_ids") or [])
+
+
+async def _seance_ponctuelle(cours_source, date, heure, coach):
+    """V640b : crée un cours ponctuel (date fixe) à partir d'un cours récurrent.
+    Le cours est invisible (réservation uniquement via l'invitation)."""
+    _id = str(uuid.uuid4())
+    _now = datetime.now(timezone.utc).isoformat()
+    _copie = {
+        "id": _id, "coach_id": coach["cle"],
+        "name": cours_source.get("name", "Séance"),
+        "date": date, "time": heure,
+        "location": cours_source.get("location", ""),
+        "locationName": cours_source.get("locationName", ""),
+        "duration": cours_source.get("duration"),
+        "visible": False, "archived": False,
+        "created_at": _now, "copie_de": cours_source.get("id"),
+        "_v640b_ponctuel": True,
+    }
+    await _db()["courses"].insert_one(dict(_copie))
+    logger.info("%s V640b séance ponctuelle %s (source=%s, %s %s)",
+                PREFIXE, _id, cours_source.get("id"), date, heure)
+    return _copie
 
 
 async def _participants(offre) -> dict:
@@ -323,11 +346,15 @@ async def edition_evenement(inv_id: str, request: Request):
                 _set_offre.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
                 _set_cours.update(date=_d, time=_h)
             elif _cours:
-                # V640 : cours RÉCURRENT → vérifier que c'est une séance valide
+                # V640b : cours récurrent — date libre. Si l'horaire ne correspond
+                # pas à une séance existante, on crée une séance ponctuelle dédiée.
                 if not IC.seance_du_cours(_cours, _nouvelle_occ + ":00"):
-                    raise HTTPException(status_code=422, detail=(
-                        "Cette date ne correspond pas à une séance de ce cours "
-                        "(vérifie le jour et l'heure)."))
+                    _ponctuel = await _seance_ponctuelle(_cours, _d, _h, _c)
+                    _set_camp["course_id"] = _ponctuel["id"]
+                    _ids = list(_o.get("linked_course_ids") or [])
+                    if _ponctuel["id"] not in _ids:
+                        _ids.append(_ponctuel["id"])
+                        _set_offre["linked_course_ids"] = _ids
             _set_camp["occurrence"] = IC.normaliser_occurrence(_nouvelle_occ)
 
     # ── Lieu ────────────────────────────────────────────────────────────────
