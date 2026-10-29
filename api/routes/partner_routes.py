@@ -569,10 +569,11 @@ async def vue_partenaire(token: str, request: Request, response: Response):
     invitations_publiques = []
     if partner_id:
         _fe = os.environ.get("FRONTEND_URL", "https://afroboost.com").rstrip("/")
-        # Liens Intelligents (chat_sessions)
+        # Liens Intelligents (chat_sessions) — coach_id vérifié pour éviter l'IDOR
+        _inv_filtre_base = {} if is_super_admin(coach_id) else {"coach_id": coach_id}
         for inv_id in (partner.get("invitation_ids") or []):
             sess = await _db.chat_sessions.find_one(
-                {"id": inv_id, "is_deleted": {"$ne": True}},
+                {"id": inv_id, "is_deleted": {"$ne": True}, **_inv_filtre_base},
                 {"_id": 0, "link_token": 1, "title": 1}
             )
             if sess and sess.get("link_token"):
@@ -580,10 +581,11 @@ async def vue_partenaire(token: str, request: Request, response: Response):
                     "title": sess.get("title") or "Invitation Afroboost",
                     "share_url": f"{_fe}/chat/{sess['link_token']}",
                 })
-        # Invitations natives (referral_campaigns)
+        # Invitations natives (referral_campaigns) — coach_id vérifié pour éviter l'IDOR
+        _camp_filtre_base = {} if is_super_admin(coach_id) else {"coach_id": coach_id}
         for camp_id in (partner.get("campagne_ids") or []):
             camp = await _db.referral_campaigns.find_one(
-                {"id": camp_id, "status": {"$ne": "archived"}},
+                {"id": camp_id, "status": {"$ne": "archived"}, **_camp_filtre_base},
                 {"_id": 0, "share_token": 1, "title": 1, "version": 1}
             )
             if camp and camp.get("share_token"):
@@ -695,26 +697,40 @@ async def _lignes_pour_campagne(camp_id: str, coach_id: str, strict: bool = Fals
         pmt = rel.get("paiement") or {}
         nom = _sanitiser_str(rel.get("nom") or "")
         email_h = _sanitiser_str(rel.get("email_empreinte") or "")
-        key = rid or f"rel:{rel.get('jeton', '')}"
+        # Fix 3 : clé unifiée resa: pour partager la déduplication avec les autres sources
+        key = f"resa:{rid}" if rid else f"rel:{rel.get('jeton', '')}"
         if key in lignes:
             continue
         montant = _arrondir_chf(float(pmt.get("montant") or 0))
+        sid = None
+        r = {}
         if rid:
             r = await _db.reservations.find_one({"id": rid}, {"_id": 0}) or {}
-            sid = _sanitiser_str(r.get("stripeSessionId") or r.get("stripe_session_id") or "")
-            if sid:
-                tx = await _db.payment_transactions.find_one({"session_id": sid}, {"_id": 0})
+            sid_raw = _sanitiser_str(r.get("stripeSessionId") or r.get("stripe_session_id") or "")
+            if sid_raw:
+                filtre_tx = {"session_id": sid_raw}
+                if strict or not is_super_admin(coach_id):
+                    filtre_tx["coach_id"] = coach_id
+                tx = await _db.payment_transactions.find_one(filtre_tx, {"_id": 0})
                 if tx:
+                    sid = sid_raw  # Fix 3 : session_id résolu pour déduplication croisée
                     qte = int(tx.get("quantity") or 1)
                     montant = _arrondir_chf(float(tx.get("tarif_applique") or tx.get("amount") or montant) * qte)
                     nom = _sanitiser_str(tx.get("customer_name") or nom)
+                    # Fix 2 : statut depuis payment_status, pas depuis montant
+                    statut_raw = _sanitiser_str(tx.get("payment_status") or "")
+                    statut = "paye" if statut_raw in ("paid", "completed") else ("rembourse" if statut_raw == "refunded" else "en_attente")
+                else:
+                    statut = "reservation_sans_paiement"
+            else:
+                statut = "reservation_sans_paiement"
             lignes[key] = {
-                "session_id": None,
+                "session_id": sid,
                 "nom": nom,
                 "email": email_h,
                 "montant_chf": montant,
                 "reduction_chf": 0.0,
-                "statut": "paye" if montant > 0 else "reservation_sans_paiement",
+                "statut": statut,
                 "moyen": "en_ligne",
                 "source": "campagne",
                 "date_seance": _sanitiser_str(r.get("datetime") or r.get("date") or ""),
@@ -724,13 +740,16 @@ async def _lignes_pour_campagne(camp_id: str, coach_id: str, strict: bool = Fals
                 "created_at": _sanitiser_str(rel.get("created_at") or ""),
             }
         elif montant > 0:
+            # Paiement relais sans reservation_id : statut depuis rel.paiement.statut (Fix 2)
+            pmt_statut = _sanitiser_str(pmt.get("statut") or "")
+            statut = "paye" if pmt_statut in ("paid", "completed", "paye") else "en_attente"
             lignes[key] = {
                 "session_id": None,
                 "nom": nom,
                 "email": email_h,
                 "montant_chf": montant,
                 "reduction_chf": 0.0,
-                "statut": "paye",
+                "statut": statut,
                 "moyen": "en_ligne",
                 "source": "campagne",
                 "date_seance": "",
@@ -763,10 +782,10 @@ async def _lignes_pour_partenaire(partner_doc: dict, coach_id: str, strict: bool
             if key and key not in all_by_session:
                 all_by_session[key] = l
 
-    # 2b. Par invitations natives (referral_campaigns)
+    # 2b. Par invitations natives (referral_campaigns) — même schéma de déduplication
     for camp_id in partner_doc.get("campagne_ids") or []:
         for l in await _lignes_pour_campagne(camp_id, coach_id, strict=strict):
-            key = l.get("session_id") or f"camp_resa:{l.get('reservation_id', '')}"
+            key = l.get("session_id") or f"resa:{l.get('reservation_id', '')}"
             if key and key not in all_by_session:
                 all_by_session[key] = l
 
@@ -841,6 +860,34 @@ async def lister_partenaires(request: Request):
     return {"partenaires": docs}
 
 
+async def _valider_campagne_ids(ids: list, coach_id: str) -> list:
+    """Garde uniquement les campagne_ids qui appartiennent au coach (anti-IDOR)."""
+    if not ids:
+        return []
+    _safe = [str(i)[:100] for i in ids if isinstance(i, str) and i.strip()][:20]
+    if not _safe:
+        return []
+    _filtre = {"id": {"$in": _safe}}
+    if not is_super_admin(coach_id):
+        _filtre["coach_id"] = coach_id
+    docs = await _db.referral_campaigns.find(_filtre, {"_id": 0, "id": 1}).to_list(20)
+    return [d["id"] for d in docs]
+
+
+async def _valider_invitation_ids(ids: list, coach_id: str) -> list:
+    """Garde uniquement les invitation_ids (chat_sessions) qui appartiennent au coach (anti-IDOR)."""
+    if not ids:
+        return []
+    _safe = [str(i)[:100] for i in ids if isinstance(i, str) and i.strip()][:20]
+    if not _safe:
+        return []
+    _filtre = {"id": {"$in": _safe}, "is_deleted": {"$ne": True}}
+    if not is_super_admin(coach_id):
+        _filtre["coach_id"] = coach_id
+    docs = await _db.chat_sessions.find(_filtre, {"_id": 0, "id": 1}).to_list(20)
+    return [d["id"] for d in docs]
+
+
 @partner_router.post("/partners")
 async def creer_partenaire(data: PartenaireData, request: Request):
     """Crée un nouveau partenaire pour le coach authentifié."""
@@ -854,8 +901,8 @@ async def creer_partenaire(data: PartenaireData, request: Request):
         "name": data.name.strip(),
         "pct": data.pct,
         "codes": [c.upper() for c in data.codes],
-        "invitation_ids": list(data.invitation_ids),
-        "campagne_ids": list(data.campagne_ids),
+        "invitation_ids": await _valider_invitation_ids(data.invitation_ids, coach),
+        "campagne_ids": await _valider_campagne_ids(data.campagne_ids, coach),
         "created_at": now,
         "updated_at": now,
         "deleted": False,
@@ -909,8 +956,8 @@ async def modifier_partenaire(partner_id: str, data: PartenaireData, request: Re
         "name": data.name.strip(),
         "pct": data.pct,
         "codes": [c.upper() for c in data.codes],
-        "invitation_ids": list(data.invitation_ids),
-        "campagne_ids": list(data.campagne_ids),
+        "invitation_ids": await _valider_invitation_ids(data.invitation_ids, coach),
+        "campagne_ids": await _valider_campagne_ids(data.campagne_ids, coach),
         "updated_at": now,
     }})
     updated = await _db.partners.find_one({"id": partner_id}, {"_id": 0, "deleted": 0})
