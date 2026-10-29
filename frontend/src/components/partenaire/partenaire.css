@@ -1,0 +1,197 @@
+/*
+ * V637 — Vue Partenaire (classes pv-*).
+ * Palette : fond noir, texte blanc, accent = var(--primary-color).
+ * Mobile-first, aucune couleur en dur sauf les badges sémantiques.
+ */
+
+.pv-root {
+  background: #000;
+  color: rgba(255, 255, 255, 0.92);
+  font-family: inherit;
+  min-width: 0;
+}
+
+.pv-contenu {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pv-centre {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+/* Chargement */
+.pv-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  color: var(--primary-color, #D91CD2);
+  animation: pv-spin 1s linear infinite;
+}
+
+@keyframes pv-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Erreur */
+.pv-erreur {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pv-erreur svg { color: rgba(255, 255, 255, 0.2); }
+
+.pv-erreur-titre {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.pv-erreur-texte {
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 380px;
+}
+
+/* Tableau des inscriptions */
+.pv-tableau {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pv-ligne {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pv-ligne--grise {
+  opacity: 0.45;
+}
+
+.pv-ligne-gauche {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pv-nom {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pv-date {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.pv-ligne-droite {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.pv-montant {
+  font-size: 15px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.pv-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Badges statut */
+.pv-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pv-badge--vert  { background: rgba(34, 197, 94, 0.15); color: #86efac; }
+.pv-badge--rouge { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+.pv-badge--jaune { background: rgba(234, 179, 8, 0.15); color: #fde047; }
+.pv-badge--mauve { background: rgba(var(--primary-rgb, 217, 28, 210), 0.2); color: var(--primary-color, #D91CD2); }
+.pv-badge--gris  { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.5); }
+
+/* État vide */
+.pv-vide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 36px 0;
+  color: rgba(255, 255, 255, 0.3);
+  text-align: center;
+  font-size: 14px;
+}
+
+.pv-vide svg { color: rgba(255, 255, 255, 0.12); }
+
+/* Récapitulatif */
+.pv-recap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pv-recapligne {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pv-recapligne:last-child { border-bottom: none; }
+
+.pv-recapligne--accent {
+  font-size: 16px;
+  color: var(--primary-color, #D91CD2);
+}
+
+.pv-recapligne--accent strong { color: var(--primary-color, #D91CD2); }
+
+.pv-recapligne--muted { color: rgba(255, 255, 255, 0.45); }
+.pv-recapligne--rouge { color: rgba(239, 68, 68, 0.75); }
+
+/* Pied de page */
+.pv-footer {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.25);
+  text-align: center;
+  margin: 0;
+  line-height: 1.6;
+}

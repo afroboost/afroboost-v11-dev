@@ -50,6 +50,8 @@ from api.routes.cinetpay_routes import router as cinetpay_router, init_db as ini
 # V325: Import routes PawaPay (mobile money, derrière le drapeau PAWAPAY_ENABLED)
 from api.routes.pawapay_routes import router as pawapay_router, init_db as init_pawapay_db
 from api.routes.spordate_routes import router as spordate_router, init_db as init_spordate_db  # V387
+# V637 : Suivi partenaires — vue coach + vue partenaire par jeton
+from api.routes.partner_routes import partner_router, init_partner_db  # noqa: E402
 from api.routes.referral_routes import router as referral_router, init_db as init_referral_db  # V534
 # v15.0: Import routes paiement multi-vendeurs
 from api.routes.payment_config_routes import router as payment_config_router, init_db as init_payment_config_db
@@ -57661,6 +57663,9 @@ init_pawapay_db(db)
 # V387 : pont « une seule cle » vers Spordate (afroboost.com/rencontre)
 fastapi_app.include_router(spordate_router)
 init_spordate_db(db)
+# V637 : Suivi partenaires — vue coach (JWT) + vue partenaire (jeton public)
+fastapi_app.include_router(partner_router)
+init_partner_db(db)
 # V534 : Centre Parrainage unique (Pass Duo). Toujours monté ; chaque route
 # relit `feature_flags.parrainage_duo_enabled` (OFF par défaut) et répond 404
 # tant qu'il n'est pas activé — sauf `/config`, qui dit `{enabled:false}`.

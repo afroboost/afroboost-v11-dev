@@ -274,6 +274,7 @@ const CentreParrainage = lazy(() => import("./components/parrainage/CentreParrai
 const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo"));
 const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne")); // PAR-3 : /duo/c/<token>
 const InvitationPublique = lazy(() => import("./components/InvitationPublique")); // V607 : /i/<jeton> (lien court)
+const PartnerView = lazy(() => import("./components/partenaire/PartnerView")); // V637 : /partenaire/<jeton>
 const InviterMesAmis = lazy(() => import("./components/InviterMesAmis")); // V607 : lien perso après un événement
 const AccesMembreEvenement = lazy(() => import("./components/AccesMembreEvenement")); // V610b : gratuité = espace membre
 const CodePromoEvenement = lazy(() => import("./components/CodePromoEvenement")); // V628 : place d'événement par code promo
@@ -4902,6 +4903,7 @@ function App() {
   const [showSubscriberSpace, setShowSubscriberSpace] = useState(null); // V184: Code abonné pour espace d'accès rapide
   const [parrainagePage, setParrainagePage] = useState(''); // V534: '' | 'centre' | 'duo'
   const [duoToken, setDuoToken] = useState(''); // V534: jeton de /duo/<token>
+  const [partenaireToken, setPartenaireToken] = useState(''); // V637 : /partenaire/<token>
   // V605 : /rdv/<token> — prise de rendez-vous publique (lu une fois, chaîne primitive).
   const [rdvToken] = useState(() => {
     const m = typeof window !== 'undefined' && window.location.pathname.match(/^\/rdv\/([A-Za-z0-9_-]{16,64})\/?$/);
@@ -5888,6 +5890,10 @@ function App() {
       if (campagne) { setParrainagePage('campagne'); setDuoToken(campagne[1]); return; }
       const duo = path.match(/^\/duo\/([A-Za-z0-9_-]+)\/?$/);
       if (duo) { setParrainagePage('duo'); setDuoToken(duo[1]); return; }
+      // V637 : /partenaire/<token> (vue partenaire sans compte)
+      const partenaire = path.match(/^\/partenaire\/([A-Za-z0-9_-]{10,})\/?$/);
+      if (partenaire) { setPartenaireToken(partenaire[1]); return; }
+      setPartenaireToken('');
       setParrainagePage(''); setDuoToken('');
     };
     checkParrainage();
@@ -8100,6 +8106,15 @@ function App() {
       </Suspense>
     );
   }
+  // V637 : vue partenaire (accès par jeton, sans compte)
+  if (partenaireToken) {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
+        <PartnerView token={partenaireToken} />
+      </Suspense>
+    );
+  }
+
   if (parrainagePage === 'centre') {
     return (
       <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>

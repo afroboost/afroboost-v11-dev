@@ -13,6 +13,7 @@ import EcheancesPaiement from "./EcheancesPaiement"; // V617
 import IntegriteAbonnements from "./IntegriteAbonnements"; // V618 : plusieurs abonnements actifs = à vérifier
 import AbonnementsOrphelins from "./AbonnementsOrphelins"; // V618i : abonnements dont le code a été supprimé
 import { etatMetierCode, finAfficheeCode, lienEspaceProposable, ETAT_ACTIF, ETAT_CONFLIT } from "../../utils/etatCodeV618"; // V618f
+import PartnerCodeDetails from './PartnerCodeDetails'; // V637 — suivi partenaire
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -88,6 +89,7 @@ const PromoCodesTab = ({
 }) => {
   const fileInputRef = useRef(null);
   const [copiedCodeId, setCopiedCodeId] = useState(null); // v14.0: État pour bouton "Copié"
+  const [codePartenaire, setCodePartenaire] = useState(null); // V637 : code ouvert dans le panneau partenaire
   // V185 F2: Feedback pour le bouton "Lien d'accès rapide"
   const [copiedSpaceLinkId, setCopiedSpaceLinkId] = useState(null);
   // V193: filtre dédié pour la grille des bénéficiaires (chips)
@@ -545,6 +547,16 @@ const PromoCodesTab = ({
                     <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Dupliquer</span>
                   </button>
                 )}
+
+                {/* V637 : Bouton Détails partenaire */}
+                <button
+                  onClick={() => setCodePartenaire(code.code)}
+                  className="px-3 py-1.5 rounded text-xs bg-white/10 text-white/60 hover:bg-white/15 hover:text-white/90"
+                  data-testid={`partner-details-${code.id}`}
+                  title="Suivi partenaire (inscriptions, commissions, lien)"
+                >
+                  <span className="inline-flex items-center gap-1.5"><SvgIcon name="barChart" size={14} /> Détails</span>
+                </button>
                 
                 {/* Bouton Supprimer */}
                 <button
@@ -1367,6 +1379,14 @@ const PromoCodesTab = ({
       </>
       )}
     </div>
+
+    {/* V637 : Panneau détail partenaire (modal) */}
+    {codePartenaire && (
+      <PartnerCodeDetails
+        code={codePartenaire}
+        onFermer={() => setCodePartenaire(null)}
+      />
+    )}
   );
 };
 
