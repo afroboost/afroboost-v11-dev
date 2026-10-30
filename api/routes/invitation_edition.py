@@ -127,6 +127,28 @@ async def _seance_ponctuelle(cours_source, date, heure, coach):
     return _copie
 
 
+async def _seance_autonome(date, heure, coach, camp, offre, campagne_id):
+    """V640b-fix : crée une séance ponctuelle SANS cours source (invitation sans
+    course_id, ex. Hétaïra). Lieu déduit de la campagne ou de l'offre.
+    _campagne_id assure l'indépendance entre invitations au même horaire."""
+    _id = str(uuid.uuid4())
+    _now = datetime.now(timezone.utc).isoformat()
+    _lieu = camp.get("lieu") or (offre or {}).get("location") or ""
+    _doc = {
+        "id": _id, "coach_id": coach["cle"],
+        "name": (offre or {}).get("name") or camp.get("title") or "Séance",
+        "date": date, "time": heure,
+        "location": _lieu, "locationName": _lieu,
+        "duration": (offre or {}).get("duration"),
+        "visible": False, "archived": False,
+        "created_at": _now, "_v640b_ponctuel": True,
+        "_campagne_id": campagne_id,
+    }
+    await _db()["courses"].insert_one(dict(_doc))
+    logger.info("%s V640b-fix séance autonome %s (%s %s)", PREFIXE, _id, date, heure)
+    return _doc
+
+
 async def _participants(offre) -> dict:
     if not offre:
         return {"reservations": 0, "paiements": 0}
@@ -269,9 +291,9 @@ async def _edition(_c, camp, offre, cours) -> dict:
             "lieu": camp.get("lieu") or (cours or {}).get("locationName") or (cours or {}).get("location")
             or (offre or {}).get("location") or "",
             # V640b-fix : la date est TOUJOURS modifiable pour un événement.
-            # Sans cours lié, on modifie l'offre + l'occurrence de la campagne.
-            # Avec cours dédié, on modifie aussi le cours.
-            # Avec cours récurrent, on crée une séance ponctuelle si besoin.
+            # Sans cours : une séance autonome est créée à l'horaire choisi.
+            # Cours dédié : le cours et l'offre sont modifiés.
+            # Cours récurrent : une séance ponctuelle est créée si besoin.
             "date_modifiable": True,
             "cours_recurrent": bool(cours and not await _cours_dedie(cours, offre)),
             "tarifs": _tarifs(offre) if camp.get("type") == "event_paid" else None,
@@ -321,6 +343,7 @@ async def edition_evenement(inv_id: str, request: Request):
     _set_offre, _set_cours, _set_camp = {}, {}, {}
     _sensible = False
     _v640b_params = None
+    _v640b_autonome = None
 
     # ── Date / heure ────────────────────────────────────────────────────────
     _date = str(_b.get("date") or "").strip() if "date" in _b else None
@@ -354,10 +377,10 @@ async def edition_evenement(inv_id: str, request: Request):
                 # ponctuelle (différée après les gates simuler/confirmer).
                 if not IC.seance_du_cours(_cours, _nouvelle_occ + ":00"):
                     _v640b_params = (_cours, _d, _h, _c, _o)
-            # V640b-fix : sans cours lié, on met à jour l'offre (countdown)
+            # V640b-fix : sans cours lié, créer une séance autonome (différée
+            # après les gates simuler/confirmer, comme pour les récurrents).
             if not _dedie and not _cours:
-                _o.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
-                _set_offre.update(countdown_enabled=True, countdown_date=_d, countdown_time=_h)
+                _v640b_autonome = (_d, _h, _c, _camp, _o)
             _set_camp["occurrence"] = IC.normaliser_occurrence(_nouvelle_occ)
 
     # ── Lieu ────────────────────────────────────────────────────────────────
@@ -493,6 +516,19 @@ async def edition_evenement(inv_id: str, request: Request):
         _ids = list(_po.get("linked_course_ids") or [])
         if _ponctuel["id"] not in _ids:
             _ids.append(_ponctuel["id"])
+            _set_offre["linked_course_ids"] = _ids
+
+    # V640b-fix : séance autonome pour invitation sans cours (idempotent PAR invitation).
+    if _v640b_autonome:
+        _ad, _ah, _ac, _acamp, _ao = _v640b_autonome
+        _existant = await _db()["courses"].find_one(
+            {"_v640b_ponctuel": True, "copie_de": {"$exists": False},
+             "_campagne_id": _camp["id"], "date": _ad, "time": _ah})
+        _auto = _existant or await _seance_autonome(_ad, _ah, _ac, _acamp, _ao, _camp["id"])
+        _set_camp["course_id"] = _auto["id"]
+        _ids = list(_ao.get("linked_course_ids") or [])
+        if _auto["id"] not in _ids:
+            _ids.append(_auto["id"])
             _set_offre["linked_course_ids"] = _ids
 
     _maintenant = datetime.now(timezone.utc).isoformat()
