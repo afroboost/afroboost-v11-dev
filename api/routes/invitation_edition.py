@@ -127,9 +127,10 @@ async def _seance_ponctuelle(cours_source, date, heure, coach):
     return _copie
 
 
-async def _seance_autonome(date, heure, coach, camp, offre):
+async def _seance_autonome(date, heure, coach, camp, offre, campagne_id):
     """V640b-fix : crée une séance ponctuelle SANS cours source (invitation sans
-    course_id, ex. Hétaïra). Lieu déduit de la campagne ou de l'offre."""
+    course_id, ex. Hétaïra). Lieu déduit de la campagne ou de l'offre.
+    _campagne_id assure l'indépendance entre invitations au même horaire."""
     _id = str(uuid.uuid4())
     _now = datetime.now(timezone.utc).isoformat()
     _lieu = camp.get("lieu") or (offre or {}).get("location") or ""
@@ -141,6 +142,7 @@ async def _seance_autonome(date, heure, coach, camp, offre):
         "duration": (offre or {}).get("duration"),
         "visible": False, "archived": False,
         "created_at": _now, "_v640b_ponctuel": True,
+        "_campagne_id": campagne_id,
     }
     await _db()["courses"].insert_one(dict(_doc))
     logger.info("%s V640b-fix séance autonome %s (%s %s)", PREFIXE, _id, date, heure)
@@ -516,13 +518,13 @@ async def edition_evenement(inv_id: str, request: Request):
             _ids.append(_ponctuel["id"])
             _set_offre["linked_course_ids"] = _ids
 
-    # V640b-fix : séance autonome pour invitation sans cours (idempotent sur date+heure+coach).
+    # V640b-fix : séance autonome pour invitation sans cours (idempotent PAR invitation).
     if _v640b_autonome:
         _ad, _ah, _ac, _acamp, _ao = _v640b_autonome
         _existant = await _db()["courses"].find_one(
             {"_v640b_ponctuel": True, "copie_de": {"$exists": False},
-             "coach_id": _ac["cle"], "date": _ad, "time": _ah})
-        _auto = _existant or await _seance_autonome(_ad, _ah, _ac, _acamp, _ao)
+             "_campagne_id": _camp["id"], "date": _ad, "time": _ah})
+        _auto = _existant or await _seance_autonome(_ad, _ah, _ac, _acamp, _ao, _camp["id"])
         _set_camp["course_id"] = _auto["id"]
         _ids = list(_ao.get("linked_course_ids") or [])
         if _auto["id"] not in _ids:
