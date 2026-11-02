@@ -1548,6 +1548,45 @@ body {
   color: rgba(134, 239, 172, 0.95);
 }
 
+/* ─── V645 — EN-TÊTE BOUTIQUE : « Tout voir » + GRANDE BANNIÈRE ───────────── */
+.af-boutique-tete-droite { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.af-boutique-toutvoir {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: transparent; border: 1px solid rgba(255,255,255,0.22); color: #fff;
+  transition: border-color .18s, background .18s;
+}
+.af-boutique-toutvoir:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
+.af-boutique-banniere {
+  position: relative; width: 100%; border-radius: 18px; overflow: hidden;
+  margin-bottom: 18px; background: #0c0c0e;
+  aspect-ratio: 16 / 7;
+}
+@media (max-width: 640px) { .af-boutique-banniere { aspect-ratio: 4 / 3; } }
+.af-boutique-banniere-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.af-boutique-banniere-overlay {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+  align-items: flex-start; justify-content: flex-end; gap: 12px; padding: clamp(18px, 3vw, 34px);
+  background: linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 80%);
+}
+.af-boutique-banniere-badge {
+  display: inline-block; padding: 5px 12px; border-radius: 999px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+  background: var(--primary-color, #D91CD2); color: #fff;
+}
+.af-boutique-banniere-titre {
+  margin: 0; color: #fff; line-height: 0.98; letter-spacing: -0.02em;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 900;
+  font-size: clamp(1.8rem, 5.5vw, 3.4rem); text-transform: uppercase;
+  text-shadow: 0 2px 16px rgba(0,0,0,0.6);
+}
+.af-boutique-banniere-cta {
+  display: inline-flex; align-items: center; cursor: pointer; margin-top: 4px;
+  padding: 11px 26px; border-radius: 999px; font-size: 14px; font-weight: 800;
+  background: #fff; color: #000; border: none; transition: transform .15s, box-shadow .15s;
+}
+.af-boutique-banniere-cta:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(0,0,0,0.4); }
+
 /* LA MISE EN PAGE DES PRODUITS.
    Sur téléphone, on GARDE le carrousel : glisser du doigt est naturel, et
    c'est le mécanisme déjà en place. Sur grand écran un défilement horizontal

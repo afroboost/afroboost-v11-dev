@@ -5004,7 +5004,11 @@ function App() {
   const [selectedAudioTracks, setSelectedAudioTracks] = useState([]); // v57: sélection multiple audio
   const [audioLightbox, setAudioLightbox] = useState(null); // v57: modale miniature audio {track}
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "" });
-  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
+  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "",
+    // V645 : bannière média de la section Boutique sur l'accueil. Clé PROPRE
+    // (distincte du futur boutique_page_banner : les deux médias ne s'écrasent
+    // jamais). Vide = pas de bannière affichée.
+    home_shop_banner_url: "", home_shop_banner_type: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
   // V260: offre en cours de choix / de saisie de preuve sociale (null = fermee)
   const [v260ChoiceOffer, setV260ChoiceOffer] = useState(null);
@@ -9933,15 +9937,52 @@ function App() {
                 </p>
                 <p className="af-boutique-sous">{t('shopDescription')}</p>
               </div>
-              <span className="af-boutique-livraison">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="1" y="3" width="15" height="13" /><path d="M16 8h4l3 3v5h-7z" />
-                  <circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" />
-                </svg>
-                {t('deliveryAvailable')}
-              </span>
+              <div className="af-boutique-tete-droite">
+                <span className="af-boutique-livraison">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="1" y="3" width="15" height="13" /><path d="M16 8h4l3 3v5h-7z" />
+                    <circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" />
+                  </svg>
+                  {t('deliveryAvailable')}
+                </span>
+                {/* V645 : « Tout voir » défile vers les cartes produits réelles ci-dessous
+                    (action réelle — aucun bouton inerte). */}
+                <button
+                  type="button"
+                  className="af-boutique-toutvoir"
+                  onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                >
+                  Tout voir
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                </button>
+              </div>
             </div>
-            
+
+            {/* V645 — GRANDE BANNIÈRE DE LA BOUTIQUE. Média (photo OU vidéo) téléversé
+                par le coach via le dashboard (clé concept.home_shop_banner_url). Vidéo :
+                autoplay muette en boucle, sans contrôles, avec poster. Rien n'est affiché
+                tant que le coach n'a pas configuré de média — aucun faux visuel. */}
+            {concept.home_shop_banner_url ? (
+              <div className="af-boutique-banniere">
+                {concept.home_shop_banner_type === 'video' ? (
+                  <video className="af-boutique-banniere-media" src={concept.home_shop_banner_url} autoPlay loop muted playsInline preload="metadata" />
+                ) : (
+                  <img className="af-boutique-banniere-media" src={concept.home_shop_banner_url} alt="Boutique Afroboost" loading="lazy" />
+                )}
+                <div className="af-boutique-banniere-overlay">
+                  <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
+                  <h3 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT</h3>
+                  <button
+                    type="button"
+                    className="af-boutique-banniere-cta"
+                    onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                  >
+                    Découvrir
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <OffersSliderAutoPlay
               offers={filteredProducts}
               selectedOffer={selectedOffer}
