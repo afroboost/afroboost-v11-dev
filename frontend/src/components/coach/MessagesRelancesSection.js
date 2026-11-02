@@ -619,11 +619,12 @@ export default function MessagesRelancesSection({ API, actif }) {
       )}
 
       {/* ─── SPLIT PANE (desktop) / BASCULE (mobile) ─── */}
-      <div style={{ display: 'flex', gap: '0', minHeight: 'min(72vh, 640px)', border: `1px solid ${BORD}`, borderRadius: '10px', overflow: 'hidden', background: '#000' }}>
+      <div style={{ display: 'flex', gap: '0', height: 'min(72vh, 640px)', border: `1px solid ${BORD}`, borderRadius: '10px', overflow: 'hidden', background: '#000' }}>
         {/* COLONNE GAUCHE : liste */}
         {voirListe && (
           <div style={{ width: mobile ? '100%' : '340px', minWidth: mobile ? undefined : '280px', maxWidth: mobile ? undefined : '400px',
-            flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: mobile ? 'none' : `1px solid ${BORD}` }}>
+            flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            borderRight: mobile ? 'none' : `1px solid ${BORD}` }}>
             <ul data-testid="mr-liste" style={{ listStyle: 'none', margin: 0, padding: '4px', flex: 1,
               overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {visibles.map((l) => (
