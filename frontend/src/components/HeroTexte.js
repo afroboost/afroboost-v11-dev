@@ -147,19 +147,45 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
       const h = noeud ? noeud.offsetHeight : 0;
       suivant[el] = borner({ x: brut.x, y: brut.y }, w, h, L, H, appareil);
     });
-    // V645.1 : anti-chevauchement titre multi-lignes / sous-titre (mode positionné).
-    // Le titre occupe désormais N lignes (rendreTitre) ; l'ancienne position du
-    // sous-titre peut se retrouver dans sa zone. On le pousse vers le bas si
-    // nécessaire. Désactivé en mode édition pour ne pas contrarier le dragging.
+    // V645.1/.2 : anti-chevauchement en mode positionné. Désactivé en édition
+    // pour ne pas contrarier le dragging. On NE déplace JAMAIS les coordonnées
+    // réglées par le coach a priori : on ne corrige QUE sur un chevauchement
+    // RÉELLEMENT mesuré, et seulement si les deux éléments se recouvrent aussi
+    // HORIZONTALEMENT (sinon le titre à gauche poussait le sous-titre à droite
+    // vers le bas — et dans le CTA : c'était le bug V645.2).
     if (!modeEdition) {
       const titreEl = elRefs.current.title;
       const sousTitreEl = elRefs.current.subtitle;
-      if (titreEl && sousTitreEl && suivant.title && suivant.subtitle) {
-        const GAP = 12; // px minimum entre le bas du titre et le haut du sous-titre
+      const ctaEl = elRefs.current.cta;
+      const GAP = 12; // px minimum entre deux éléments
+      const chevaucheX = (aEl, aPos, bEl, bPos) => {
+        if (!aEl || !bEl || !aPos || !bPos) return false;
+        const demiSomme = (aEl.offsetWidth + bEl.offsetWidth) / 2;
+        return Math.abs((aPos.x - bPos.x) * L) < demiSomme - 1;
+      };
+      // (a) Titre multi-lignes ↓ sous-titre : pousser le sous-titre VERS LE BAS.
+      if (titreEl && sousTitreEl && suivant.title && suivant.subtitle
+        && chevaucheX(titreEl, suivant.title, sousTitreEl, suivant.subtitle)) {
         const titreBas = suivant.title.y * H + titreEl.offsetHeight / 2 + GAP;
         const sousTitreHaut = suivant.subtitle.y * H - sousTitreEl.offsetHeight / 2;
         if (titreBas > sousTitreHaut) {
           const yNouv = (titreBas + sousTitreEl.offsetHeight / 2) / H;
+          suivant.subtitle = borner(
+            { x: suivant.subtitle.x, y: yNouv },
+            sousTitreEl.offsetWidth, sousTitreEl.offsetHeight,
+            L, H, appareil,
+          );
+        }
+      }
+      // (b) Sous-titre ↓ CTA : si le sous-titre descend dans le bloc CTA (offre +
+      // bouton), le remonter juste au-dessus. C'est la correction du chevauchement
+      // sous-titre / CTA à droite demandée en V645.2.
+      if (sousTitreEl && ctaEl && suivant.subtitle && suivant.cta
+        && chevaucheX(sousTitreEl, suivant.subtitle, ctaEl, suivant.cta)) {
+        const sousBas = suivant.subtitle.y * H + sousTitreEl.offsetHeight / 2;
+        const ctaHaut = suivant.cta.y * H - ctaEl.offsetHeight / 2;
+        if (sousBas + GAP > ctaHaut) {
+          const yNouv = (ctaHaut - GAP - sousTitreEl.offsetHeight / 2) / H;
           suivant.subtitle = borner(
             { x: suivant.subtitle.x, y: yNouv },
             sousTitreEl.offsetWidth, sousTitreEl.offsetHeight,
