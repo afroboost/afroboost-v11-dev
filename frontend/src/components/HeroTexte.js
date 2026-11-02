@@ -227,6 +227,19 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
   const libelleCta = texteHero(c.heroCtaLabel, HERO_TEXTES_DEFAUT.cta);
   const setRef = (el) => (n) => { elRefs.current[el] = n; };
 
+  // V645 : le titre se rend en lignes — une par phrase (decoupe sur les points) —
+  // la DERNIERE ligne en couleur primaire (accent de marque). Un titre sans point
+  // (ex. vitrine partenaire « Bienvenue chez X ») reste inchange : aucune regression.
+  const rendreTitre = (txt) => {
+    const parts = String(txt || '').split('.').map((p) => p.trim()).filter(Boolean);
+    if (parts.length <= 1) return txt;
+    return parts.map((p, i) => (
+      <span key={i} style={{ display: 'block', color: i === parts.length - 1 ? 'var(--primary-color, #D91CD2)' : undefined }}>
+        {p}.
+      </span>
+    ));
+  };
+
   // ═══════════════════ MODE FLUX : le Hero historique ═══════════════════
   if (!positionne) {
     const ctaLarge = L >= 768; // ancien `md:` Tailwind (768 px), rapporte a la boite
@@ -253,10 +266,10 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           ref={setRef('title')}
           data-hero-el="title"
           onPointerDown={peTitre.onPointerDown}
-          className="text-white font-extrabold leading-tight"
+          className="text-white font-extrabold leading-tight af-hero-titre"
           style={{ fontSize: `${polices.title}px`, textShadow: '0 2px 14px rgba(0,0,0,0.75)', ...peTitre.style }}
         >
-          {titre}
+          {rendreTitre(titre)}
         </h1>
         {/* V541 : masque sur telephone par `[data-appareil="mobile"] .af-hero-sous`. */}
         <p
@@ -352,7 +365,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
         ref={setRef('title')}
         data-hero-el="title"
         onPointerDown={peTitre.onPointerDown}
-        className="text-white font-extrabold"
+        className="text-white font-extrabold af-hero-titre"
         style={{
           ...place('title'),
           width: 'max-content',
@@ -366,7 +379,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           ...peTitre.style,
         }}
       >
-        {titre}
+        {rendreTitre(titre)}
       </h1>
       <p
         ref={setRef('subtitle')}

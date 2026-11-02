@@ -949,7 +949,7 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
  * Le média — et lui seul — agrandit la publication. Le son, le cœur et les avis
  * arrêtent la propagation.
  */
-const V540CartePublication = ({ pub, actions, onOpen }) => {
+const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
   const videoRef = useRef(null);
   const [sonActif, setSonActif] = useState(v542SonCarte(pub.id));
   useEffect(() => v540EcouterSon(() => setSonActif(v542SonCarte(pub.id))), [pub.id]);
@@ -963,6 +963,31 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
     if (v) v.muted = !sonActif;
   }, [sonActif]);
 
+  /* V645 — REEL : une seule vidéo joue à la fois. On observe la carte PAR
+     RAPPORT AU CONTENEUR `.af-reels` (root) : la vidéo majoritairement visible
+     se lance, les autres se mettent en pause (économie CPU/batterie, et un seul
+     son possible). N'agit qu'en mode reel ; le carrousel et le fil classique ne
+     sont pas touchés. `autoPlay` reste le filet de sécurité si l'observer manque. */
+  useEffect(() => {
+    if (!reel || pub.media_type !== 'video') return undefined;
+    const v = videoRef.current;
+    if (!v || typeof IntersectionObserver !== 'function') return undefined;
+    const root = typeof v.closest === 'function' ? v.closest('.af-reels') : null;
+    const obs = new IntersectionObserver((entrees) => {
+      for (let i = 0; i < entrees.length; i += 1) {
+        const e = entrees[i];
+        if (e.isIntersecting && e.intersectionRatio >= 0.6) {
+          const p = v.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        } else {
+          try { v.pause(); } catch (err) { /* ignore */ }
+        }
+      }
+    }, { root: root || null, threshold: [0, 0.6, 1] });
+    obs.observe(v);
+    return () => obs.disconnect();
+  }, [reel, pub.media_type, pub.id]);
+
   const nom = pub.display_name || pub.subscriber_name || 'Afroboost';
   const estCoach = pub.author_id && pub.coach_id
     && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase();
@@ -973,22 +998,25 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
       data-testid="publication-fil-carte"
       /* V541 : la largeur passe en CSS (`.af-fil-carte`, App.css) — desktop et
          mobile n'ont pas la même cible et un style en ligne ne sait pas porter
-         une media query. Le média gagne 47 % sur grand écran. */
-      className="af-fil-carte"
+         une media query. Le média gagne 47 % sur grand écran.
+         V645 : en mode `reel`, la carte remplit le cadre Reels (hauteur du
+         conteneur à défilement snap) et l'auteur/légende passent en overlay. */
+      className={reel ? 'af-reel-carte' : 'af-fil-carte'}
     >
       {/* V542 — LE MÉDIA PREND TOUTE LA CARTE. Il était rétréci de 56 px pour
           loger une colonne d'actions À CÔTÉ : sur un écran de 390 px, il n'en
           gardait que 282, soit 72 % de la largeur. La colonne passe DESSUS,
           sur le bord droit du média — la même que dans le viewer agrandi,
           même composant, mêmes handlers. Le média récupère ces 56 px. */}
-      <div style={{ display: 'block' }}>
+      <div style={{ display: 'block', ...(reel ? { height: '100%' } : {}) }}>
         <div
           onClick={onOpen}
           data-testid={pub.boosted ? 'publication-card-boosted' : 'publication-card'}
           style={{
-            position: 'relative', width: '100%', minWidth: 0, aspectRatio: '4 / 5',
-            background: '#0c0c0e', borderRadius: 14, overflow: 'hidden', cursor: 'pointer',
-            ...(pub.boosted ? { boxShadow: '0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), .45)' } : {}),
+            position: 'relative', width: '100%', minWidth: 0,
+            ...(reel ? { height: '100%' } : { aspectRatio: '4 / 5' }),
+            background: '#0c0c0e', borderRadius: reel ? 0 : 14, overflow: 'hidden', cursor: 'pointer',
+            ...(pub.boosted ? { boxShadow: 'inset 0 0 0 2px rgba(var(--primary-rgb, 217, 28, 210), .45)' } : {}),
           }}
         >
           {pub.media_type === 'video' ? (
@@ -1031,7 +1059,8 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 0 0' }}>
+      <div className={reel ? 'af-reel-infos' : undefined}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: reel ? 0 : '11px 0 0' }}>
         <img
           src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.author_name || nom)}&backgroundColor=8B5CF6`}
           alt=""
@@ -1054,8 +1083,9 @@ const V540CartePublication = ({ pub, actions, onOpen }) => {
         </span>
       </div>
       {pub.caption ? (
-        <p style={{ margin: '8px 0 0', fontSize: 14, color: 'rgba(255,255,255,0.8)', lineHeight: 1.45 }}>{pub.caption}</p>
+        <p style={{ margin: '8px 0 0', fontSize: 14, color: reel ? '#fff' : 'rgba(255,255,255,0.8)', lineHeight: 1.45, ...(reel ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : {}) }}>{pub.caption}</p>
       ) : null}
+      </div>
     </article>
   );
 };
@@ -1235,11 +1265,18 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
   if (disposition === 'fil') {
     return (
       <div className="mb-8" data-testid="publications-fil">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+        {/* V645 — EXPÉRIENCE REELS : défilement vertical à aimant (scroll-snap),
+            une publication plein cadre visible à la fois, aucun espace vide. Le
+            conteneur a une hauteur BORNÉE : le scroll de la page d'accueil reste
+            fonctionnel au-dessus et en dessous (il n'est jamais capturé). La
+            lecture/pause auto hors écran est gérée par VideoPublication
+            (IntersectionObserver), inchangée. */}
+        <div className="af-reels" data-testid="publications-reels">
           {publications.map((pub, i) => (
             <V540CartePublication
               key={pub.id}
               pub={pub}
+              reel
               actions={actions}
               onOpen={() => setLightbox({ pub, index: i })}
             />

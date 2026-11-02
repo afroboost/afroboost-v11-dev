@@ -1235,6 +1235,17 @@ video:-ms-fullscreen {
   margin-top: 14px; /* V554 : ecrase plus bas par le 40 px de V544 (inchange) */
 }
 
+/* ─── V645 — TITRE DU HERO (Inter 900, MAJUSCULES, derniere ligne en accent) ──
+   Scope : UNIQUEMENT `.af-hero-titre` (le <h1> du Hero). Le reste du site garde
+   -apple-system. Les lignes et la couleur de la derniere ligne sont posees en
+   JSX par HeroTexte (rendreTitre) ; ici, seuls la fonte, la graisse et la casse. */
+.af-hero-titre {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 900 !important;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
 /* LE RECADRAGE. Le média du hero est servi en 1024x1024 (carré) et rendu en
    1440x387 : `object-fit: cover` en garde donc une BANDE. À `50% 50%` — le
    défaut — cette bande est le milieu de l'image, et sur la photo réelle de
@@ -1295,6 +1306,53 @@ body {
    au-delà une seule publication mangerait tout l'écran. */
 .af-fil-carte { width: 100%; max-width: 500px; margin: 0 auto; }
 @media (min-width: 1024px) { .af-fil-carte { max-width: 660px; } }
+
+/* ─── V645 — EXPÉRIENCE REELS ─────────────────────────────────────────────────
+   Conteneur à défilement vertical AIMANTÉ (scroll-snap). Hauteur BORNÉE : la
+   page d'accueil garde son scroll normal au-dessus et en dessous — le conteneur
+   ne capture jamais le défilement de la page (il a ses propres extrémités).
+   `scroll-snap-stop: always` = une publication à la fois. `gap: 0` = aucun
+   espace vide entre les vidéos. Barre de défilement masquée. */
+.af-reels {
+  --reel-h: min(78vh, 680px);
+  height: var(--reel-h);
+  max-width: 500px;
+  margin: 0 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 16px;
+  background: #0c0c0e;
+  scrollbar-width: none;
+}
+.af-reels::-webkit-scrollbar { width: 0; height: 0; }
+@media (min-width: 1024px) {
+  .af-reels { --reel-h: min(80vh, 760px); max-width: 480px; margin: 0; }
+}
+/* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
+.af-reel-carte {
+  position: relative;
+  height: var(--reel-h);
+  width: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow: hidden;
+}
+/* Le média ne se DÉFORME jamais : `object-fit: cover` (posé en ligne) garde le
+   ratio et recadre intelligemment pour remplir le cadre vertical. Le wrapper du
+   média prend toute la hauteur ; l'overlay infos (absolute) en est exclu. */
+.af-reel-carte > div:not(.af-reel-infos) { height: 100%; }
+/* Auteur + légende en OVERLAY bas, sur un dégradé lisible. */
+.af-reel-infos {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 44px 16px 16px;
+  z-index: 3;
+  background: linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.45) 48%, rgba(0,0,0,0) 100%);
+  pointer-events: none;
+}
+.af-reel-infos * { pointer-events: auto; }
 
 /* 3. LA BARRE DE NAVIGATION, maintenant qu'elle tient vraiment. Un peu plus
    d'air, un état actif qui se voit de loin, et un contraste d'inactif qui
@@ -1488,6 +1546,92 @@ body {
   padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 600;
   background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.32);
   color: rgba(134, 239, 172, 0.95);
+}
+
+/* ─── V645 — EN-TÊTE BOUTIQUE : « Tout voir » + GRANDE BANNIÈRE ───────────── */
+.af-boutique-tete-droite { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.af-boutique-toutvoir {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: transparent; border: 1px solid rgba(255,255,255,0.22); color: #fff;
+  transition: border-color .18s, background .18s;
+}
+.af-boutique-toutvoir:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
+.af-boutique-banniere {
+  position: relative; width: 100%; border-radius: 18px; overflow: hidden;
+  margin-bottom: 18px; background: #0c0c0e;
+  aspect-ratio: 16 / 7;
+}
+@media (max-width: 640px) { .af-boutique-banniere { aspect-ratio: 4 / 3; } }
+.af-boutique-banniere-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.af-boutique-banniere-overlay {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+  align-items: flex-start; justify-content: flex-end; gap: 12px; padding: clamp(18px, 3vw, 34px);
+  background: linear-gradient(to right, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 80%);
+}
+.af-boutique-banniere-badge {
+  display: inline-block; padding: 5px 12px; border-radius: 999px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+  background: var(--primary-color, #D91CD2); color: #fff;
+}
+.af-boutique-banniere-titre {
+  margin: 0; color: #fff; line-height: 0.98; letter-spacing: -0.02em;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 900;
+  font-size: clamp(1.8rem, 5.5vw, 3.4rem); text-transform: uppercase;
+  text-shadow: 0 2px 16px rgba(0,0,0,0.6);
+}
+.af-boutique-banniere-cta {
+  display: inline-flex; align-items: center; cursor: pointer; margin-top: 4px;
+  padding: 11px 26px; border-radius: 999px; font-size: 14px; font-weight: 800;
+  background: #fff; color: #000; border: none; transition: transform .15s, box-shadow .15s;
+}
+.af-boutique-banniere-cta:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(0,0,0,0.4); }
+
+/* ─── V645 — CARTES « À VENIR » (annonces, non vendables) ─────────────────── */
+.af-avenir-grille {
+  display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 18px;
+}
+@media (min-width: 640px) { .af-avenir-grille { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { .af-avenir-grille { grid-template-columns: repeat(3, 1fr); } }
+.af-avenir-carte {
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; overflow: hidden;
+  background: #0e0e11; display: flex; flex-direction: column;
+}
+.af-avenir-media {
+  position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(145deg, #15151a, #0b0b0e); color: rgba(255,255,255,0.3);
+}
+.af-avenir-icone { opacity: 0.55; }
+.af-avenir-badge {
+  position: absolute; top: 10px; left: 10px; padding: 4px 10px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.05em;
+  background: var(--primary-color, #D91CD2); color: #fff;
+}
+.af-avenir-tag {
+  position: absolute; top: 10px; right: 10px; padding: 4px 9px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); color: rgba(255,255,255,0.75);
+}
+.af-avenir-corps { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.af-avenir-titre { margin: 0; color: #fff; font-size: 15px; font-weight: 800; }
+.af-avenir-statut {
+  align-self: flex-start; font-size: 11.5px; font-weight: 800; color: var(--primary-color, #D91CD2);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.af-avenir-desc { margin: 2px 0 8px; color: rgba(255,255,255,0.6); font-size: 12.5px; line-height: 1.45; }
+.af-avenir-cta {
+  margin-top: auto; align-self: stretch; cursor: pointer; padding: 10px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 700; background: transparent; color: #fff;
+  border: 1px solid rgba(255,255,255,0.28); transition: border-color .18s, background .18s;
+}
+.af-avenir-cta:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
+
+/* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
+   et la Boutique. Classe dédiée = aucun impact sur le reste du site. */
+.af-section-titre {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 900; letter-spacing: -0.015em; text-transform: uppercase;
+  font-size: clamp(1.25rem, 4vw, 1.6rem); line-height: 1.05;
 }
 
 /* LA MISE EN PAGE DES PRODUITS.

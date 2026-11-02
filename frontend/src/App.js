@@ -5004,7 +5004,11 @@ function App() {
   const [selectedAudioTracks, setSelectedAudioTracks] = useState([]); // v57: sélection multiple audio
   const [audioLightbox, setAudioLightbox] = useState(null); // v57: modale miniature audio {track}
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "" });
-  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
+  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "",
+    // V645 : bannière média de la section Boutique sur l'accueil. Clé PROPRE
+    // (distincte du futur boutique_page_banner : les deux médias ne s'écrasent
+    // jamais). Vide = pas de bannière affichée.
+    home_shop_banner_url: "", home_shop_banner_type: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
   // V260: offre en cours de choix / de saisie de preuve sociale (null = fermee)
   const [v260ChoiceOffer, setV260ChoiceOffer] = useState(null);
@@ -9496,7 +9500,7 @@ function App() {
                 <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
                   <SvgIcon name="users" size={18} />
                 </span>
-                <h2 style={{ color: '#fff', fontSize: '21px', fontWeight: 700, letterSpacing: '-0.012em', margin: 0 }}>
+                <h2 className="af-section-titre" style={{ color: '#fff', margin: 0 }}>
                   Ce qui se passe chez Afroboost
                 </h2>
               </div>
@@ -9933,15 +9937,52 @@ function App() {
                 </p>
                 <p className="af-boutique-sous">{t('shopDescription')}</p>
               </div>
-              <span className="af-boutique-livraison">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="1" y="3" width="15" height="13" /><path d="M16 8h4l3 3v5h-7z" />
-                  <circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" />
-                </svg>
-                {t('deliveryAvailable')}
-              </span>
+              <div className="af-boutique-tete-droite">
+                <span className="af-boutique-livraison">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="1" y="3" width="15" height="13" /><path d="M16 8h4l3 3v5h-7z" />
+                    <circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" />
+                  </svg>
+                  {t('deliveryAvailable')}
+                </span>
+                {/* V645 : « Tout voir » défile vers les cartes produits réelles ci-dessous
+                    (action réelle — aucun bouton inerte). */}
+                <button
+                  type="button"
+                  className="af-boutique-toutvoir"
+                  onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                >
+                  Tout voir
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                </button>
+              </div>
             </div>
-            
+
+            {/* V645 — GRANDE BANNIÈRE DE LA BOUTIQUE. Média (photo OU vidéo) téléversé
+                par le coach via le dashboard (clé concept.home_shop_banner_url). Vidéo :
+                autoplay muette en boucle, sans contrôles, avec poster. Rien n'est affiché
+                tant que le coach n'a pas configuré de média — aucun faux visuel. */}
+            {concept.home_shop_banner_url ? (
+              <div className="af-boutique-banniere">
+                {concept.home_shop_banner_type === 'video' ? (
+                  <video className="af-boutique-banniere-media" src={concept.home_shop_banner_url} autoPlay loop muted playsInline preload="metadata" />
+                ) : (
+                  <img className="af-boutique-banniere-media" src={concept.home_shop_banner_url} alt="Boutique Afroboost" loading="lazy" />
+                )}
+                <div className="af-boutique-banniere-overlay">
+                  <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
+                  <h3 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT</h3>
+                  <button
+                    type="button"
+                    className="af-boutique-banniere-cta"
+                    onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                  >
+                    Découvrir
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <OffersSliderAutoPlay
               offers={filteredProducts}
               selectedOffer={selectedOffer}
@@ -9963,6 +10004,45 @@ function App() {
               loading={loading}
               checkoutBusy={checkoutBusy} /* V224 */
             />
+
+            {/* V645 — CARTES « À VENIR » DE LA COLLECTION. Annonces marketing, PAS
+                des produits vendables : aucun prix inventé, aucune offre créée en
+                base, aucun checkout. Les boutons ouvrent le chat (fonction
+                existante) — jamais de bouton inerte. Statuts figés conformes à la
+                référence (précommande / bientôt). */}
+            <div className="af-avenir-grille" data-testid="boutique-cartes-avenir">
+              {[
+                { id: 'chaussettes-1', titre: 'Chaussettes Afroboost', badge: '1 PAIRE = 1 COURS', statut: 'Précommande',
+                  desc: '1 paire achetée = 1 cours offert, avec QR code dans l’emballage. 3 tailles unisexes.', cta: 'Précommander',
+                  icone: (<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v7l-3 5a3 3 0 0 0 2.6 4.5H12a2 2 0 0 0 2-2v-2l3-2a3 3 0 0 0 1-2.3V3z" /><path d="M8 7h6" /></svg>) },
+                { id: 'chaussettes-2', titre: 'Chaussettes · 2e motif', badge: 'PRÉCOMMANDÉ', statut: 'Précommande',
+                  desc: 'Motif coupé en deux sur la paire. Livraison en décembre.', cta: 'Précommander',
+                  icone: (<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v7l-3 5a3 3 0 0 0 2.6 4.5H12a2 2 0 0 0 2-2v-2l3-2a3 3 0 0 0 1-2.3V3z" /><path d="M8 7h6" /></svg>) },
+                { id: 'prochain', titre: 'Prochain produit', badge: 'BIENTÔT', statut: 'Bientôt',
+                  desc: 'Bientôt dans la collection Afroboost.', cta: 'Me prévenir',
+                  icone: (<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M12 8v8M8 12h8" /></svg>) },
+              ].map((c) => (
+                <div key={c.id} className="af-avenir-carte" data-testid={`boutique-avenir-${c.id}`}>
+                  <div className="af-avenir-media">
+                    <span className="af-avenir-badge">{c.badge}</span>
+                    <span className="af-avenir-tag">À VENIR</span>
+                    <div className="af-avenir-icone">{c.icone}</div>
+                  </div>
+                  <div className="af-avenir-corps">
+                    <h4 className="af-avenir-titre">{c.titre}</h4>
+                    <span className="af-avenir-statut">{c.statut}</span>
+                    <p className="af-avenir-desc">{c.desc}</p>
+                    <button
+                      type="button"
+                      className="af-avenir-cta"
+                      onClick={() => window.dispatchEvent(new CustomEvent('afroboost:open-chat', { detail: { raison: 'precommande', produit: c.titre } }))}
+                    >
+                      {c.cta}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
