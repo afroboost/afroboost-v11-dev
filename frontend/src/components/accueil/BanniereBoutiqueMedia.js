@@ -35,10 +35,14 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
     };
     v.addEventListener('loadedmetadata', caler);
     v.addEventListener('timeupdate', surTemps);
+    // FIX 3 — si trim_end > durée réelle, ended se déclenche avant timeupdate(>=te).
+    // Même recalage : on revient à ts et on relance.
+    v.addEventListener('ended', surTemps);
     if (v.readyState >= 1) caler();
     return () => {
       v.removeEventListener('loadedmetadata', caler);
       v.removeEventListener('timeupdate', surTemps);
+      v.removeEventListener('ended', surTemps);
     };
   }, [type, decoupe, ts, te, url]);
 

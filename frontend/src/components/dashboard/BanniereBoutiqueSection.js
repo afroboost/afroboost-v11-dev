@@ -42,6 +42,8 @@ export default function BanniereBoutiqueSection({ API }) {
   const [chargement, setChargement] = useState(true);
   const [etat, setEtat] = useState('');          // '' | 'envoi' | 'ok' | message d'erreur
   const [sale, setSale] = useState(false);       // des changements non enregistrés ?
+  const [uploadMiniEnCours, setUploadMiniEnCours] = useState(false); // FIX 2 — garde anti-blob:
+  const [erreurMini, setErreurMini] = useState('');                   // erreur upload miniature
 
   // Lecture de la bannière actuelle (indépendante de l'offre).
   useEffect(() => {
@@ -87,33 +89,46 @@ export default function BanniereBoutiqueSection({ API }) {
     setSale(true);
   };
 
-  // Capture d'une frame de la vidéo = miniature (aperçu). Envoyée au stockage
-  // média existant ; sa persistance définitive attend les champs backend (GO).
+  // Capture d'une frame de la vidéo = miniature.
   const capturerMiniature = async (blob, apercuLocal) => {
-    setThumb(apercuLocal);
+    const prevThumb = thumb;          // sauvegarder l'ancienne miniature valide
+    setThumb(apercuLocal);            // aperçu immédiat (blob: temporaire)
+    setSale(true);                    // FIX 1 — capture seule rend le formulaire modifié
+    setUploadMiniEnCours(true);       // FIX 2 — bloquer Enregistrer le temps de l'envoi
+    setErreurMini('');
     try {
       const f = new File([blob], 'banniere-' + Date.now() + '.jpg', { type: 'image/jpeg' });
       const r = await uploadToCloudinary(f, { folder: 'concept/banniere' });
-      if (r && r.url) setThumb(r.url);
+      if (r && r.url) {
+        setThumb(r.url);
+      } else {
+        // Réponse sans URL → on restaure et on signale.
+        setThumb(prevThumb);
+        setErreurMini('Miniature non reçue — réessayez.');
+      }
     } catch (e) {
-      /* on garde l'aperçu local si l'envoi échoue. */
+      // FIX 2 — échec réseau : on restaure l'ancienne miniature valide.
+      setThumb(prevThumb);
+      setErreurMini('Envoi de la miniature échoué. La précédente est conservée.');
+    } finally {
+      setUploadMiniEnCours(false);
     }
   };
 
   const enregistrer = async () => {
+    if (uploadMiniEnCours) return;  // sécurité (le bouton est déjà désactivé)
     setEtat('envoi');
     try {
-      // V645.3c — persistance complète. IMAGE : url + type (découpe/poster vidés).
-      // VIDÉO : url + type + découpe (début/fin, 0/0 si pas d'extrait) + miniature.
-      // Les nombres sont toujours envoyés (jamais null) pour passer le filtre
-      // `is not None` de update_concept ; 0/0 signifie « pas de découpe ».
+      // V645.3c — persistance complète.
+      // FIX 2 — ne jamais sauvegarder une URL blob: temporaire.
+      const thumbSure = (thumb && !thumb.startsWith('blob:')) ? thumb : '';
       const estVideo = !!url && type === 'video';
       await axios.put(`${API}/concept`, {
         home_shop_banner_url: url || '',
         home_shop_banner_type: url ? type : '',
         home_shop_banner_trim_start: estVideo ? Number(trimStart || 0) : 0,
         home_shop_banner_trim_end: estVideo ? Number(trimEnd || 0) : 0,
-        home_shop_banner_thumbnail: estVideo ? (thumb || '') : '',
+        home_shop_banner_thumbnail: estVideo ? thumbSure : '',
       });
       setSale(false);
       setEtat('ok');
@@ -220,14 +235,14 @@ export default function BanniereBoutiqueSection({ API }) {
             <button
               type="button"
               onClick={enregistrer}
-              disabled={etat === 'envoi' || !sale}
+              disabled={etat === 'envoi' || !sale || uploadMiniEnCours}
               data-testid="banniere-boutique-enregistrer"
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 7,
                 padding: '9px 16px', borderRadius: 999, border: 'none',
                 background: PINK, color: '#fff', fontSize: 13.5, fontWeight: 700,
-                opacity: (etat === 'envoi' || !sale) ? 0.6 : 1,
-                cursor: (etat === 'envoi' || !sale) ? 'default' : 'pointer',
+                opacity: (etat === 'envoi' || !sale || uploadMiniEnCours) ? 0.6 : 1,
+                cursor: (etat === 'envoi' || !sale || uploadMiniEnCours) ? 'default' : 'pointer',
               }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -249,6 +264,14 @@ export default function BanniereBoutiqueSection({ API }) {
               >
                 Retirer la bannière
               </button>
+            )}
+            {uploadMiniEnCours && (
+              <span data-testid="banniere-boutique-mini-envoi" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12.5 }}>
+                Envoi de la miniature…
+              </span>
+            )}
+            {erreurMini && !uploadMiniEnCours && (
+              <span data-testid="banniere-boutique-mini-erreur" style={{ color: 'var(--danger-color, #f87171)', fontSize: 12.5 }}>{erreurMini}</span>
             )}
             {etat === 'ok' && (
               <span data-testid="banniere-boutique-etat-ok" style={{ color: PINK, fontSize: 12.5, fontWeight: 600 }}>
