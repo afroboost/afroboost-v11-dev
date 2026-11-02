@@ -1587,6 +1587,45 @@ body {
 }
 .af-boutique-banniere-cta:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(0,0,0,0.4); }
 
+/* ─── V645 — CARTES « À VENIR » (annonces, non vendables) ─────────────────── */
+.af-avenir-grille {
+  display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 18px;
+}
+@media (min-width: 640px) { .af-avenir-grille { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { .af-avenir-grille { grid-template-columns: repeat(3, 1fr); } }
+.af-avenir-carte {
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; overflow: hidden;
+  background: #0e0e11; display: flex; flex-direction: column;
+}
+.af-avenir-media {
+  position: relative; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(145deg, #15151a, #0b0b0e); color: rgba(255,255,255,0.3);
+}
+.af-avenir-icone { opacity: 0.55; }
+.af-avenir-badge {
+  position: absolute; top: 10px; left: 10px; padding: 4px 10px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.05em;
+  background: var(--primary-color, #D91CD2); color: #fff;
+}
+.af-avenir-tag {
+  position: absolute; top: 10px; right: 10px; padding: 4px 9px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); color: rgba(255,255,255,0.75);
+}
+.af-avenir-corps { padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.af-avenir-titre { margin: 0; color: #fff; font-size: 15px; font-weight: 800; }
+.af-avenir-statut {
+  align-self: flex-start; font-size: 11.5px; font-weight: 800; color: var(--primary-color, #D91CD2);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.af-avenir-desc { margin: 2px 0 8px; color: rgba(255,255,255,0.6); font-size: 12.5px; line-height: 1.45; }
+.af-avenir-cta {
+  margin-top: auto; align-self: stretch; cursor: pointer; padding: 10px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 700; background: transparent; color: #fff;
+  border: 1px solid rgba(255,255,255,0.28); transition: border-color .18s, background .18s;
+}
+.af-avenir-cta:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
+
 /* LA MISE EN PAGE DES PRODUITS.
    Sur téléphone, on GARDE le carrousel : glisser du doigt est naturel, et
    c'est le mécanisme déjà en place. Sur grand écran un défilement horizontal

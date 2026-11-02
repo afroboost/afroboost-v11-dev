@@ -10004,6 +10004,45 @@ function App() {
               loading={loading}
               checkoutBusy={checkoutBusy} /* V224 */
             />
+
+            {/* V645 — CARTES « À VENIR » DE LA COLLECTION. Annonces marketing, PAS
+                des produits vendables : aucun prix inventé, aucune offre créée en
+                base, aucun checkout. Les boutons ouvrent le chat (fonction
+                existante) — jamais de bouton inerte. Statuts figés conformes à la
+                référence (précommande / bientôt). */}
+            <div className="af-avenir-grille" data-testid="boutique-cartes-avenir">
+              {[
+                { id: 'chaussettes-1', titre: 'Chaussettes Afroboost', badge: '1 PAIRE = 1 COURS', statut: 'Précommande',
+                  desc: '1 paire achetée = 1 cours offert, avec QR code dans l’emballage. 3 tailles unisexes.', cta: 'Précommander',
+                  icone: (<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v7l-3 5a3 3 0 0 0 2.6 4.5H12a2 2 0 0 0 2-2v-2l3-2a3 3 0 0 0 1-2.3V3z" /><path d="M8 7h6" /></svg>) },
+                { id: 'chaussettes-2', titre: 'Chaussettes · 2e motif', badge: 'PRÉCOMMANDÉ', statut: 'Précommande',
+                  desc: 'Motif coupé en deux sur la paire. Livraison en décembre.', cta: 'Précommander',
+                  icone: (<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v7l-3 5a3 3 0 0 0 2.6 4.5H12a2 2 0 0 0 2-2v-2l3-2a3 3 0 0 0 1-2.3V3z" /><path d="M8 7h6" /></svg>) },
+                { id: 'prochain', titre: 'Prochain produit', badge: 'BIENTÔT', statut: 'Bientôt',
+                  desc: 'Bientôt dans la collection Afroboost.', cta: 'Me prévenir',
+                  icone: (<svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M12 8v8M8 12h8" /></svg>) },
+              ].map((c) => (
+                <div key={c.id} className="af-avenir-carte" data-testid={`boutique-avenir-${c.id}`}>
+                  <div className="af-avenir-media">
+                    <span className="af-avenir-badge">{c.badge}</span>
+                    <span className="af-avenir-tag">À VENIR</span>
+                    <div className="af-avenir-icone">{c.icone}</div>
+                  </div>
+                  <div className="af-avenir-corps">
+                    <h4 className="af-avenir-titre">{c.titre}</h4>
+                    <span className="af-avenir-statut">{c.statut}</span>
+                    <p className="af-avenir-desc">{c.desc}</p>
+                    <button
+                      type="button"
+                      className="af-avenir-cta"
+                      onClick={() => window.dispatchEvent(new CustomEvent('afroboost:open-chat', { detail: { raison: 'precommande', produit: c.titre } }))}
+                    >
+                      {c.cta}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
