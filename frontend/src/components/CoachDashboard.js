@@ -60,6 +60,7 @@ import ProspectionApercu from "./coach/prospection/ProspectionApercu"; // V595
 import ProspectionMedias from "./coach/prospection/ProspectionMedias"; // V595
 import ProspectionLiens from "./coach/prospection/ProspectionLiens"; // V595
 import ProspectionResultats from "./coach/prospection/ProspectionResultats"; // V595
+import CampagnesDashboard from "./coach/CampagnesDashboard"; // V643
 import { champsModifies, suiviPourEnvoi, suiviVersFormulaire, messageServeur, typeRefus } from "../utils/abonnementsManuels"; // V617
 import { alignerLieu } from "../utils/courseLocation"; // V230: jeu d'icones vectorielles inline
 // DEEPLINK PROSPECTION — la source UNIQUE de l'intention. Ce composant ne
@@ -9224,40 +9225,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         )}
 
-        {/* === CAMPAGNES : CLIENTS | PROSPECTION | INVITATION & PARRAINAGE (UI-1 V587, V616) ===
-            V616 — une seule navigation. Le 3e onglet ouvre la modale Invitation & Parrainage
-            existante (plus de gros bloc séparé). Mobile : rangée compacte défilante. */}
+        {/* === CAMPAGNES : CLIENTS | PROSPECTION | INVITATION & PARRAINAGE (V643 — UX Premium) === */}
         {tab === "campaigns" && (
-          <div role="tablist" aria-label="Type de campagnes" data-testid="campagnes-mode"
-               className="v616-onglets"
-               style={{ display: 'flex', gap: '4px', padding: '4px', marginBottom: '12px',
-                        borderRadius: '14px', background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.08)', maxWidth: '720px',
-                        overflowX: 'auto', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
-            {[
-              { id: 'clients', label: 'Clients', icone: 'users' },
-              { id: 'prospection', label: p3Voir > 0 ? `Prospection (${p3Voir})` : 'Prospection', icone: 'compass' },
-              { id: 'invitation', label: 'Invitation & Parrainage', icone: 'gift' },
-            ].map(m => {
-              // V610e : « Invitation & Parrainage » devient un VRAI onglet (« Mes invitations » :
-              // liste, Modifier, + Nouvelle invitation -> la même modale de création).
-              const actif = campagnesMode === m.id;
-              return (
-                <button key={m.id} type="button" role="tab" aria-selected={actif}
-                        data-testid={`campagnes-mode-${m.id}`}
-                        onClick={() => { setCampagnesMode(m.id); setShowPartenaires(false); }}
-                        style={{ flex: '1 0 auto', minHeight: '44px', padding: '0 14px', borderRadius: '10px',
-                                 border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                                 whiteSpace: 'nowrap',
-                                 background: actif ? 'var(--primary-color, #D91CD2)' : 'transparent',
-                                 color: actif ? '#fff' : 'rgba(255,255,255,0.75)' }}>
-                  <SvgIcon name={m.icone} size={15} />
-                  <span>{m.label}</span>
-                </button>
-              );
-            })}
-          </div>
+          <CampagnesDashboard
+            campagnesMode={campagnesMode}
+            setCampagnesMode={setCampagnesMode}
+            setShowPartenaires={setShowPartenaires}
+            p3Voir={p3Voir}
+            p3Cockpit={p3Cockpit}
+            campaigns={campaigns}
+          />
         )}
         {tab === "campaigns" && campagnesMode === "invitation" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-invitation">
@@ -9290,7 +9267,9 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 ProspectsSection ; les cinq autres sont des écrans à part (useCockpitProspection),
                 montés à la première ouverture puis conservés. Aucun n'envoie quoi que ce soit. */}
             <nav aria-label="Sections de la prospection" data-testid="prospection-sections"
-                 style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
+                 style={{ display: 'flex', flexWrap: 'nowrap', gap: '6px', marginBottom: '16px',
+                          overflowX: 'auto', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch',
+                          paddingBottom: '2px' }}>
               {[
                 { id: 'apercu', label: "Vue d'ensemble", vue: 'apercu' },
                 { id: 'prospects', label: p3Cockpit.total !== null ? `Prospects (${p3Cockpit.total})` : 'Prospects', vue: 'prospects' },
