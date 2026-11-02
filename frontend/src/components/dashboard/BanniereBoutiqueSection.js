@@ -62,8 +62,13 @@ export default function BanniereBoutiqueSection({ API }) {
     return () => { vivant = false; };
   }, [API]);
 
-  const surImport = (nouvelleUrl) => {
-    const t = (analyserMediaUrl(nouvelleUrl || '') || {}).type === 'video' ? 'video' : 'image';
+  const surImport = (nouvelleUrl, meta) => {
+    // Type fiable : `resourceType` fourni par CloudinaryUploadButton
+    // ('image' | 'video') ; repli sur l'analyse de l'URL si absent.
+    const rt = meta && meta.resourceType;
+    const t = rt === 'video' ? 'video'
+      : rt === 'image' ? 'image'
+      : ((analyserMediaUrl(nouvelleUrl || '') || {}).type === 'video' ? 'video' : 'image');
     setUrl(nouvelleUrl || '');
     setType(nouvelleUrl ? t : '');
     setTrimStart(null);

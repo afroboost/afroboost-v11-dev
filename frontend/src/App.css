@@ -1805,26 +1805,25 @@ body {
    « Offre du moment » n'est pas rendue sous l'onglet « Offres » : un
    `nth-child` aurait alors désigné Spordateur et tout décalé d'un cran. */
 @media (max-width: 1023px) {
-  /* V645.3 — COLONNE MOBILE = 4 CARTES PLEINE LARGEUR (maquette obligatoire).
-     Avant : grille 2 colonnes où la carte Horaires (ajoutée en V645.2 sans
-     placement mobile) tombait en DEMI-LARGEUR — « petite colonne coincée à
-     gauche » signalée en capture — et où Live + Spordateur étaient masqués
-     (V543). La maquette V645.3 montre les quatre cartes empilées PLEINE
-     LARGEUR. On repasse donc en UNE colonne (flex) : chaque carte s'étire sur
-     toute la largeur, aucune n'est en demi-colonne. Ordre vertical =
-     contenu (fil) → Live → Offre → Spordateur → Horaires. Rien n'est
-     supprimé ; routes, fonctions et pastille « EN DIRECT » inchangées. */
   .af-accueil-colonnes {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 10px;
   }
   .af-colonne-cote { display: contents; }
-  .af-colonne-principale                                      { order: 1; min-width: 0; }
-  .af-colonne-cote > [data-testid="accueil-carte-live"]       { order: 2; }
-  .af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 3; }
-  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { order: 4; }
-  .af-colonne-cote > [data-testid="accueil-carte-horaires"]   { order: 5; }
+  /* V543 CONSERVÉ (décision de Bassi, option « accueil épuré ») — Afroboost
+     Live et Spordateur restent HORS de l'accueil mobile (ils vivent dans le
+     tiroir du hamburger, mêmes fonctions, mêmes routes, rien n'est supprimé).
+     Sur grand écran, les cartes ne bougent pas. */
+  .af-colonne-cote > [data-testid="accueil-carte-live"],
+  .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { display: none; }
+  .af-colonne-principale                                      { order: 1; grid-column: 1 / -1; min-width: 0; }
+  .af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 2; grid-column: 1 / -1; }
+  /* V645.3 — SEULE CORRECTION MOBILE : la carte Horaires (ajoutée en V645.2
+     sans placement mobile) tombait en DEMI-COLONNE — « petite colonne coincée
+     à gauche » (capture). Elle passe en PLEINE LARGEUR, sous l'offre. L'accueil
+     épuré est préservé : ni Live ni Spordateur ne sont réaffichés ni dupliqués. */
+  .af-colonne-cote > [data-testid="accueil-carte-horaires"]   { order: 3; grid-column: 1 / -1; }
 }
 
 /* ═══ V542 — BOUTIQUE MOBILE : L'IMAGE D'ABORD ═══════════════════════════

@@ -41,6 +41,13 @@ const STEPS = [
 const PINK = 'var(--primary-color, #D91CD2)';
 const ACCENT_BORDER = 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)';
 
+// V645.3 — IDENTIFIANT STABLE de l'offre « T-shirt + 1 cours offert! » qui
+// HÉBERGE la rubrique « Bannière Boutique — Accueil ». On gate par cet ID précis
+// (vérifié en production), JAMAIS par `form.isProduct` (qui l'afficherait sur
+// TOUS les futurs produits) ni par le nom. Pour déplacer la rubrique vers une
+// autre offre un jour : changer cette seule constante.
+const TSHIRT_OFFER_ID = '84b7d8c6-b859-410a-8a09-0d1ee0069404';
+
 // V224: style commun a tous les inputs du wizard (palette v224-constraints).
 const INPUT_STYLE = {
   background: '#0a0a0f',
@@ -3003,11 +3010,12 @@ export default function OfferWizard({
           </div>
         )}
       </div>
-      {/* V645.3 — BANNIÈRE BOUTIQUE — ACCUEIL. Rubrique distincte, UNIQUEMENT
-          pour une offre produit (le T-shirt). Média totalement indépendant des
-          photos/vidéos du produit : elle n'écrit que concept.home_shop_banner_*.
-          Réutilise l'éditeur VideoTrimEditor, aucun nouvel éditeur. */}
-      {form.isProduct && <BanniereBoutiqueSection API={API} />}
+      {/* V645.3 — BANNIÈRE BOUTIQUE — ACCUEIL. Rubrique RÉSERVÉE à l'offre
+          T-shirt (gate par ID stable, pas par `form.isProduct` : aucun futur
+          produit ne l'affichera). Média totalement indépendant des photos/vidéos
+          du produit : elle n'écrit que concept.home_shop_banner_*. Réutilise
+          l'éditeur VideoTrimEditor, aucun nouvel éditeur. */}
+      {form.id === TSHIRT_OFFER_ID && <BanniereBoutiqueSection API={API} />}
     </div>
   );
 
