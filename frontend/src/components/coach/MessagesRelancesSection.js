@@ -4,6 +4,7 @@
  * qu'est-ce que j'ai répondu, que dois-je faire ». Liste compacte défilante, recherche,
  * priorités, et un panneau de détail (plein écran sur mobile) où le PARTENAIRE parle à
  * GAUCHE et AFROBOOST à DROITE.
+ * V642 — UX PREMIUM : split-pane desktop (liste | conversation), mobile bascule.
  *
  * CE QUE L'ÉCRAN LIT (uniquement des GET existants) :
  *   GET /prospect-campaigns (+ détail)   → actions : textes approuvés, envois, échéances, annulations
@@ -24,13 +25,12 @@
  * ANTI-BOUCLE (V305) : dépendances primitives ; caches par identifiant, `prev` renvoyé
  * quand rien ne change.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
-import { ElementFil } from './FilConversation'; // V619 — même rendu que Conversations partenaires
+import { ElementFil } from './FilConversation';
 import { poser as ouvrirConversation } from '../../utils/prospectionIntention';
 import {
   ETATS, LIBELLES_ETAT, FILTRES, FILTRES_CANAL, SUIVI_MANUEL_INDISPONIBLE,
@@ -43,72 +43,66 @@ const PRIMAIRE = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
 const PRIMAIRE_LISIBLE = 'color-mix(in srgb, var(--primary-color, #D91CD2) 80%, white)';
 const TEXTE = '#fff';
-const DOUX = 'rgba(255,255,255,0.65)';
-const BORD = 'rgba(255,255,255,0.12)';
-const FOND_PANNEAU = 'rgb(14,10,16)';
+const DOUX = 'rgba(255,255,255,0.55)';
+const BORD = 'rgba(255,255,255,0.10)';
 const PAGES_PROSPECTS_MAX = 10;
-/* Au-dessus des boutons fixes du tableau de bord (« Vue Visiteur », « Déconnexion »,
-   z-index 9999) : le panneau doit les couvrir, sinon on clique dessus par erreur. */
 
-/* Tons sémantiques (jamais la couleur de marque, qui reste au coach). */
 const AMBRE = 'rgb(252,211,77)';
 const VERT = 'rgb(134,239,172)';
 const ROUGE = 'rgb(252,165,165)';
 const BLEU = 'rgb(147,197,253)';
 const TONS = {
-  en_retard: { fond: 'rgba(245,158,11,0.18)', bord: 'rgba(245,158,11,0.5)', texte: AMBRE },
-  repondu: { fond: 'rgba(34,197,94,0.18)', bord: 'rgba(34,197,94,0.45)', texte: VERT },
-  refus: { fond: 'rgba(239,68,68,0.18)', bord: 'rgba(239,68,68,0.45)', texte: ROUGE },
-  rebond: { fond: 'rgba(239,68,68,0.14)', bord: 'rgba(239,68,68,0.4)', texte: ROUGE },
-  stoppe: { fond: 'rgba(255,255,255,0.07)', bord: 'rgba(255,255,255,0.2)', texte: 'rgba(255,255,255,0.7)' },
-  manuel: { fond: 'rgba(255,255,255,0.06)', bord: 'rgba(255,255,255,0.26)', texte: 'rgba(255,255,255,0.85)' },
-  envoye: { fond: `rgba(${RGB}, 0.14)`, bord: `rgba(${RGB}, 0.45)`, texte: PRIMAIRE_LISIBLE },
-  remis: { fond: 'rgba(34,197,94,0.18)', bord: 'rgba(34,197,94,0.45)', texte: VERT },   // V608
-  en_cours: { fond: 'rgba(255,255,255,0.06)', bord: `rgba(${RGB}, 0.4)`, texte: TEXTE },
-  echec: { fond: 'rgba(239,68,68,0.18)', bord: 'rgba(239,68,68,0.45)', texte: ROUGE },
-  prevu: { fond: 'rgba(255,255,255,0.06)', bord: `rgba(${RGB}, 0.4)`, texte: TEXTE },
-  a_envoyer: { fond: 'rgba(255,255,255,0.06)', bord: `rgba(${RGB}, 0.4)`, texte: TEXTE },
-  sans_objet: { fond: 'transparent', bord: 'rgba(255,255,255,0.10)', texte: 'rgba(255,255,255,0.45)' },
+  en_retard: { fond: 'rgba(245,158,11,0.12)', bord: 'rgba(245,158,11,0.4)', texte: AMBRE },
+  repondu: { fond: 'rgba(34,197,94,0.12)', bord: 'rgba(34,197,94,0.35)', texte: VERT },
+  refus: { fond: 'rgba(239,68,68,0.12)', bord: 'rgba(239,68,68,0.35)', texte: ROUGE },
+  rebond: { fond: 'rgba(239,68,68,0.10)', bord: 'rgba(239,68,68,0.3)', texte: ROUGE },
+  stoppe: { fond: 'rgba(255,255,255,0.05)', bord: 'rgba(255,255,255,0.16)', texte: 'rgba(255,255,255,0.6)' },
+  manuel: { fond: 'rgba(255,255,255,0.04)', bord: 'rgba(255,255,255,0.2)', texte: 'rgba(255,255,255,0.75)' },
+  envoye: { fond: `rgba(${RGB}, 0.10)`, bord: `rgba(${RGB}, 0.35)`, texte: PRIMAIRE_LISIBLE },
+  remis: { fond: 'rgba(34,197,94,0.12)', bord: 'rgba(34,197,94,0.35)', texte: VERT },
+  en_cours: { fond: 'rgba(255,255,255,0.04)', bord: `rgba(${RGB}, 0.3)`, texte: TEXTE },
+  echec: { fond: 'rgba(239,68,68,0.12)', bord: 'rgba(239,68,68,0.35)', texte: ROUGE },
+  prevu: { fond: 'rgba(255,255,255,0.04)', bord: `rgba(${RGB}, 0.3)`, texte: TEXTE },
+  a_envoyer: { fond: 'rgba(255,255,255,0.04)', bord: `rgba(${RGB}, 0.3)`, texte: TEXTE },
+  sans_objet: { fond: 'transparent', bord: 'rgba(255,255,255,0.08)', texte: 'rgba(255,255,255,0.4)' },
 };
 
 function Pastille({ etat, children, testid }) {
   const t = TONS[etat] || TONS.sans_objet;
   return (
-    <span data-testid={testid} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px',
-      borderRadius: '999px', fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap',
+    <span data-testid={testid} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '1px 7px',
+      borderRadius: '999px', fontSize: '10.5px', fontWeight: 600, whiteSpace: 'nowrap',
       background: t.fond, border: `1px solid ${t.bord}`, color: t.texte }}>
       {children || LIBELLES_ETAT[etat] || etat}
     </span>
   );
 }
 
-/* NOUVEAU (couleur du coach, point plein) ≠ APPEL À FAIRE (bleu, téléphone) ≠ RÉPONSE ATTENDUE (ambre).
-   V588c — pas de badge « URGENT » : aucune donnée existante ne prouve une urgence (lot séparé). */
 function BadgeNouveau({ n }) {
   return (
-    <span data-testid="mr-badge-nouveau" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '2px 8px',
-      borderRadius: '999px', fontSize: '11px', fontWeight: 800, letterSpacing: '0.03em', whiteSpace: 'nowrap',
+    <span data-testid="mr-badge-nouveau" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '1px 7px',
+      borderRadius: '999px', fontSize: '10px', fontWeight: 800, letterSpacing: '0.03em', whiteSpace: 'nowrap',
       background: PRIMAIRE, color: '#fff' }}>
-      <span aria-hidden="true" style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#fff' }} />
-      NOUVEAU{n > 1 ? ` · ${n}` : ''}
+      <span aria-hidden="true" style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#fff' }} />
+      {n > 1 ? n : ''}NOUVEAU
     </span>
   );
 }
 function BadgeAppel() {
   return (
-    <span data-testid="mr-badge-appel" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px',
-      borderRadius: '999px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap',
-      background: 'rgba(59,130,246,0.18)', border: '1px solid rgba(96,165,250,0.6)', color: BLEU }}>
-      <SvgIcon name="phone" size={11} /> Appel à faire
+    <span data-testid="mr-badge-appel" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '1px 7px',
+      borderRadius: '999px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap',
+      background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(96,165,250,0.5)', color: BLEU }}>
+      <SvgIcon name="phone" size={10} /> Appel à faire
     </span>
   );
 }
 function BadgeAttendue() {
   return (
-    <span data-testid="mr-badge-attendue" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px',
-      borderRadius: '999px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap',
-      background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.55)', color: AMBRE }}>
-      <SvgIcon name="clock" size={11} /> Réponse attendue
+    <span data-testid="mr-badge-attendue" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '1px 7px',
+      borderRadius: '999px', fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap',
+      background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.45)', color: AMBRE }}>
+      <SvgIcon name="clock" size={10} /> Attendue
     </span>
   );
 }
@@ -123,17 +117,17 @@ function Badges({ l }) {
   );
 }
 
-function Tuile({ libelle, valeur, actif, onClick, ton, testid }) {
+function Compteur({ libelle, valeur, actif, onClick, ton, testid }) {
   const couleur = ton === 'bleu' ? BLEU : ton === 'rouge' ? ROUGE : ton === 'ambre' ? AMBRE : ton === 'marque' ? PRIMAIRE_LISIBLE : TEXTE;
   const fort = !!ton && valeur !== '—' && Number(valeur) > 0;
   return (
     <button type="button" onClick={onClick} data-testid={testid} aria-pressed={!!actif}
-      style={{ flex: '1 1 104px', minWidth: 0, textAlign: 'left', padding: '8px 10px', borderRadius: '10px',
+      style={{ flex: '1 1 0', minWidth: '68px', textAlign: 'center', padding: '5px 6px', borderRadius: '8px',
         cursor: onClick ? 'pointer' : 'default', color: TEXTE,
-        border: `1px solid ${actif ? PRIMAIRE : 'rgba(255,255,255,0.10)'}`,
-        background: actif ? `rgba(${RGB}, 0.16)` : 'rgba(255,255,255,0.04)' }}>
-      <div style={{ fontSize: '11px', color: DOUX, lineHeight: 1.25 }}>{libelle}</div>
-      <div style={{ fontSize: '19px', fontWeight: 700, color: fort ? couleur : TEXTE }}>{valeur}</div>
+        border: `1px solid ${actif ? `rgba(${RGB}, 0.6)` : 'rgba(255,255,255,0.08)'}`,
+        background: actif ? `rgba(${RGB}, 0.14)` : 'transparent' }}>
+      <div style={{ fontSize: '9.5px', color: DOUX, lineHeight: 1.2 }}>{libelle}</div>
+      <div style={{ fontSize: '16px', fontWeight: 700, color: fort ? couleur : TEXTE, lineHeight: 1.2, marginTop: '1px' }}>{valeur}</div>
     </button>
   );
 }
@@ -141,16 +135,15 @@ function Tuile({ libelle, valeur, actif, onClick, ton, testid }) {
 function Puce({ actif, onClick, children, testid }) {
   return (
     <button type="button" onClick={onClick} data-testid={testid} aria-pressed={actif}
-      style={{ padding: '5px 10px', borderRadius: '999px', fontSize: '12px', cursor: 'pointer', color: TEXTE,
+      style={{ padding: '3px 8px', borderRadius: '999px', fontSize: '11px', cursor: 'pointer', color: TEXTE,
         fontWeight: actif ? 700 : 500, whiteSpace: 'nowrap', flexShrink: 0,
-        border: `1px solid ${actif ? `rgba(${RGB}, 0.7)` : 'rgba(255,255,255,0.14)'}`,
-        background: actif ? `rgba(${RGB}, 0.26)` : 'transparent' }}>
+        border: `1px solid ${actif ? `rgba(${RGB}, 0.6)` : 'rgba(255,255,255,0.12)'}`,
+        background: actif ? `rgba(${RGB}, 0.22)` : 'transparent' }}>
       {children}
     </button>
   );
 }
 
-/* « 05/09/2026 » seul quand c'est ancien, « 07/10/2026 · il y a 2 h » quand c'est récent. */
 function quandLisible(iso, maintenant) {
   const rel = ilYa(iso, maintenant);
   return rel.indexOf('le ') === 0 ? dateCourte(iso) : `${dateCourte(iso)} · ${rel}`;
@@ -164,68 +157,67 @@ function dateOuRetard(l) {
   return l.prochaineDate ? dateCourte(l.prochaineDate) : '';
 }
 
-/* ---------------- LA CARTE COMPACTE ---------------- */
+/* ─── CARTE COMPACTE (liste gauche) ─── */
 function Carte({ l, maintenant, onOuvrir, active }) {
   const ev = l.dernierMessageLe ? { titre: 'Réponse reçue', quand: l.dernierMessageLe } : dernierEvenement(l);
-  const evTexte = l.etat === ETATS.MANUEL ? SUIVI_MANUEL_INDISPONIBLE
-    : ev ? `${ev.titre} ${ilYa(ev.quand, maintenant)}` : '—';
-  const signal = l.nonLues > 0 || l.appel || l.reponseAttendue;
+  const evTexte = ev ? `${ev.titre} ${ilYa(ev.quand, maintenant)}` : '';
   const date = dateOuRetard(l);
   return (
     <li data-testid="mr-ligne" data-etat={l.etat} data-nouveau={l.nonLues > 0 ? 'oui' : 'non'}
       data-appel={l.appel ? 'oui' : 'non'} data-attendue={l.reponseAttendue ? 'oui' : 'non'}>
       <button type="button" onClick={onOuvrir} data-testid="mr-ligne-entete" aria-expanded={active}
-        style={{ width: '100%', textAlign: 'left', cursor: 'pointer', color: TEXTE, padding: '9px 11px',
-          borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '3px',
-          border: `1px solid ${active ? `rgba(${RGB}, 0.6)` : l.appel ? 'rgba(96,165,250,0.5)' : l.nonLues ? `rgba(${RGB}, 0.5)` : BORD}`,
-          background: l.nonLues > 0 ? `rgba(${RGB}, 0.10)` : l.appel ? 'rgba(59,130,246,0.07)' : 'rgba(255,255,255,0.03)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
-          <span style={{ fontSize: '14px', fontWeight: l.nonLues > 0 || l.appel ? 800 : 650, minWidth: 0, overflowWrap: 'anywhere' }}>
+        style={{ width: '100%', textAlign: 'left', cursor: 'pointer', color: TEXTE, padding: '8px 10px',
+          borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '2px',
+          borderLeft: active ? `3px solid ${PRIMAIRE}` : '3px solid transparent',
+          border: `1px solid ${active ? `rgba(${RGB}, 0.5)` : l.nonLues ? `rgba(${RGB}, 0.35)` : 'transparent'}`,
+          background: active ? `rgba(${RGB}, 0.12)` : l.nonLues > 0 ? `rgba(${RGB}, 0.06)` : 'transparent',
+          transition: 'background 0.15s' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+          <span style={{ fontSize: '13px', fontWeight: l.nonLues > 0 || l.appel ? 700 : 500, minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {l.organisation}
           </span>
-          <span style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '4px', flexShrink: 0, maxWidth: '60%' }}>
+          <span style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
             <Badges l={l} />
-            {!signal && <Pastille etat={l.etat} testid="mr-etat">{l.etat === ETATS.EN_RETARD ? 'J+3 en retard' : undefined}</Pastille>}
           </span>
         </div>
-        {signal ? (
-          <>
-            <div style={{ fontSize: '12px', color: DOUX }}>{libelleCanal(l.canal)} · {LIBELLES_ETAT[l.etat]}</div>
-            {l.extrait && (
-              <div data-testid="mr-extrait" style={{ fontSize: '12.5px', color: TEXTE, fontStyle: 'italic', overflowWrap: 'anywhere' }}>
-                « {l.extrait} »
-              </div>
-            )}
-            <div style={{ fontSize: '12px', color: DOUX }}>{evTexte}</div>
-          </>
-        ) : (
-          /* Sans signal : canal et dernier événement sur UNE ligne (carte plus courte). */
-          <div style={{ fontSize: '12px', color: DOUX }}>{libelleCanal(l.canal)} · {evTexte}</div>
-        )}
-        <div style={{ fontSize: '12px', color: DOUX }}>
-          Prochaine action : <span style={{ color: TEXTE, fontWeight: 600 }}>{l.prochaineAction}</span>
-          {date ? <span style={{ color: l.etat === ETATS.EN_RETARD ? AMBRE : DOUX }}> · {date}</span> : null}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', fontSize: '11px', color: DOUX }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {`Prochaine action : ${l.prochaineAction}`}{date ? ` · ${date}` : ''}
+          </span>
+          {!l.nonLues && !l.appel && !l.reponseAttendue && <Pastille etat={l.etat} testid="mr-etat" />}
         </div>
+        {(l.etat === ETATS.MANUEL || evTexte) && (
+          <div style={{ fontSize: '10.5px', color: DOUX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {l.etat === ETATS.MANUEL ? SUIVI_MANUEL_INDISPONIBLE : evTexte}
+          </div>
+        )}
+        {l.extrait && l.nonLues > 0 && (
+          <div data-testid="mr-extrait" style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', fontStyle: 'italic',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            « {l.extrait} »
+          </div>
+        )}
       </button>
     </li>
   );
 }
 
-/* ---------------- LE FIL : PARTENAIRE À GAUCHE, AFROBOOST À DROITE ---------------- */
+/* ─── BULLES DE CONVERSATION ─── */
 function Bulle({ cote, titre, quand, objet, corps, pied, testid }) {
   const droite = cote === 'afroboost';
   return (
     <div data-testid={testid} data-cote={cote} style={{ display: 'flex', justifyContent: droite ? 'flex-end' : 'flex-start' }}>
-      <div style={{ maxWidth: '86%', minWidth: 0, padding: '9px 11px', borderRadius: droite ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-        background: droite ? `rgba(${RGB}, 0.22)` : 'rgba(255,255,255,0.09)',
-        border: `1px solid ${droite ? `rgba(${RGB}, 0.55)` : 'rgba(255,255,255,0.2)'}` }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '10.5px',
-          letterSpacing: '0.04em', textTransform: 'uppercase', color: droite ? PRIMAIRE_LISIBLE : 'rgba(255,255,255,0.72)' }}>
+      <div style={{ maxWidth: '88%', minWidth: 0, padding: '8px 10px', borderRadius: droite ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
+        background: droite ? `rgba(${RGB}, 0.16)` : 'rgba(255,255,255,0.06)',
+        border: `1px solid ${droite ? `rgba(${RGB}, 0.45)` : 'rgba(255,255,255,0.14)'}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '10px',
+          letterSpacing: '0.04em', textTransform: 'uppercase', color: droite ? PRIMAIRE_LISIBLE : 'rgba(255,255,255,0.65)' }}>
           <span style={{ fontWeight: 800 }}>{droite ? 'Afroboost' : 'Partenaire'}{titre ? ` · ${titre}` : ''}</span>
           <span style={{ textTransform: 'none', letterSpacing: 0, color: DOUX, whiteSpace: 'nowrap' }}>{dateCourte(quand)}</span>
         </div>
-        {objet && <div style={{ fontSize: '12px', color: DOUX, marginTop: '3px', overflowWrap: 'anywhere' }}>{objet}</div>}
-        {corps && <div style={{ fontSize: '13px', lineHeight: 1.5, color: TEXTE, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: '5px' }}>{corps}</div>}
+        {objet && <div style={{ fontSize: '11px', color: DOUX, marginTop: '2px', overflowWrap: 'anywhere' }}>{objet}</div>}
+        {corps && <div style={{ fontSize: '12.5px', lineHeight: 1.5, color: TEXTE, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: '4px' }}>{corps}</div>}
         {pied}
       </div>
     </div>
@@ -236,8 +228,8 @@ function EvenementSysteme({ ev }) {
   const couleur = ev.genre === 'stop' ? ROUGE : ev.genre === 'retard' ? AMBRE : ev.genre === 'note' ? TEXTE : DOUX;
   return (
     <div data-testid="mr-evenement" data-genre={ev.genre} style={{ display: 'flex', justifyContent: 'center' }}>
-      <div style={{ maxWidth: '92%', textAlign: 'center', fontSize: '11.5px', color: couleur, padding: ev.genre === 'note' ? '6px 10px' : '2px 6px',
-        borderRadius: '8px', border: ev.genre === 'note' ? '1px dashed rgba(255,255,255,0.28)' : 'none', overflowWrap: 'anywhere' }}>
+      <div style={{ maxWidth: '92%', textAlign: 'center', fontSize: '10.5px', color: couleur, padding: ev.genre === 'note' ? '5px 8px' : '2px 4px',
+        borderRadius: '6px', border: ev.genre === 'note' ? '1px dashed rgba(255,255,255,0.22)' : 'none', overflowWrap: 'anywhere' }}>
         <span style={{ color: DOUX }}>{dateCourte(ev.quand)} · </span>
         <strong>{ev.titre}</strong>{ev.detail ? ` — ${ev.detail}` : ''}
       </div>
@@ -245,14 +237,10 @@ function EvenementSysteme({ ev }) {
   );
 }
 
-/** Le fil assemblé à partir des données existantes, trié par date. */
 function filDe(l, notes, brouillon) {
   const a = l.action || {};
   const conv = l.conversation;
   const items = [];
-  /* V619 — LA PROJECTION DU SERVEUR D'ABORD (`messages_fil`) : textes réellement partis
-     (`approved_text`), J0 → J+14, messages reçus sans seconde découpe. Le journal
-     (événements système) s'y ajoute, comme avant. */
   if (conv && Array.isArray(conv.messages_fil)) {
     conv.messages_fil.forEach((e, i) => {
       if (!e) return;
@@ -268,7 +256,7 @@ function filDe(l, notes, brouillon) {
       <Bulle key="j0" testid="mr-bulle-afroboost" cote="afroboost" titre="Message J0" quand={a.sent_at}
         objet={l.j0.objet} corps={l.j0.message} />) });
   }
-  ['j3', 'j7', 'j14'].forEach((e) => {   // V619 : + J+14
+  ['j3', 'j7', 'j14'].forEach((e) => {
     if (a[`${e}_sent_at`] && l[e]) {
       items.push({ t: instant(a[`${e}_sent_at`]), rendu: () => (
         <Bulle key={e} testid="mr-bulle-afroboost" cote="afroboost"
@@ -281,19 +269,17 @@ function filDe(l, notes, brouillon) {
     items.push({ t: instant(m.received_at), rendu: () => (
       <Bulle key={`p${i}`} testid="mr-bulle-partenaire" cote="partenaire" titre={m.read_at ? '' : 'non lu'} quand={m.received_at}
         objet={m.subject} corps={m.body_text || '(aucun contenu lisible pour ce message)'}
-        pied={m.from_email ? <div style={{ fontSize: '11px', color: DOUX, marginTop: '5px' }}>{m.from_email}</div> : null} />) });
+        pied={m.from_email ? <div style={{ fontSize: '10px', color: DOUX, marginTop: '4px' }}>{m.from_email}</div> : null} />) });
   });
   const rep = conv && conv.derniere_reponse_afroboost;
   if (rep && rep.sent_at) {
-    /* Le TEXTE exact envoyé n'est pas exposé par le serveur : on montre le brouillon
-       validé seulement s'il a été écrit AVANT l'envoi, et on le dit. */
     const b = brouillon || null;
     const ecritLe = b ? instant(b.edite_le || b.updated_at || b.genere_le) : NaN;
     const texteBrouillon = b && Number.isFinite(ecritLe) && ecritLe <= instant(rep.sent_at) ? (b.reponse_proposee || '') : '';
     items.push({ t: instant(rep.sent_at), rendu: () => (
       <Bulle key="rep" testid="mr-bulle-afroboost" cote="afroboost" titre="Réponse" quand={rep.sent_at} objet={rep.objet}
         corps={texteBrouillon}
-        pied={<div style={{ fontSize: '11px', color: DOUX, marginTop: '5px' }}>
+        pied={<div style={{ fontSize: '10px', color: DOUX, marginTop: '4px' }}>
           {texteBrouillon ? 'Texte du brouillon validé avant l\'envoi.' : 'Réponse envoyée (son texte n\'est pas conservé ici).'}
         </div>} />) });
   }
@@ -307,18 +293,17 @@ function DetailEtape({ e }) {
   const nom = e.etape === 'j3' ? 'Relance J+3' : e.etape === 'j7' ? 'Relance J+7'
     : e.etape === 'j14' ? 'Relance J+14' : 'Message initial J0';
   return (
-    <details data-testid={`mr-etape-${e.etape}`} style={{ border: `1px solid ${BORD}`, borderRadius: '10px', padding: '8px 10px', background: 'rgba(0,0,0,0.22)' }}>
-      <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', listStyle: 'none' }}>
-        <strong style={{ fontSize: '13px' }}>{nom}</strong>
-        <span style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '11px', color: DOUX }}>
-          {e.date_envoi ? `soumis ${dateCourte(e.date_envoi)}` : e.date_prevue ? `prévu ${dateCourte(e.date_prevue)}` : ''}
-          {/* V608 : un envoi suivi affiche sa REMISE (Remis / Envoi en cours / Échec), jamais « remis » à l'acceptation. */}
+    <details data-testid={`mr-etape-${e.etape}`} style={{ border: `1px solid ${BORD}`, borderRadius: '8px', padding: '7px 9px', background: 'rgba(0,0,0,0.18)' }}>
+      <summary style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', flexWrap: 'wrap', listStyle: 'none' }}>
+        <strong style={{ fontSize: '12px' }}>{nom}</strong>
+        <span style={{ display: 'flex', gap: '4px', alignItems: 'center', fontSize: '10.5px', color: DOUX }}>
+          {e.date_envoi ? `${dateCourte(e.date_envoi)}` : e.date_prevue ? `prévu ${dateCourte(e.date_prevue)}` : ''}
           <Pastille etat={e.livraison ? e.livraison.code : e.etat} testid={e.livraison ? `mr-livraison-${e.etape}` : undefined}>
-            {e.livraison ? e.livraison.libelle : (e.etat === ETATS.EN_RETARD ? `En retard · ${e.retard_jours} j` : undefined)}
+            {e.livraison ? e.livraison.libelle : (e.etat === ETATS.EN_RETARD ? `Retard ${e.retard_jours}j` : undefined)}
           </Pastille>
         </span>
       </summary>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', fontSize: '12.5px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', fontSize: '12px' }}>
         <div style={{ color: DOUX }}>Canal : <span style={{ color: TEXTE }}>{libelleCanal(e.canal)}</span>
           {' · '}Prévu : <span style={{ color: TEXTE }}>{dateCourte(e.date_prevue)}</span>
           {' · '}Soumis : <span style={{ color: TEXTE }}>{dateCourte(e.date_envoi)}</span>
@@ -333,123 +318,117 @@ function DetailEtape({ e }) {
   );
 }
 
-const ETIQUETTE = { fontSize: '10.5px', color: DOUX, textTransform: 'uppercase', letterSpacing: '0.04em' };
+const ETIQUETTE = { fontSize: '10px', color: DOUX, textTransform: 'uppercase', letterSpacing: '0.04em' };
 
-/* ---------------- LE PANNEAU (latéral sur ordinateur, plein écran sur mobile) ---------------- */
-function Panneau({ l, maintenant, notes, notesEnCours, brouillon, onFermer }) {
+/* ─── PANNEAU DE DÉTAIL (inline à droite sur desktop, plein écran mobile) ─── */
+function PanneauDetail({ l, maintenant, notes, notesEnCours, brouillon, onFermer, mobile }) {
+  const corpsRef = useRef(null);
+  useEffect(() => {
+    if (corpsRef.current) corpsRef.current.scrollTop = corpsRef.current.scrollHeight;
+  }, [l.id]);
   useEffect(() => {
     const surTouche = (e) => { if (e.key === 'Escape') onFermer(); };
     window.addEventListener('keydown', surTouche);
-    const avant = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', surTouche); document.body.style.overflow = avant; };
+    return () => window.removeEventListener('keydown', surTouche);
   }, [onFermer]);
   const fil = useMemo(() => filDe(l, notes, brouillon), [l, notes, brouillon]);
   const ids = (l.conversation && l.conversation.message_ids) || [];
   const dossier = ids[ids.length - 1] || '';
   const analyse = brouillon && (brouillon.prochaine_action || brouillon.resume) ? brouillon : null;
 
-  /* Rendu dans <body> (portail) : un parent à filtre/transform ne peut pas piéger le
-     panneau, qui reste un vrai plein écran sur mobile. */
-  return createPortal(
-    <div data-testid="mr-panneau" role="dialog" aria-modal="true" aria-label={`Dossier ${l.organisation}`}
-      style={{ position: 'fixed', inset: 0, zIndex: 10050, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={onFermer} data-testid="mr-panneau-fond" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)' }} />
-      <aside style={{ position: 'relative', width: 'min(620px, 100vw)', height: '100%', background: FOND_PANNEAU, color: TEXTE,
-        borderLeft: `1px solid rgba(${RGB}, 0.35)`, display: 'flex', flexDirection: 'column', boxShadow: '-12px 0 40px rgba(0,0,0,0.5)' }}>
-        <header style={{ padding: '10px 14px 12px', borderBottom: `1px solid ${BORD}`, display: 'flex', flexDirection: 'column', gap: '7px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button type="button" onClick={onFermer} data-testid="mr-retour"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px', borderRadius: '999px',
-                border: `1px solid ${BORD}`, background: 'rgba(255,255,255,0.06)', color: TEXTE, cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
-              <SvgIcon name="arrowLeft" size={14} /> Retour à la liste
-            </button>
-            <div style={{ flex: 1 }} />
-            <button type="button" onClick={onFermer} aria-label="Fermer" data-testid="mr-fermer"
-              style={{ display: 'inline-flex', padding: '7px', borderRadius: '999px', border: `1px solid ${BORD}`, background: 'transparent', color: TEXTE, cursor: 'pointer' }}>
-              <SvgIcon name="x" size={14} />
-            </button>
-          </div>
-          <div style={{ fontSize: '17px', fontWeight: 800, overflowWrap: 'anywhere' }}>{l.organisation}</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', alignItems: 'center' }}>
-            <Badges l={l} />
-            <Pastille etat={l.etat}>{l.etat === ETATS.EN_RETARD ? 'J+3 en retard' : undefined}</Pastille>
-            <span style={{ fontSize: '12px', color: DOUX }}>
-              {[libelleCanal(l.canal), l.statutProspect ? `Fiche : ${libelleStatutProspect(l.statutProspect)}` : '', l.reference].filter(Boolean).join(' · ')}
-            </span>
-          </div>
-          <div style={{ fontSize: '13px' }}>
-            <span style={{ color: DOUX }}>Prochaine action : </span><strong data-testid="mr-panneau-action">{l.prochaineAction}</strong>
-            {dateOuRetard(l) ? <span style={{ color: DOUX }}> · {dateOuRetard(l)}</span> : null}
-          </div>
-        </header>
-
-        <div data-testid="mr-panneau-corps" style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '12px 14px 28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {l.etat === ETATS.MANUEL && (
-            <div data-testid="mr-suivi-manuel" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12.5px',
-              padding: '8px 10px', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.3)' }}>
-              <SvgIcon name="info" size={14} />
-              <span>Suivi manuel ({libelleCanal(l.canal)}) — {SUIVI_MANUEL_INDISPONIBLE.toLowerCase()}. Aucun envoi n'est tracé : rien n'est supposé envoyé.</span>
+  return (
+    <div data-testid="mr-panneau" style={{ display: 'flex', flexDirection: 'column', height: '100%', color: TEXTE, background: '#000' }}>
+      {/* En-tête compact */}
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${BORD}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+          <button type="button" onClick={onFermer} data-testid="mr-retour"
+            style={{ display: mobile ? 'inline-flex' : 'none', alignItems: 'center', padding: '5px', borderRadius: '6px',
+              border: 'none', background: 'rgba(255,255,255,0.08)', color: TEXTE, cursor: 'pointer' }}>
+            <SvgIcon name="arrowLeft" size={16} />
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '15px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.organisation}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', marginTop: '2px' }}>
+              <Badges l={l} />
+              <Pastille etat={l.etat}>{l.etat === ETATS.EN_RETARD ? `Retard ${(l.j3.etat === ETATS.EN_RETARD ? l.j3 : l.j7).retard_jours}j` : undefined}</Pastille>
+              <span style={{ fontSize: '11px', color: DOUX }}>
+                {[libelleCanal(l.canal), l.statutProspect ? libelleStatutProspect(l.statutProspect) : ''].filter(Boolean).join(' · ')}
+              </span>
             </div>
-          )}
+          </div>
+          <button type="button" onClick={onFermer} aria-label="Fermer" data-testid="mr-fermer"
+            style={{ display: mobile ? 'none' : 'inline-flex', padding: '5px', borderRadius: '6px', border: 'none', background: 'rgba(255,255,255,0.08)', color: TEXTE, cursor: 'pointer' }}>
+            <SvgIcon name="x" size={14} />
+          </button>
+        </div>
+        <div style={{ fontSize: '12px', color: DOUX }}>
+          Prochaine action : <span style={{ color: TEXTE, fontWeight: 600 }} data-testid="mr-panneau-action">{l.prochaineAction}</span>
+          {dateOuRetard(l) ? <span style={{ color: l.etat === ETATS.EN_RETARD ? AMBRE : DOUX }}> · {dateOuRetard(l)}</span> : null}
+        </div>
+      </div>
 
-          {l.conversation && (
-            <div data-testid="mr-resume-echanges" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '8px' }}>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.16)' }}>
-                <div style={ETIQUETTE}>Dernier message partenaire</div>
-                <div style={{ fontSize: '13px', fontWeight: 600 }}>{l.dernierMessageLe ? quandLisible(l.dernierMessageLe, maintenant) : '—'}</div>
-              </div>
-              <div style={{ padding: '8px 10px', borderRadius: '10px', background: `rgba(${RGB}, 0.10)`, border: `1px solid rgba(${RGB}, 0.35)` }}>
-                <div style={ETIQUETTE}>Dernière réponse Afroboost</div>
-                <div data-testid="mr-derniere-afroboost" style={{ fontSize: '13px', fontWeight: 600, color: l.reponseAttendue ? AMBRE : TEXTE }}>
-                  {l.derniereReponseAfroboostLe ? dateCourte(l.derniereReponseAfroboostLe) : 'Aucune'}
-                  {l.reponseAttendue ? ' · Réponse attendue' : ''}
-                </div>
-              </div>
-            </div>
-          )}
+      {/* Barre d'actions */}
+      <div style={{ padding: '8px 12px', borderBottom: `1px solid ${BORD}`, flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+        {dossier && (
+          <button type="button" data-testid="mr-ouvrir-conversation" onClick={() => { onFermer(); ouvrirConversation(dossier); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '8px',
+              border: `1px solid rgba(${RGB}, 0.5)`, background: `rgba(${RGB}, 0.14)`, color: TEXTE, cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+            <SvgIcon name="messageCircle" size={12} /> Répondre
+          </button>
+        )}
+        {l.conversation && (
+          <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: DOUX, flexWrap: 'wrap' }}>
+            <span>Dernier msg : <strong style={{ color: TEXTE }}>{l.dernierMessageLe ? quandLisible(l.dernierMessageLe, maintenant) : '—'}</strong></span>
+            <span>Réponse AF : <strong data-testid="mr-derniere-afroboost" style={{ color: l.reponseAttendue ? AMBRE : TEXTE }}>
+              {l.derniereReponseAfroboostLe
+                ? dateCourte(l.derniereReponseAfroboostLe)
+                : l.reponseAttendue ? 'Aucune · Réponse attendue' : 'Aucune'}
+            </strong></span>
+          </div>
+        )}
+      </div>
 
-          {analyse && (
-            <div data-testid="mr-analyse-ia" style={{ fontSize: '12.5px', padding: '8px 10px', borderRadius: '10px', border: `1px solid ${BORD}`, background: 'rgba(255,255,255,0.03)' }}>
-              <div style={{ ...ETIQUETTE, marginBottom: '3px' }}>Analyse IA enregistrée</div>
-              {analyse.resume && <div style={{ color: TEXTE }}>{analyse.resume}</div>}
-              {analyse.prochaine_action && <div style={{ color: DOUX, marginTop: '3px' }}>Suggestion : <span style={{ color: TEXTE }}>{analyse.prochaine_action}</span></div>}
-            </div>
-          )}
+      {/* Corps défilant */}
+      <div ref={corpsRef} data-testid="mr-panneau-corps" style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '10px 12px 24px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {l.etat === ETATS.MANUEL && (
+          <div data-testid="mr-suivi-manuel" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px',
+            padding: '6px 8px', borderRadius: '6px', border: '1px dashed rgba(255,255,255,0.25)' }}>
+            <SvgIcon name="info" size={12} />
+            <span>Suivi manuel — {SUIVI_MANUEL_INDISPONIBLE.toLowerCase()}</span>
+          </div>
+        )}
 
-          {dossier && (
-            <button type="button" data-testid="mr-ouvrir-conversation" onClick={() => { onFermer(); ouvrirConversation(dossier); }}
-              style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 12px', borderRadius: '999px',
-                border: `1px solid rgba(${RGB}, 0.6)`, background: `rgba(${RGB}, 0.18)`, color: TEXTE, cursor: 'pointer', fontSize: '12.5px', fontWeight: 600 }}>
-              <SvgIcon name="messageCircle" size={13} /> Ouvrir la conversation pour répondre
-            </button>
-          )}
+        {analyse && (
+          <div data-testid="mr-analyse-ia" style={{ fontSize: '11.5px', padding: '6px 8px', borderRadius: '6px', border: `1px solid ${BORD}`, background: 'rgba(255,255,255,0.02)' }}>
+            <div style={{ ...ETIQUETTE, marginBottom: '2px' }}>Analyse IA</div>
+            {analyse.resume && <div style={{ color: TEXTE }}>{analyse.resume}</div>}
+            {analyse.prochaine_action && <div style={{ color: DOUX, marginTop: '2px' }}>Suggestion : <span style={{ color: TEXTE }}>{analyse.prochaine_action}</span></div>}
+          </div>
+        )}
 
-          <section data-testid="mr-fil" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div style={{ ...ETIQUETTE, fontSize: '12px', fontWeight: 700 }}>Historique</div>
-            {fil.length === 0 && <div style={{ fontSize: '12.5px', color: DOUX }}>Aucun échange enregistré.</div>}
-            {fil.map((x) => x.rendu())}
-            {notesEnCours && <div style={{ fontSize: '11px', color: DOUX, textAlign: 'center' }}>Chargement des notes…</div>}
-          </section>
+        <section data-testid="mr-fil" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {fil.length === 0 && <div style={{ fontSize: '12px', color: DOUX }}>Aucun échange enregistré.</div>}
+          {fil.map((x) => x.rendu())}
+          {notesEnCours && <div style={{ fontSize: '10.5px', color: DOUX, textAlign: 'center' }}>Chargement des notes…</div>}
+        </section>
 
-          <section style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ ...ETIQUETTE, fontSize: '12px', fontWeight: 700 }}>Séquence automatique (textes approuvés)</div>
+        <details style={{ marginTop: '4px' }}>
+          <summary style={{ cursor: 'pointer', fontSize: '11px', fontWeight: 700, color: DOUX }}>Séquence automatique</summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '6px' }}>
             <DetailEtape e={l.j0} />
             <DetailEtape e={l.j3} />
             <DetailEtape e={l.j7} />
             {l.j14 && (l.j14.date_envoi || (l.j14.message || '').trim()) ? <DetailEtape e={l.j14} /> : null}
-          </section>
-        </div>
-      </aside>
-    </div>,
-    document.body,
+          </div>
+        </details>
+      </div>
+    </div>
   );
 }
 
 async function lireProspects(base) {
   const tous = [];
   for (let page = 0; page < PAGES_PROSPECTS_MAX; page += 1) {
-    // V627 : l'historique des relances garde les fiches en corbeille (affichées « stoppées »).
     const rep = await axios.get(`${base}/partner-prospects`, { params: { limit: 50, offset: page * 50, inclure_corbeille: 1 } });
     const d = (rep && rep.data) || {};
     const lot = Array.isArray(d.prospects) ? d.prospects : [];
@@ -470,7 +449,6 @@ async function lireCampagnes(base) {
   return { campagnes: details };
 }
 
-/* Lecture GET à la demande, mise en cache par identifiant (jamais relue deux fois). */
 function useLectureParId(base, id, chemin, extraire) {
   const [cache, setCache] = useState({});
   const [enCours, setEnCours] = useState('');
@@ -488,13 +466,27 @@ function useLectureParId(base, id, chemin, extraire) {
         setEnCours((prev) => (prev === id ? '' : prev));
       });
     return () => { vivant = false; };
-    // `extraire` est une fonction de module, stable : volontairement hors dépendances.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, id, chemin, connu]);
   return { valeur: id ? cache[id] : undefined, enCours: !!id && enCours === id };
 }
 const extraireNotes = (d) => (d && Array.isArray(d.notes) ? d.notes : []);
 const extraireBrouillon = (d) => (d && d.brouillon) || null;
+
+/* ─── RESPONSIVE : détecte < 768px ─── */
+function useEstMobile(seuil) {
+  const s = seuil || 768;
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < s);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia(`(max-width: ${s - 1}px)`);
+    const cb = (e) => setMobile(e.matches);
+    mq.addEventListener('change', cb);
+    setMobile(mq.matches);
+    return () => mq.removeEventListener('change', cb);
+  }, [s]);
+  return mobile;
+}
 
 export default function MessagesRelancesSection({ API, actif }) {
   const base = API || '/api';
@@ -503,6 +495,7 @@ export default function MessagesRelancesSection({ API, actif }) {
   const [recherche, setRecherche] = useState('');
   const [campagneId, setCampagneId] = useState('');
   const [ouverteId, setOuverteId] = useState('');
+  const mobile = useEstMobile(768);
 
   const chargement = useChargement({
     campagnes: { url: `${base}/prospect-campaigns`, signature: true, appel: () => lireCampagnes(base), extraire: (d) => d },
@@ -521,7 +514,6 @@ export default function MessagesRelancesSection({ API, actif }) {
   const sD = chargement.sections.drapeaux;
   const campagnes = (sC && sC.etat === SECTION.OK && sC.donnees && sC.donnees.campagnes) || [];
   const campagne = campagnes.find((c) => c.campaign.id === campagneId) || campagnes[0] || null;
-  /* Tableaux dérivés des DONNÉES (référence stable), jamais recréés à chaque rendu. */
   const donneesR = sR && sR.etat === SECTION.OK ? sR.donnees : null;
   const donneesP = sP && sP.etat === SECTION.OK ? sP.donnees : null;
   const conversations = useMemo(() => (donneesR && donneesR.conversations) || [], [donneesR]);
@@ -529,7 +521,6 @@ export default function MessagesRelancesSection({ API, actif }) {
   const drapeaux = (sD && sD.etat === SECTION.OK && sD.donnees) ? (sD.donnees.flags || sD.donnees) : null;
   const relancesOuvertes = !!(drapeaux && drapeaux.P3_RELANCE_ENABLED && drapeaux.P3_RELANCE_ENVOI_REEL);
 
-  /* « maintenant » figé à la minute : l'écran ne se recalcule pas en continu. */
   const minute = Math.floor(Date.now() / 60000);
   const maintenant = minute * 60000;
   const lignes = useMemo(() => (campagne
@@ -543,7 +534,6 @@ export default function MessagesRelancesSection({ API, actif }) {
   const notes = useLectureParId(base, ids[0] || '', 'notes', extraireNotes);
   const brouillon = useLectureParId(base, ids[ids.length - 1] || '', 'brouillon', extraireBrouillon);
 
-  /* Une tuile active se désactive au second clic (retour à « Tous »). */
   const basculerFiltre = (f) => setFiltre((prev) => (prev === f ? 'tous' : f));
   const fermer = useCallback(() => setOuverteId(''), []);
 
@@ -551,23 +541,27 @@ export default function MessagesRelancesSection({ API, actif }) {
   const erreur = [['campagnes', sC, 'les campagnes'], ['reponses', sR, 'les réponses'], ['prospects', sP, 'les prospects']]
     .find(([, s]) => s && (s.etat === SECTION.ERREUR || s.etat === SECTION.SESSION));
   const v = (n) => (enChargement ? '—' : n);
-  const pluriel = (n, s, p) => (n > 1 ? p : s);
+
+  /* V642 : layout split desktop | bascule mobile */
+  const voirListe = !mobile || !ligneOuverte;
+  const voirDetail = !mobile || !!ligneOuverte;
 
   return (
-    <div data-testid="messages-relances" style={{ color: TEXTE, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+    <div data-testid="messages-relances" style={{ color: TEXTE, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {/* ─── EN-TÊTE ─── */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
         <div style={{ minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <SvgIcon name="send" size={16} /> Messages & relances
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <SvgIcon name="send" size={14} /> Messages & relances
           </h3>
-          <div style={{ fontSize: '12px', color: DOUX }}>
-            Lecture seule{campagne ? <> · campagne <strong style={{ color: TEXTE }}>{nomCampagne(campagne.campaign)}</strong></> : null}
+          <div style={{ fontSize: '11px', color: DOUX }}>
+            Lecture seule{campagne ? <> · <strong style={{ color: TEXTE }}>{nomCampagne(campagne.campaign)}</strong></> : null}
           </div>
         </div>
-        <span data-testid="mr-interrupteurs" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11.5px',
-          padding: '4px 10px', borderRadius: '999px', border: `1px solid ${BORD}`, color: TEXTE }}>
-          <SvgIcon name="lock" size={12} />
-          {drapeaux === null ? 'Relances auto : état inconnu' : relancesOuvertes ? 'Relances auto : OUVERTES' : 'Relances auto : fermées'}
+        <span data-testid="mr-interrupteurs" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10.5px',
+          padding: '3px 8px', borderRadius: '999px', border: `1px solid ${BORD}`, color: DOUX }}>
+          <SvgIcon name="lock" size={10} />
+          {drapeaux === null ? 'Relances : ?' : relancesOuvertes ? 'Relances ouvertes' : 'Relances fermées'}
         </span>
       </div>
 
@@ -575,68 +569,90 @@ export default function MessagesRelancesSection({ API, actif }) {
         onReessayer={() => chargement.reessayer(erreur[0])} data-testid="mr-erreur" />}
 
       {campagnes.length > 1 && (
-        <label style={{ fontSize: '12px', color: DOUX, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          Campagne
-          <select value={campagne ? campagne.campaign.id : ''} onChange={(e) => { setCampagneId(e.target.value); setOuverteId(''); }}
-            style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`, borderRadius: '8px', padding: '6px 8px' }}>
-            {campagnes.map((c) => <option key={c.campaign.id} value={c.campaign.id}>{nomCampagne(c.campaign)}</option>)}
-          </select>
-        </label>
+        <select value={campagne ? campagne.campaign.id : ''} onChange={(e) => { setCampagneId(e.target.value); setOuverteId(''); }}
+          style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`, borderRadius: '6px', padding: '5px 6px', fontSize: '12px', maxWidth: '280px' }}>
+          {campagnes.map((c) => <option key={c.campaign.id} value={c.campaign.id}>{nomCampagne(c.campaign)}</option>)}
+        </select>
       )}
 
-      <div data-testid="mr-compteurs" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-        <Tuile testid="mr-c-a-traiter" libelle="À traiter" valeur={v(compteurs.aTraiter)} ton="marque" actif={filtre === 'a_traiter'} onClick={() => basculerFiltre('a_traiter')} />
-        <Tuile testid="mr-c-nouveaux" libelle="Nouveaux messages" valeur={v(compteurs.nouveaux)} ton="marque" actif={filtre === 'nouveaux'} onClick={() => basculerFiltre('nouveaux')} />
-        <Tuile testid="mr-c-appels" libelle="Appels à faire" valeur={v(compteurs.appels)} ton="bleu" actif={filtre === 'appels'} onClick={() => basculerFiltre('appels')} />
-        <Tuile testid="mr-c-j3-retard" libelle="J+3 en retard" valeur={v(compteurs.j3EnRetard)} ton="ambre" actif={filtre === 'en_retard'} onClick={() => basculerFiltre('en_retard')} />
-        <Tuile testid="mr-c-reponses" libelle="Réponses" valeur={v(compteurs.reponses)} actif={filtre === 'repondus'} onClick={() => basculerFiltre('repondus')} />
-        <Tuile testid="mr-c-stoppes" libelle="Stoppés" valeur={v(compteurs.stoppes)} actif={filtre === 'stoppes'} onClick={() => basculerFiltre('stoppes')} />
-      </div>
-      <div data-testid="mr-stats" style={{ fontSize: '11.5px', color: DOUX }}>
-        {enChargement ? '—' : `${compteurs.total} destinataires · ${compteurs.j0Envoyes} J0 envoyés · J+3 à venir ${compteurs.j3AVenir} · J+7 à venir ${compteurs.j7AVenir} · ${compteurs.manuel} à faire manuellement · ${compteurs.reponsesAttendues} ${pluriel(compteurs.reponsesAttendues, 'réponse attendue', 'réponses attendues')}`}
+      {/* ─── COMPTEURS ─── */}
+      <div data-testid="mr-compteurs" style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+        <Compteur testid="mr-c-a-traiter" libelle="À traiter" valeur={v(compteurs.aTraiter)} ton="marque" actif={filtre === 'a_traiter'} onClick={() => basculerFiltre('a_traiter')} />
+        <Compteur testid="mr-c-nouveaux" libelle="Nouveaux" valeur={v(compteurs.nouveaux)} ton="marque" actif={filtre === 'nouveaux'} onClick={() => basculerFiltre('nouveaux')} />
+        <Compteur testid="mr-c-appels" libelle="Appels" valeur={v(compteurs.appels)} ton="bleu" actif={filtre === 'appels'} onClick={() => basculerFiltre('appels')} />
+        <Compteur testid="mr-c-j3-retard" libelle="Retard" valeur={v(compteurs.j3EnRetard)} ton="ambre" actif={filtre === 'en_retard'} onClick={() => basculerFiltre('en_retard')} />
+        <Compteur testid="mr-c-reponses" libelle="Réponses" valeur={v(compteurs.reponses)} actif={filtre === 'repondus'} onClick={() => basculerFiltre('repondus')} />
+        <Compteur testid="mr-c-stoppes" libelle="Stoppés" valeur={v(compteurs.stoppes)} actif={filtre === 'stoppes'} onClick={() => basculerFiltre('stoppes')} />
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {/* ─── FILTRES + RECHERCHE ─── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         <div style={{ position: 'relative' }}>
-          <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: DOUX, display: 'inline-flex' }}>
-            <SvgIcon name="search" size={14} />
+          <span style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: DOUX, display: 'inline-flex' }}>
+            <SvgIcon name="search" size={13} />
           </span>
           <input type="search" value={recherche} onChange={(e) => setRecherche(e.target.value)} data-testid="mr-recherche"
-            placeholder="Rechercher : organisation, ville, catégorie, nom, e-mail, statut…" aria-label="Rechercher"
-            style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px 8px 32px', borderRadius: '10px', fontSize: '13px',
-              background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`, outline: 'none' }} />
+            placeholder="Organisation, ville, e-mail…" aria-label="Rechercher"
+            style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px 6px 28px', borderRadius: '8px', fontSize: '12px',
+              background: 'rgba(255,255,255,0.04)', color: TEXTE, border: `1px solid ${BORD}`, outline: 'none' }} />
         </div>
-        <div role="group" aria-label="Filtrer par état" style={{ display: 'flex', gap: '5px', overflowX: 'auto', paddingBottom: '2px' }}>
+        <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
           {FILTRES.map((f) => <Puce key={f.id} testid={`mr-filtre-${f.id}`} actif={filtre === f.id} onClick={() => setFiltre(f.id)}>{f.libelle}</Puce>)}
         </div>
-        <div role="group" aria-label="Filtrer par canal" style={{ display: 'flex', gap: '5px', overflowX: 'auto', paddingBottom: '2px' }}>
+        <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
           {FILTRES_CANAL.map((c) => <Puce key={c.id} testid={`mr-canal-${c.id}`} actif={canal === c.id} onClick={() => setCanal(c.id)}>{c.libelle}</Puce>)}
         </div>
       </div>
 
-      <div data-testid="mr-resultat" style={{ fontSize: '12px', color: DOUX }}>
-        {enChargement ? 'Chargement…' : `${visibles.length} ${pluriel(visibles.length, 'destinataire', 'destinataires')}`}
-        {filtre === 'en_retard' && !enChargement ? ' · aucune relance ne partira tant que les interrupteurs restent fermés' : ''}
+      {!enChargement && compteurs.reponsesAttendues > 0 && (
+        <div data-testid="mr-stats" style={{ fontSize: '11px', color: DOUX }}>
+          {compteurs.reponsesAttendues} réponse{compteurs.reponsesAttendues > 1 ? 's' : ''} attendue{compteurs.reponsesAttendues > 1 ? 's' : ''}
+        </div>
+      )}
+
+      <div data-testid="mr-resultat" style={{ fontSize: '11px', color: DOUX }}>
+        {enChargement ? '…' : `${visibles.length} destinataire${visibles.length > 1 ? 's' : ''}`}
       </div>
 
       {!enChargement && !campagne && !erreur && (
-        <div style={{ fontSize: '13px', color: DOUX }}>Aucune campagne de prospection pour l'instant.</div>
+        <div style={{ fontSize: '12px', color: DOUX }}>Aucune campagne de prospection pour l'instant.</div>
       )}
 
-      <ul data-testid="mr-liste" style={{ listStyle: 'none', margin: 0, padding: '2px 4px 2px 0', display: 'flex', flexDirection: 'column', gap: '6px',
-        maxHeight: 'min(65vh, 760px)', minHeight: '220px', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-        {visibles.map((l) => (
-          <Carte key={l.id} l={l} maintenant={maintenant} active={ouverteId === l.id} onOuvrir={() => setOuverteId(l.id)} />
-        ))}
-        {!enChargement && visibles.length === 0 && (
-          <li style={{ fontSize: '13px', color: DOUX, padding: '12px' }}>Aucun destinataire ne correspond.</li>
+      {/* ─── SPLIT PANE (desktop) / BASCULE (mobile) ─── */}
+      <div style={{ display: 'flex', gap: '0', minHeight: 'min(72vh, 640px)', border: `1px solid ${BORD}`, borderRadius: '10px', overflow: 'hidden', background: '#000' }}>
+        {/* COLONNE GAUCHE : liste */}
+        {voirListe && (
+          <div style={{ width: mobile ? '100%' : '340px', minWidth: mobile ? undefined : '280px', maxWidth: mobile ? undefined : '400px',
+            flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: mobile ? 'none' : `1px solid ${BORD}` }}>
+            <ul data-testid="mr-liste" style={{ listStyle: 'none', margin: 0, padding: '4px', flex: 1,
+              overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {visibles.map((l) => (
+                <Carte key={l.id} l={l} maintenant={maintenant} active={ouverteId === l.id} onOuvrir={() => setOuverteId(l.id)} />
+              ))}
+              {!enChargement && visibles.length === 0 && (
+                <li style={{ fontSize: '12px', color: DOUX, padding: '16px 12px', textAlign: 'center' }}>Aucun destinataire ne correspond.</li>
+              )}
+            </ul>
+          </div>
         )}
-      </ul>
 
-      {ligneOuverte && (
-        <Panneau l={ligneOuverte} maintenant={maintenant} notes={notes.valeur} notesEnCours={notes.enCours}
-          brouillon={brouillon.valeur} onFermer={fermer} />
-      )}
+        {/* COLONNE DROITE : détail */}
+        {voirDetail && (
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            {ligneOuverte ? (
+              <PanneauDetail l={ligneOuverte} maintenant={maintenant} notes={notes.valeur} notesEnCours={notes.enCours}
+                brouillon={brouillon.valeur} onFermer={fermer} mobile={mobile} />
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: DOUX, fontSize: '13px' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <SvgIcon name="messageCircle" size={28} />
+                  <div style={{ marginTop: '8px' }}>Sélectionne un destinataire</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

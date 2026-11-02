@@ -203,7 +203,7 @@ test('recherche instantanée : organisation, ville, catégorie, nom', async () =
 test('panneau BDE : partenaire à GAUCHE, Afroboost à DROITE, réponse Afroboost, analyse IA, notes', async () => {
   await ouvrir('BDE HE-Arc');
   expect(panneau()).toBeTruthy();
-  expect(conteneur.contains(panneau())).toBe(false);            // portail : rendu dans <body>
+  expect(conteneur.contains(panneau())).toBe(true);             // V642 : panneau inline dans le split-pane
   const partenaires = dansPanneau('mr-bulle-partenaire');
   const afroboost = dansPanneau('mr-bulle-afroboost');
   expect(partenaires).toHaveLength(2);
