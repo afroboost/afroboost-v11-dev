@@ -1635,6 +1635,11 @@ class Concept(BaseModel):
     # affiche deja configuree rend exactement la meme chose qu'avant.
     eventPosterReserveLabel: str = "Réserver"
     eventPosterOffersLabel: str = "Nos offres"
+    # V645 : bannière média de la section Boutique sur l'accueil. Facultatif,
+    # rétrocompatible (défaut vide = aucune bannière). Clé PROPRE, distincte du
+    # futur boutique_page_banner : les deux médias ne s'écrasent jamais.
+    home_shop_banner_url: str = ""          # URL du média (chemin /api/files/… ou http[s])
+    home_shop_banner_type: str = ""         # "image" | "video" | "" (vide = aucune)
     # Personnalisation des couleurs
     primaryColor: str = "#D91CD2"  # Couleur principale (glow)
     secondaryColor: str = "#8b5cf6"  # Couleur secondaire
@@ -1682,6 +1687,9 @@ class ConceptUpdate(BaseModel):
     # V257b: libelles des boutons (voir Concept ci-dessus)
     eventPosterReserveLabel: Optional[str] = None
     eventPosterOffersLabel: Optional[str] = None
+    # V645 : bannière média de la section Boutique sur l'accueil (facultatif).
+    home_shop_banner_url: Optional[str] = None
+    home_shop_banner_type: Optional[str] = None
     # Personnalisation des couleurs
     primaryColor: Optional[str] = None
     secondaryColor: Optional[str] = None
@@ -21638,6 +21646,17 @@ async def update_concept(concept: ConceptUpdate, request: Request):
         # {"v":1,"desktop":null,"mobile":null}.
         if "heroLayout" in updates:
             updates["heroLayout"] = v554_normaliser_hero_layout(updates["heroLayout"])
+        # V645 : bannière Boutique — valider le type et l'URL avant écriture.
+        # Type : liste blanche stricte (vide = retrait de la bannière). URL :
+        # chemin interne /api/files/… (stockage média existant) ou http(s). Une
+        # valeur invalide est NEUTRALISEE (vidée), jamais stockée telle quelle.
+        if "home_shop_banner_type" in updates:
+            _t = (updates.get("home_shop_banner_type") or "").strip().lower()
+            updates["home_shop_banner_type"] = _t if _t in ("image", "video") else ""
+        if "home_shop_banner_url" in updates:
+            _u = (updates.get("home_shop_banner_url") or "").strip()
+            _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
+            updates["home_shop_banner_url"] = _u if (_ok and len(_u) <= 2048) else ""
         updates["coach_id"] = user_email if not is_admin else None
         result = await db.concept.update_one({"id": concept_id}, {"$set": updates}, upsert=True)
         updated = await db.concept.find_one({"id": concept_id}, {"_id": 0})
