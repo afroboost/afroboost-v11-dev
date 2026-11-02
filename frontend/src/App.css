@@ -1307,6 +1307,53 @@ body {
 .af-fil-carte { width: 100%; max-width: 500px; margin: 0 auto; }
 @media (min-width: 1024px) { .af-fil-carte { max-width: 660px; } }
 
+/* ─── V645 — EXPÉRIENCE REELS ─────────────────────────────────────────────────
+   Conteneur à défilement vertical AIMANTÉ (scroll-snap). Hauteur BORNÉE : la
+   page d'accueil garde son scroll normal au-dessus et en dessous — le conteneur
+   ne capture jamais le défilement de la page (il a ses propres extrémités).
+   `scroll-snap-stop: always` = une publication à la fois. `gap: 0` = aucun
+   espace vide entre les vidéos. Barre de défilement masquée. */
+.af-reels {
+  --reel-h: min(78vh, 680px);
+  height: var(--reel-h);
+  max-width: 500px;
+  margin: 0 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 16px;
+  background: #0c0c0e;
+  scrollbar-width: none;
+}
+.af-reels::-webkit-scrollbar { width: 0; height: 0; }
+@media (min-width: 1024px) {
+  .af-reels { --reel-h: min(80vh, 760px); max-width: 480px; margin: 0; }
+}
+/* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
+.af-reel-carte {
+  position: relative;
+  height: var(--reel-h);
+  width: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow: hidden;
+}
+/* Le média ne se DÉFORME jamais : `object-fit: cover` (posé en ligne) garde le
+   ratio et recadre intelligemment pour remplir le cadre vertical. Le wrapper du
+   média prend toute la hauteur ; l'overlay infos (absolute) en est exclu. */
+.af-reel-carte > div:not(.af-reel-infos) { height: 100%; }
+/* Auteur + légende en OVERLAY bas, sur un dégradé lisible. */
+.af-reel-infos {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 44px 16px 16px;
+  z-index: 3;
+  background: linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.45) 48%, rgba(0,0,0,0) 100%);
+  pointer-events: none;
+}
+.af-reel-infos * { pointer-events: auto; }
+
 /* 3. LA BARRE DE NAVIGATION, maintenant qu'elle tient vraiment. Un peu plus
    d'air, un état actif qui se voit de loin, et un contraste d'inactif qui
    passe le seuil de lisibilité (0,6 -> 0,78). */
