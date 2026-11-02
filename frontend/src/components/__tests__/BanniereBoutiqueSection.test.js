@@ -58,9 +58,13 @@ test('enregistrer une image → PUT /concept avec home_shop_banner_* UNIQUEMENT 
   expect(axios.put).toHaveBeenCalledTimes(1);
   const [url, payload] = axios.put.mock.calls[0];
   expect(url).toBe('/api/concept');
+  // V645.3c — image : découpe neutralisée (0/0) + pas de poster.
   expect(payload).toEqual({
     home_shop_banner_url: '/api/files/banniere/image_x.jpg',
     home_shop_banner_type: 'image',
+    home_shop_banner_trim_start: 0,
+    home_shop_banner_trim_end: 0,
+    home_shop_banner_thumbnail: '',
   });
   // INDÉPENDANCE : aucun champ d'offre ne part dans la requête bannière.
   const interdits = ['videoUrl', 'images', 'thumbnail', 'price', 'name', 'variants', 'isProduct'];
@@ -78,5 +82,9 @@ test('retirer la bannière → PUT /concept avec les deux champs vidés', async 
   await act(async () => { await Promise.resolve(); });
   const [url, payload] = axios.put.mock.calls[0];
   expect(url).toBe('/api/concept');
-  expect(payload).toEqual({ home_shop_banner_url: '', home_shop_banner_type: '' });
+  // V645.3c — retirer vide aussi découpe + miniature.
+  expect(payload).toEqual({
+    home_shop_banner_url: '', home_shop_banner_type: '',
+    home_shop_banner_trim_start: 0, home_shop_banner_trim_end: 0, home_shop_banner_thumbnail: '',
+  });
 });

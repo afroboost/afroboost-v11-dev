@@ -299,6 +299,8 @@ import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente
   badgeOffre, prixAffiche, promesseCourte } from "./utils/offresAimants"; // V540 : libellés de la carte « offre du moment »
 // V540 : les trois cartes de la colonne d'accueil (Live · offre · Spordateur).
 import { CarteLive, CarteOffreDuMoment, CarteSpordateur, CarteHoraires } from "./components/accueil/ColonneAccueil";
+// V645.3c — média de la bannière Boutique (vidéo sur segment + poster / image / fallback)
+import BanniereBoutiqueMedia from "./components/accueil/BanniereBoutiqueMedia";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -5189,7 +5191,8 @@ function App() {
     // V645 : bannière média de la section Boutique sur l'accueil. Clé PROPRE
     // (distincte du futur boutique_page_banner : les deux médias ne s'écrasent
     // jamais). Vide = pas de bannière affichée.
-    home_shop_banner_url: "", home_shop_banner_type: "" });
+    home_shop_banner_url: "", home_shop_banner_type: "",
+    home_shop_banner_trim_start: 0, home_shop_banner_trim_end: 0, home_shop_banner_thumbnail: "" });
   const [showEventPoster, setShowEventPoster] = useState(false);
   // V260: offre en cours de choix / de saisie de preuve sociale (null = fermee)
   const [v260ChoiceOffer, setV260ChoiceOffer] = useState(null);
@@ -10154,16 +10157,17 @@ function App() {
                 grand vide ; sur mobile, tout s'empile (bannière puis produit). */}
             <div className="af-boutique-vitrine">
             <div className="af-boutique-banniere">
-              {concept.home_shop_banner_url ? (
-                concept.home_shop_banner_type === 'video' ? (
-                  <video className="af-boutique-banniere-media" src={concept.home_shop_banner_url} autoPlay loop muted playsInline preload="metadata" />
-                ) : (
-                  <img className="af-boutique-banniere-media" src={concept.home_shop_banner_url} alt="Boutique Afroboost" loading="lazy" />
-                )
-              ) : (
-                /* Fallback visuel : fond dégradé noir→violet quand aucun média configuré */
-                <div className="af-boutique-banniere-media" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, rgba(var(--primary-rgb,217,28,210),0.18) 60%, rgba(var(--primary-rgb,217,28,210),0.08) 100%)' }} />
-              )}
+              {/* V645.3c — média de la bannière : vidéo lue sur son segment
+                  [début, fin] en boucle muette avec miniature en poster, image,
+                  ou fallback dégradé. Rétrocompatible (pas d'extrait = fichier
+                  entier). Lit uniquement les champs concept.home_shop_banner_*. */}
+              <BanniereBoutiqueMedia
+                url={concept.home_shop_banner_url}
+                type={concept.home_shop_banner_type}
+                trimStart={concept.home_shop_banner_trim_start}
+                trimEnd={concept.home_shop_banner_trim_end}
+                thumbnail={concept.home_shop_banner_thumbnail}
+              />
               <div className="af-boutique-banniere-overlay">
                 <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
                 <h3 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT.</h3>

@@ -53,6 +53,15 @@ export default function BanniereBoutiqueSection({ API }) {
         if (!vivant) return;
         setUrl(c.home_shop_banner_url || '');
         setType(c.home_shop_banner_type || '');
+        // V645.3c — restaurer la découpe (si un extrait valide est enregistré :
+        // fin > début) et la miniature. Rétrocompatible : des champs absents
+        // (ancienne bannière) → aucune découpe, pas de poster.
+        const ts = Number(c.home_shop_banner_trim_start || 0);
+        const te = Number(c.home_shop_banner_trim_end || 0);
+        if (te > ts) { setTrimStart(ts); setTrimEnd(te); } else { setTrimStart(null); setTrimEnd(null); }
+        if (c.home_shop_banner_type === 'video') setThumb(c.home_shop_banner_thumbnail || '');
+        else if (c.home_shop_banner_type === 'image') setThumb(c.home_shop_banner_url || '');
+        else setThumb('');
       } catch (e) {
         /* lecture impossible : on part d'une bannière vide, sans bloquer. */
       } finally {
@@ -94,11 +103,17 @@ export default function BanniereBoutiqueSection({ API }) {
   const enregistrer = async () => {
     setEtat('envoi');
     try {
-      // IMAGE : url + type suffisent (persistance complète).
-      // VIDÉO : url + type ; découpe/miniature NON encore persistées (GO backend).
+      // V645.3c — persistance complète. IMAGE : url + type (découpe/poster vidés).
+      // VIDÉO : url + type + découpe (début/fin, 0/0 si pas d'extrait) + miniature.
+      // Les nombres sont toujours envoyés (jamais null) pour passer le filtre
+      // `is not None` de update_concept ; 0/0 signifie « pas de découpe ».
+      const estVideo = !!url && type === 'video';
       await axios.put(`${API}/concept`, {
         home_shop_banner_url: url || '',
         home_shop_banner_type: url ? type : '',
+        home_shop_banner_trim_start: estVideo ? Number(trimStart || 0) : 0,
+        home_shop_banner_trim_end: estVideo ? Number(trimEnd || 0) : 0,
+        home_shop_banner_thumbnail: estVideo ? (thumb || '') : '',
       });
       setSale(false);
       setEtat('ok');
@@ -112,7 +127,11 @@ export default function BanniereBoutiqueSection({ API }) {
   const retirer = async () => {
     setEtat('envoi');
     try {
-      await axios.put(`${API}/concept`, { home_shop_banner_url: '', home_shop_banner_type: '' });
+      // V645.3c — retirer la bannière ET ses réglages (découpe + miniature).
+      await axios.put(`${API}/concept`, {
+        home_shop_banner_url: '', home_shop_banner_type: '',
+        home_shop_banner_trim_start: 0, home_shop_banner_trim_end: 0, home_shop_banner_thumbnail: '',
+      });
       setUrl(''); setType(''); setThumb(''); setTrimStart(null); setTrimEnd(null);
       setSale(false);
       setEtat('ok');
@@ -172,8 +191,8 @@ export default function BanniereBoutiqueSection({ API }) {
                 onThumbnailCapture={capturerMiniature}
               />
               <p style={{ margin: '8px 0 0', color: 'rgba(255,255,255,0.45)', fontSize: 11.5, lineHeight: 1.45 }}>
-                La découpe (début/fin) et la miniature d'une vidéo ne sont pas encore
-                enregistrées de façon permanente — réglages d'aperçu pour l'instant.
+                La découpe (début/fin) et la miniature sont enregistrées : l'accueil
+                lit le segment choisi en boucle, sans son, avec la miniature en poster.
               </p>
             </div>
           ) : url ? (
