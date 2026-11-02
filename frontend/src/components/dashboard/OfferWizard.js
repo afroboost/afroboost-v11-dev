@@ -16,6 +16,9 @@ import { analyserMediaUrl, mediaPrincipal, champVideoEstImage } from '../../util
 // preview joue l'extrait (même hook que la vitrine).
 import VideoTrimEditor from '../VideoTrimEditor';
 import { uploadToCloudinary } from '../CloudinaryUploadButton';
+// V645.3 — rubrique « Bannière Boutique — Accueil » : média INDÉPENDANT du
+// T-shirt, écrit dans concept.home_shop_banner_url/_type. Réutilise VideoTrimEditor.
+import BanniereBoutiqueSection from './BanniereBoutiqueSection';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
@@ -3000,6 +3003,11 @@ export default function OfferWizard({
           </div>
         )}
       </div>
+      {/* V645.3 — BANNIÈRE BOUTIQUE — ACCUEIL. Rubrique distincte, UNIQUEMENT
+          pour une offre produit (le T-shirt). Média totalement indépendant des
+          photos/vidéos du produit : elle n'écrit que concept.home_shop_banner_*.
+          Réutilise l'éditeur VideoTrimEditor, aucun nouvel éditeur. */}
+      {form.isProduct && <BanniereBoutiqueSection API={API} />}
     </div>
   );
 

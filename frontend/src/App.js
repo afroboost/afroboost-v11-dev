@@ -1697,6 +1697,12 @@ const V223_TIERS = {
 const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
+  // V645.3 — fiche produit « façon Adidas » (galerie + infos + variantes),
+  // ouverte par « Voir le produit ». PRÉSENTATION enrichie : elle réutilise la
+  // galerie, les variantes (v226Variants) et le checkout EXISTANTS, elle n'en
+  // crée aucun nouveau. Ne s'ouvre que pour un produit.
+  const [showDetail, setShowDetail] = useState(false);
+  const [detailInfos, setDetailInfos] = useState(false); // « Informations produit » dépliées
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   // V278 : retour visuel « lien copié » du partage (repli desktop de navigator.share).
   const [shareCopied, setShareCopied] = useState(false);
@@ -2285,8 +2291,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     <>
       {/* Zoom Modal - flèches uniquement dans le zoom */}
       {showZoom && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90"
           onClick={toggleZoom}
         >
           <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={e => e.stopPropagation()}>
@@ -2329,7 +2335,167 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           </div>
         </div>
       )}
-      
+
+      {/* V645.3 — FICHE PRODUIT « façon Adidas » (structure, pas la marque).
+          Galerie à gauche (desktop) / au-dessus (mobile), infos à droite / en
+          dessous. RÉUTILISE la galerie, les variantes (v226Variants) et le
+          checkout EXISTANTS : aucun panier, aucun prix ni avis inventé, le prix
+          et le parcours d'achat sont ceux de la carte. Couleurs : noir / blanc /
+          violet uniquement. */}
+      {showDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-6"
+          onClick={() => setShowDetail(false)}
+          data-testid={`product-detail-${offer.id}`}
+        >
+          <div
+            className="relative w-full flex flex-col overflow-hidden rounded-2xl"
+            style={{ maxWidth: '920px', maxHeight: '92vh', background: '#111014', border: '1px solid rgba(var(--primary-rgb,217,28,210),0.22)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowDetail(false)}
+              aria-label="Fermer"
+              className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 text-white text-xl flex items-center justify-center hover:bg-black/80"
+            >
+              ×
+            </button>
+            <div className="flex flex-col md:flex-row overflow-y-auto">
+              {/* GALERIE */}
+              <div className="md:w-[55%] md:flex-shrink-0 p-3 sm:p-4" style={{ background: '#0c0c0e' }}>
+                <div className="relative w-full rounded-xl overflow-hidden" style={{ aspectRatio: '4 / 5', background: '#0c0c0e' }}>
+                  {currentMedia && currentMedia.type === 'video' ? (
+                    <video src={currentImage} muted loop autoPlay playsInline className="w-full h-full" style={{ objectFit: 'contain' }} />
+                  ) : (
+                    <img
+                      src={currentImage}
+                      alt={offer.name}
+                      className="w-full h-full cursor-zoom-in"
+                      style={{ objectFit: 'contain' }}
+                      onClick={() => setShowZoom(true)}
+                    />
+                  )}
+                  {hasMultipleImages && (
+                    <>
+                      <button onClick={prevImage} aria-label="Précédent" className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 text-lg">‹</button>
+                      <button onClick={nextImage} aria-label="Suivant" className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 text-lg">›</button>
+                    </>
+                  )}
+                </div>
+                {/* Bande de miniatures — autant que de médias RÉELS (jamais de faux). */}
+                {hasMultipleImages && (
+                  <div className="flex gap-2 mt-3 flex-wrap" data-testid={`product-detail-thumbs-${offer.id}`}>
+                    {images.map((im, i) => {
+                      const estVideo = (parseMediaUrl(im) || {}).type === 'video';
+                      return (
+                        <button
+                          key={`${im}-${i}`}
+                          type="button"
+                          onClick={() => setCurrentImageIndex(i)}
+                          aria-label={`Média ${i + 1}`}
+                          className="rounded-lg overflow-hidden"
+                          style={{ width: 54, height: 68, flexShrink: 0, background: '#0c0c0e', padding: 0, cursor: 'pointer', border: i === currentImageIndex ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.12)' }}
+                        >
+                          {estVideo ? (
+                            <span className="w-full h-full flex items-center justify-center text-white" style={{ fontSize: 14 }}>▶</span>
+                          ) : (
+                            <img src={im} alt="" className="w-full h-full" style={{ objectFit: 'cover' }} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* INFOS */}
+              <div className="md:w-[45%] p-4 sm:p-5 flex flex-col gap-3" style={{ color: '#fff' }}>
+                <h3 className="font-bold" style={{ fontSize: 20, lineHeight: 1.2 }}>{offer.name}</h3>
+                <div className="text-2xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                  CHF {v225FormatAmount(v223UnitPrice(offer))}.-
+                </div>
+                {offer.description && (
+                  <p className="text-sm" style={{ color: 'rgba(255,255,255,0.7)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{offer.description}</p>
+                )}
+                {/* Variantes RÉELLES de l'offre, mêmes puces/état que la carte. */}
+                {v226VariantDims.map(dim => (
+                  <div key={dim.key} data-testid={`detail-variant-${dim.key}-${offer.id}`}>
+                    <div className="text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>{dim.label}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {dim.list.map(v => {
+                        const val = String(v);
+                        const sel = v226Variants[dim.key] === val;
+                        return (
+                          <button
+                            key={val}
+                            type="button"
+                            className={`variant-chip${sel ? ' selected' : ''}`}
+                            aria-pressed={sel}
+                            onClick={() => setV226Variants(prev => ({ ...prev, [dim.key]: val }))}
+                            data-testid={`detail-variant-${dim.key}-${offer.id}-${val}`}
+                          >
+                            {val}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                {/* Quantité — seulement en achat direct (seul cas où elle part au checkout). */}
+                {v225IsDirectCheckout(offer) && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>Quantité</span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setV225Qty(q => Math.max(1, q - 1))} aria-label="Moins" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.2)', color: '#fff', background: 'none', cursor: 'pointer' }}>−</button>
+                      <span data-testid={`detail-qty-${offer.id}`} style={{ minWidth: 20, textAlign: 'center' }}>{v225Qty}</span>
+                      <button type="button" onClick={() => setV225Qty(q => q + 1)} aria-label="Plus" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.2)', color: '#fff', background: 'none', cursor: 'pointer' }}>+</button>
+                    </div>
+                  </div>
+                )}
+                {/* CTA — EXACTEMENT le parcours d'achat existant (v226BuyDirect / onClick). */}
+                <button
+                  type="button"
+                  disabled={checkoutBusy || v226BlockedByVariant}
+                  data-testid={`detail-reserve-${offer.id}`}
+                  onClick={() => {
+                    if (v225IsDirectCheckout(offer) && !lot3bChoixDateRequis(offer)) { v226BuyDirect(); }
+                    else if (typeof onClick === 'function') { onClick(offer); }
+                  }}
+                  className="w-full rounded-full font-bold"
+                  style={{ padding: '13px 16px', marginTop: 4, background: (checkoutBusy || v226BlockedByVariant) ? '#5a2a58' : 'var(--primary-color, #D91CD2)', color: '#fff', opacity: (checkoutBusy || v226BlockedByVariant) ? 0.75 : 1, cursor: checkoutBusy ? 'wait' : v226BlockedByVariant ? 'not-allowed' : 'pointer' }}
+                >
+                  {checkoutBusy
+                    ? 'Un instant…'
+                    : v226BlockedByVariant
+                      ? `Choisissez ${v226MissingDims.map(d => d.prompt).join(' et ')}`
+                      : (v225IsDirectCheckout(offer) && v225Qty > 1
+                        ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}x)`
+                        : 'Réserver')}
+                </button>
+                {/* Informations produit — dépliable, DONNÉES RÉELLES uniquement. */}
+                <button
+                  type="button"
+                  onClick={() => setDetailInfos(x => !x)}
+                  className="text-xs flex items-center justify-between w-full"
+                  style={{ color: 'rgba(255,255,255,0.6)', background: 'none', border: 'none', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 10, marginTop: 4, cursor: 'pointer' }}
+                  data-testid={`detail-infos-toggle-${offer.id}`}
+                >
+                  <span>Informations produit</span>
+                  <span>{detailInfos ? '−' : '+'}</span>
+                </button>
+                {detailInfos && (
+                  <div className="text-xs" style={{ color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
+                    {offer.isProduct && offer.shippingCost > 0 && <p>Frais de port : CHF {offer.shippingCost}</p>}
+                    {offer.tva > 0 && <p>TVA {offer.tva}%</p>}
+                    <p>Paiement sécurisé (Stripe / TWINT).</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* V119.1: Cartes agrandies, responsive, glow fin et élégant */}
       <div
         /* V227 CORRECTIF 1: cible de l'IntersectionObserver. Pose sur
@@ -2983,6 +3149,21 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               </div>
             ))}
             </div>
+            )}
+
+            {/* V645.3 — « Voir le produit » : ouvre la fiche produit façon
+                Adidas (galerie + infos + variantes). ADDITIF, uniquement pour un
+                produit ; la carte garde son parcours d'achat habituel en dessous. */}
+            {offer.isProduct && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowDetail(true); }}
+                data-testid={`voir-produit-${offer.id}`}
+                className="w-full rounded-full font-semibold mt-3"
+                style={{ padding: '11px 16px', border: '1px solid var(--primary-color, #D91CD2)', color: 'var(--primary-color, #D91CD2)', background: 'transparent', cursor: 'pointer' }}
+              >
+                Voir le produit
+              </button>
             )}
 
             {/* V256: bouton secondaire vers le site d'un partenaire.
@@ -9968,6 +10149,10 @@ function App() {
                 autoplay muette en boucle, sans contrôles, avec poster. Rien n'est affiché
                 tant que le coach n'a pas configuré de média — aucun faux visuel. */}
             {/* V645.2 — BANNIÈRE BOUTIQUE : média coach OU fallback gradient si absent */}
+            {/* V645.3 — VITRINE : bannière + produit côte à côte sur desktop
+                (maquette). La carte produit n'est plus isolée au centre d'un
+                grand vide ; sur mobile, tout s'empile (bannière puis produit). */}
+            <div className="af-boutique-vitrine">
             <div className="af-boutique-banniere">
               {concept.home_shop_banner_url ? (
                 concept.home_shop_banner_type === 'video' ? (
@@ -9991,7 +10176,7 @@ function App() {
                 </button>
               </div>
             </div>
-
+            <div className="af-boutique-produits">
             <OffersSliderAutoPlay
               offers={filteredProducts}
               selectedOffer={selectedOffer}
@@ -10013,6 +10198,8 @@ function App() {
               loading={loading}
               checkoutBusy={checkoutBusy} /* V224 */
             />
+            </div>{/* .af-boutique-produits */}
+            </div>{/* .af-boutique-vitrine */}
 
             {/* V645.2 — CARTES « À VENIR » MASQUÉES (chaussettes non commercialisées).
                 Code conservé intégralement, aucune donnée supprimée.

@@ -953,6 +953,32 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
   const videoRef = useRef(null);
   const [sonActif, setSonActif] = useState(v542SonCarte(pub.id));
   useEffect(() => v540EcouterSon(() => setSonActif(v542SonCarte(pub.id))), [pub.id]);
+
+  /* V645.3 — REEL : LE CADRAGE SUIT L'ORIENTATION DU MÉDIA. Un cadre portrait
+     rempli en `cover` recadre un média PAYSAGE par les côtés — visages coupés
+     (signalé en capture). On mesure l'orientation réelle à la charge : portrait
+     ou carré → `cover` (remplit, cadrage propre) ; paysage → `contain` (lettré
+     sur le fond #0c0c0e, aucun sujet coupé). N'agit qu'en mode `reel` ; le fil
+     classique (ratio 4/5) et le carrousel gardent `cover`. */
+  const [reelFit, setReelFit] = useState('cover');
+  useEffect(() => {
+    if (!reel) { setReelFit('cover'); return undefined; }
+    if (pub.media_type !== 'video') return undefined;
+    const v = videoRef.current;
+    if (!v) return undefined;
+    const maj = () => {
+      const w = v.videoWidth, h = v.videoHeight;
+      if (w > 0 && h > 0) setReelFit(w > h * 1.05 ? 'contain' : 'cover');
+    };
+    if (v.readyState >= 1) maj();
+    v.addEventListener('loadedmetadata', maj);
+    return () => v.removeEventListener('loadedmetadata', maj);
+  }, [reel, pub.media_type, pub.id]);
+  const majFitImage = (e) => {
+    if (!reel) return;
+    const w = e.target.naturalWidth, h = e.target.naturalHeight;
+    if (w > 0 && h > 0) setReelFit(w > h * 1.05 ? 'contain' : 'cover');
+  };
   /* React pose `muted` sur un <video> AU MONTAGE et ne le remet pas à jour
      ensuite (travers connu du DOM vidéo). La prop ci-dessous donne donc l'état
      de départ — muet, ce que le navigateur exige pour démarrer seul — et cette
@@ -1031,7 +1057,7 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
                    navigateur exige pour l'autoplay — puis suit l'état commun. */
                 muted={!sonActif}
                 autoPlay loop playsInline
-                style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+                style={{ display: 'block', width: '100%', height: '100%', objectFit: reel ? reelFit : 'cover', objectPosition: 'center' }}
               />
               {/* LE BOUTON SON VA EN HAUT À DROITE, et le chemin pour y
                   arriver mérite d'être écrit. En bas à droite (V540) il
@@ -1048,7 +1074,8 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
               src={pub.media_url}
               alt={`Publication de ${nom}`}
               loading="lazy"
-              style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
+              onLoad={majFitImage}
+              style={{ display: 'block', width: '100%', height: '100%', objectFit: reel ? reelFit : 'cover', objectPosition: 'center' }}
             />
           )}
           <V268Remaining remaining={pub.remaining_hours} noExpiry={pub.no_expiry} />
