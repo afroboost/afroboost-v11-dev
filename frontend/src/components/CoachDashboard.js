@@ -9225,7 +9225,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           </div>
         )}
 
-        {/* === CAMPAGNES : CLIENTS | PROSPECTION | INVITATION & PARRAINAGE (V643 — UX Premium) === */}
+        {/* === CAMPAGNES V644 — CRM Premium : sidebar + contenu === */}
         {tab === "campaigns" && (
           <CampagnesDashboard
             campagnesMode={campagnesMode}
@@ -9234,9 +9234,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
             p3Voir={p3Voir}
             p3Cockpit={p3Cockpit}
             campaigns={campaigns}
-          />
-        )}
-        {tab === "campaigns" && campagnesMode === "invitation" && (
+          >
+        {campagnesMode === "invitation" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-invitation">
             {/* V639b : Partenaires accessible depuis Mes invitations — bouton discret à gauche de « + Nouvelle invitation ». */}
             {showPartenaires ? (
@@ -9260,7 +9259,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         )}
 
         {/* === PROSPECTION (P3-S2) — désormais le mode « Prospection » de Campagnes (UI-1) === */}
-        {tab === "campaigns" && campagnesMode === "prospection" && (
+        {campagnesMode === "prospection" && (
           <div className="card-gradient rounded-xl p-4 sm:p-6" data-testid="campagnes-prospection">
             {/* V587b — COCKPIT PROSPECTION. V595 : les sept sections sont branchées.
                 « Prospects » et « Conversations partenaires » sont les vues EXISTANTES de
@@ -9325,23 +9324,13 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
 
         {/* === CAMPAIGNS TAB === */}
         {/* [CAMPAGNE_START] - Section extraite vers CampaignManager.js */}
-        {/* CO-1 : plus de CreditsGate pleine page. CampaignManager affiche son propre
-            bandeau « Crédits insuffisants », bloque la création sans crédits
-            (openNewCampaign / CampaignModal) et le serveur vérifie check_credits.
-            Le reste de la page (invitations, calendrier) ne coûte rien. */}
-        {/* V559 : Programme Créateur — composant COMMUN (identité = JWT du coach, posé par l'intercepteur). */}
-        {tab === "createur" && (
-          <div style={{ maxWidth: 880, margin: '0 auto' }} data-testid="coach-createur">
-            <EspaceCreateur />
-          </div>
-        )}
-        {tab === "campaigns" && campagnesMode === "clients" && co1CampagnesMotif && (
+        {campagnesMode === "clients" && co1CampagnesMotif && (
           <div style={{ marginBottom: '12px' }}>
             <SectionErreur motif={co1CampagnesMotif} quoi="tes campagnes"
                            onReessayer={co1ChargerCampagnes} data-testid="co1-erreur-campagnes" />
           </div>
         )}
-        {tab === "campaigns" && campagnesMode === "clients" && (
+        {campagnesMode === "clients" && (
           <CampaignManager
             // V616 : Invitation & Parrainage est un onglet ; le gros bloc module disparaît ici.
             invitationViaOnglet
@@ -9480,7 +9469,16 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           />
         )}
         {/* [CAMPAGNE_END] - Section extraite vers CampaignManager.js (~1490 lignes économisées) */}
+          </CampagnesDashboard>
+        )}
 
+        {/* V559 : Programme Créateur — composant COMMUN (identité = JWT du coach, posé par l'intercepteur).
+            V644 FIX : sorti du wrapper CampagnesDashboard pour rester accessible quand tab === "createur". */}
+        {tab === "createur" && (
+          <div style={{ maxWidth: 880, margin: '0 auto' }} data-testid="coach-createur">
+            <EspaceCreateur />
+          </div>
+        )}
 
         {/* ========== ONGLET CONVERSATIONS v9.2.0 - Extrait vers CRMSection.js ========== */}
         {/* v13.2: Verrouillage crédits avec composant CreditsGate */}
