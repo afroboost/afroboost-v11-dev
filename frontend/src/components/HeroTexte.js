@@ -34,7 +34,7 @@ import {
   texteHero,
 } from '../utils/heroLayout';
 
-const HREF_ESSAI = '/?link=b83914b4-c5a';
+export const HREF_ESSAI = '/?link=b83914b4-c5a';
 const SCRIM = 'linear-gradient(to bottom, rgba(0,0,0,0) 12%, rgba(0,0,0,0.5) 34%, rgba(0,0,0,0.5) 66%, rgba(0,0,0,0) 88%)';
 const clamp = (min, v, max) => Math.min(max, Math.max(min, v));
 

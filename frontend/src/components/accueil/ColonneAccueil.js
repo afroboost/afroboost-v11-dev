@@ -228,12 +228,13 @@ export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
    Lit les jours et heures depuis le planning réel (`courses`). Quand aucun
    cours n'est chargé, affiche les horaires fixes historiques en fallback. */
 const JOURS_COURTS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
-var MAX_HORAIRES = 3;
 function extraireHoraires(courses) {
   if (!Array.isArray(courses) || courses.length === 0) return { texte: '', lieu: '' };
+  var reguliers = courses.filter(function (c) { return !c.date; });
+  if (reguliers.length === 0) return { texte: '', lieu: '' };
   var seen = {};
   var lignes = [];
-  courses.forEach(function (c) {
+  reguliers.forEach(function (c) {
     if (c.weekday == null || !c.time) return;
     var k = c.weekday + '|' + c.time;
     if (seen[k]) return;
@@ -242,11 +243,8 @@ function extraireHoraires(courses) {
     var h = (c.time || '').replace(':', 'H').replace(/^0/, '');
     lignes.push(jour + ' ' + h);
   });
-  var affichees = lignes.slice(0, MAX_HORAIRES);
-  var reste = lignes.length - affichees.length;
-  var texte = affichees.join(' · ') + (reste > 0 ? ' +' + reste : '');
-  var avecLieu = courses.find(function (c) { return c && c.locationName; });
-  return { texte: texte, lieu: avecLieu ? avecLieu.locationName : '' };
+  var avecLieu = reguliers.find(function (c) { return c && c.locationName; });
+  return { texte: lignes.join(' · '), lieu: avecLieu ? avecLieu.locationName : '' };
 }
 
 export const CarteHoraires = ({ courses, lieu, onClick }) => {

@@ -264,7 +264,7 @@ import PartnersCarousel from "./components/PartnersCarousel";
 import AudioPlayer from "./components/AudioPlayer";
 // V230 — chevron du repliage de la quantite (coherent avec la migration V228)
 import SvgIcon from "./components/SvgIcon";
-import HeroTexte from "./components/HeroTexte"; // V554 : renderer unique du texte du Hero
+import HeroTexte, { HREF_ESSAI } from "./components/HeroTexte"; // V554 : renderer unique du texte du Hero
 import { fusionnerConceptVitrine } from "./utils/heroLayout"; // V554
 // V184: Espace abonné accès rapide (lien public /espace/AFR-XXXXXX)
 import SubscriberSpace from "./components/SubscriberSpace";
@@ -10877,7 +10877,7 @@ function App() {
               Chemin des Valangines 97 · 2000 Neuchâtel
             </p>
             <a
-              href="/?link=b83914b4-c5a"
+              href={HREF_ESSAI}
               style={{
                 background: 'var(--primary-color, #D91CD2)',
                 color: '#fff', border: 'none', borderRadius: 999,
