@@ -1626,6 +1626,14 @@ body {
 }
 .af-avenir-cta:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
 
+/* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
+   et la Boutique. Classe dédiée = aucun impact sur le reste du site. */
+.af-section-titre {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 900; letter-spacing: -0.015em; text-transform: uppercase;
+  font-size: clamp(1.25rem, 4vw, 1.6rem); line-height: 1.05;
+}
+
 /* LA MISE EN PAGE DES PRODUITS.
    Sur téléphone, on GARDE le carrousel : glisser du doigt est naturel, et
    c'est le mécanisme déjà en place. Sur grand écran un défilement horizontal

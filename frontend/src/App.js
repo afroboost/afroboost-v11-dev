@@ -9500,7 +9500,7 @@ function App() {
                 <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex', flexShrink: 0 }}>
                   <SvgIcon name="users" size={18} />
                 </span>
-                <h2 style={{ color: '#fff', fontSize: '21px', fontWeight: 700, letterSpacing: '-0.012em', margin: 0 }}>
+                <h2 className="af-section-titre" style={{ color: '#fff', margin: 0 }}>
                   Ce qui se passe chez Afroboost
                 </h2>
               </div>
