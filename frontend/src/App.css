@@ -1235,6 +1235,17 @@ video:-ms-fullscreen {
   margin-top: 14px; /* V554 : ecrase plus bas par le 40 px de V544 (inchange) */
 }
 
+/* ─── V645 — TITRE DU HERO (Inter 900, MAJUSCULES, derniere ligne en accent) ──
+   Scope : UNIQUEMENT `.af-hero-titre` (le <h1> du Hero). Le reste du site garde
+   -apple-system. Les lignes et la couleur de la derniere ligne sont posees en
+   JSX par HeroTexte (rendreTitre) ; ici, seuls la fonte, la graisse et la casse. */
+.af-hero-titre {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 900 !important;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
 /* LE RECADRAGE. Le média du hero est servi en 1024x1024 (carré) et rendu en
    1440x387 : `object-fit: cover` en garde donc une BANDE. À `50% 50%` — le
    défaut — cette bande est le milieu de l'image, et sur la photo réelle de
