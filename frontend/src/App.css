@@ -1328,7 +1328,8 @@ body {
 }
 .af-reels::-webkit-scrollbar { width: 0; height: 0; }
 @media (min-width: 1024px) {
-  .af-reels { --reel-h: min(80vh, 760px); max-width: 480px; margin: 0; }
+  /* V645.2 : width:100% + max-width:none effacent les contraintes mobiles (500px/480px) */
+  .af-reels { --reel-h: min(80vh, 760px); width: 100%; max-width: none; margin: 0; }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
 .af-reel-carte {

@@ -298,7 +298,7 @@ import { offreAvecChoixPaiement } from "./utils/modePaiement"; // V535
 import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente as offreEstRecurrente,
   badgeOffre, prixAffiche, promesseCourte } from "./utils/offresAimants"; // V540 : libellés de la carte « offre du moment »
 // V540 : les trois cartes de la colonne d'accueil (Live · offre · Spordateur).
-import { CarteLive, CarteOffreDuMoment, CarteSpordateur } from "./components/accueil/ColonneAccueil";
+import { CarteLive, CarteOffreDuMoment, CarteSpordateur, CarteHoraires } from "./components/accueil/ColonneAccueil";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -9588,6 +9588,10 @@ function App() {
                   entrerDansSpordate();
                 }}
               />
+              {/* V645.2 — Carte horaires hebdomadaires (planning réel Afroboost) */}
+              <CarteHoraires
+                onClick={() => setActiveFilter('sessions')}
+              />
             </aside>
           );
 
@@ -9962,26 +9966,30 @@ function App() {
                 par le coach via le dashboard (clé concept.home_shop_banner_url). Vidéo :
                 autoplay muette en boucle, sans contrôles, avec poster. Rien n'est affiché
                 tant que le coach n'a pas configuré de média — aucun faux visuel. */}
-            {concept.home_shop_banner_url ? (
-              <div className="af-boutique-banniere">
-                {concept.home_shop_banner_type === 'video' ? (
+            {/* V645.2 — BANNIÈRE BOUTIQUE : média coach OU fallback gradient si absent */}
+            <div className="af-boutique-banniere">
+              {concept.home_shop_banner_url ? (
+                concept.home_shop_banner_type === 'video' ? (
                   <video className="af-boutique-banniere-media" src={concept.home_shop_banner_url} autoPlay loop muted playsInline preload="metadata" />
                 ) : (
                   <img className="af-boutique-banniere-media" src={concept.home_shop_banner_url} alt="Boutique Afroboost" loading="lazy" />
-                )}
-                <div className="af-boutique-banniere-overlay">
-                  <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
-                  <h3 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT</h3>
-                  <button
-                    type="button"
-                    className="af-boutique-banniere-cta"
-                    onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
-                  >
-                    Découvrir
-                  </button>
-                </div>
+                )
+              ) : (
+                /* Fallback visuel : fond dégradé noir→violet quand aucun média configuré */
+                <div className="af-boutique-banniere-media" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, rgba(var(--primary-rgb,217,28,210),0.18) 60%, rgba(var(--primary-rgb,217,28,210),0.08) 100%)' }} />
+              )}
+              <div className="af-boutique-banniere-overlay">
+                <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
+                <h3 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT.</h3>
+                <button
+                  type="button"
+                  className="af-boutique-banniere-cta"
+                  onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                >
+                  Découvrir
+                </button>
               </div>
-            ) : null}
+            </div>
 
             <OffersSliderAutoPlay
               offers={filteredProducts}
@@ -10005,12 +10013,10 @@ function App() {
               checkoutBusy={checkoutBusy} /* V224 */
             />
 
-            {/* V645 — CARTES « À VENIR » DE LA COLLECTION. Annonces marketing, PAS
-                des produits vendables : aucun prix inventé, aucune offre créée en
-                base, aucun checkout. Les boutons ouvrent le chat (fonction
-                existante) — jamais de bouton inerte. Statuts figés conformes à la
-                référence (précommande / bientôt). */}
-            <div className="af-avenir-grille" data-testid="boutique-cartes-avenir">
+            {/* V645.2 — CARTES « À VENIR » MASQUÉES (chaussettes non commercialisées).
+                Code conservé intégralement, aucune donnée supprimée.
+                Remettre `true` ci-dessous pour les réafficher quand disponibles. */}
+            {false && <div className="af-avenir-grille" data-testid="boutique-cartes-avenir">
               {[
                 { id: 'chaussettes-1', titre: 'Chaussettes Afroboost', badge: '1 PAIRE = 1 COURS', statut: 'Précommande',
                   desc: '1 paire achetée = 1 cours offert, avec QR code dans l’emballage. 3 tailles unisexes.', cta: 'Précommander',
@@ -10042,7 +10048,7 @@ function App() {
                   </div>
                 </div>
               ))}
-            </div>
+            </div>}
           </div>
         )}
 
@@ -10858,6 +10864,36 @@ function App() {
         )}
 
         {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
+
+        {/* V645.2 — Bloc info locale + CTA essai. Visible visiteur uniquement.
+            Données réelles du planning Afroboost. */}
+        {!coachMode && (
+          <div style={{ maxWidth: '600px', margin: '48px auto 0', padding: '0 16px', textAlign: 'center' }}>
+            <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
+              MER 18H45 · DIM 18H30
+            </p>
+            <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginBottom: 28, letterSpacing: '0.02em' }}>
+              Chemin des Valangines 97 · 2000 Neuchâtel
+            </p>
+            <button
+              type="button"
+              style={{
+                background: 'var(--primary-color, #D91CD2)',
+                color: '#fff', border: 'none', borderRadius: 999,
+                padding: '14px 32px', fontSize: 13, fontWeight: 700,
+                letterSpacing: '0.08em', cursor: 'pointer',
+                boxShadow: '0 0 24px rgba(var(--primary-rgb,217,28,210),0.35)',
+              }}
+              onClick={() => {
+                const el = document.getElementById('courses-section') || document.getElementById('offers-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                else setActiveFilter('sessions');
+              }}
+            >
+              RÉSERVER UN COURS D'ESSAI
+            </button>
+          </div>
+        )}
 
         {/* v104: Section FAQ Accordéon Homepage — titre cliquable */}
         {!coachMode && homeFaqs.length > 0 && (

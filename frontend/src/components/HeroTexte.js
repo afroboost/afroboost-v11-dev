@@ -40,7 +40,7 @@ const clamp = (min, v, max) => Math.min(max, Math.max(min, v));
 
 // Equivalents « boite » des anciens clamp(rem, vw, rem) (1rem = 16 px).
 export const policesHero = (L) => ({
-  title: clamp(28, 0.06 * L, 48),        // clamp(1.75rem, 6vw, 3rem)
+  title: clamp(32, 0.065 * L, 72),        // V645.2 : plafond relevé de 48→72 pour correspondre à la référence
   subtitle: clamp(15.2, 0.034 * L, 17.6), // clamp(0.95rem, 3.4vw, 1.1rem)
   cta: clamp(15.2, 0.036 * L, 16.8),      // clamp(0.95rem, 3.6vw, 1.05rem)
 });
