@@ -223,3 +223,81 @@ export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
     </div>
   </div>
 );
+
+/* V645.2 — CARTE HORAIRES DYNAMIQUES.
+   SOURCE DE VÉRITÉ : le planning réel (`courses`), filtré sur les SEULS cours
+   collectifs réguliers du lieu canonique Afroboost — Chemin des Valangines 97,
+   Neuchâtel. On exclut explicitement :
+   - les événements PONCTUELS (une occurrence porte une `date`) ;
+   - les cours des AUTRES lieux (Auvernier, Lausanne…) qui ne sont pas le cours
+     régulier promu sur l'accueil.
+   Résultat attendu sur les données actuelles : « MER 18H45 · DIM 18H30 ».
+   Si AUCUN cours correspondant n'est trouvé, on N'INVENTE PAS d'horaire : la
+   carte renvoie vers le planning (bouton « Voir le planning »). */
+const JOURS_COURTS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
+const LIEU_CANONIQUE = 'valangines'; // marqueur fiable du lieu régulier (Valangines 97, Neuchâtel)
+
+function estCoursRegulierCanonique(c) {
+  if (!c || c.date) return false; // ponctuel -> exclu
+  var loc = (c.locationName || '').toLowerCase();
+  return loc.indexOf(LIEU_CANONIQUE) !== -1;
+}
+
+function extraireHoraires(courses) {
+  if (!Array.isArray(courses) || courses.length === 0) return { texte: '', lieu: '' };
+  var reguliers = courses.filter(estCoursRegulierCanonique);
+  if (reguliers.length === 0) return { texte: '', lieu: '' };
+  var seen = {};
+  var items = [];
+  reguliers.forEach(function (c) {
+    if (c.weekday == null || !c.time) return;
+    var k = c.weekday + '|' + c.time;
+    if (seen[k]) return;
+    seen[k] = true;
+    items.push({ weekday: c.weekday, time: c.time });
+  });
+  // Ordre « semaine lundi-first » pour que MER précède DIM (comme la référence).
+  items.sort(function (a, b) {
+    var ja = (a.weekday + 6) % 7;
+    var jb = (b.weekday + 6) % 7;
+    if (ja !== jb) return ja - jb;
+    return a.time < b.time ? -1 : 1;
+  });
+  var lignes = items.map(function (it) {
+    var jour = JOURS_COURTS[it.weekday] || '';
+    var h = (it.time || '').replace(':', 'H').replace(/^0/, '');
+    return jour + ' ' + h;
+  });
+  var avecLieu = reguliers.find(function (c) { return c && c.locationName; });
+  return { texte: lignes.join(' · '), lieu: avecLieu ? avecLieu.locationName : '' };
+}
+
+export const CarteHoraires = ({ courses, lieu, onClick }) => {
+  var dynamique = extraireHoraires(courses);
+  var aHoraires = !!dynamique.texte;
+  return (
+    <div style={CADRE} data-testid="accueil-carte-horaires" className="af-carte-horaires">
+      <div style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 13 }}>
+          <span style={{ flex: '0 0 auto', marginTop: 2, color: 'rgba(255,255,255,0.5)' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={TITRE}>{aHoraires ? dynamique.texte : 'Séances régulières'}</h3>
+            <p style={SOUS}>{aHoraires
+              ? (lieu || dynamique.lieu)
+              : 'Consulte les prochaines séances au planning.'}</p>
+          </div>
+        </div>
+        <button type="button" onClick={onClick} style={BOUTON} data-testid="accueil-horaires-voir-seances">
+          {aHoraires ? 'Voir les séances' : 'Voir le planning'}
+        </button>
+      </div>
+    </div>
+  );
+};

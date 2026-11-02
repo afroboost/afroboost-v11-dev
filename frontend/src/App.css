@@ -1105,10 +1105,15 @@ video:-ms-fullscreen {
 
 .af-accueil-colonnes { display: flex; flex-direction: column; gap: 26px; }
 .af-colonne-cote { display: contents; }
-.af-colonne-cote > *:nth-child(1) { order: 1; }   /* Live */
-.af-colonne-principale          { order: 2; min-width: 0; }
-.af-colonne-cote > *:nth-child(2) { order: 3; }   /* offre du moment */
-.af-colonne-cote > *:nth-child(3) { order: 4; }   /* Spordateur */
+/* V645.2 — Ordre EXPLICITE par carte (via data-testid), jamais par position
+   d'enfant : CarteOffreDuMoment est conditionnelle (absente sous l'onglet
+   « Offres ») et la carte Horaires a été ajoutée en 4e — un ordre fondé sur
+   nth-child faisait remonter la carte sans règle en tête de colonne. */
+.af-colonne-cote > [data-testid="accueil-carte-live"]       { order: 1; }
+.af-colonne-principale                                       { order: 2; min-width: 0; }
+.af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 3; }
+.af-colonne-cote > [data-testid="accueil-carte-spordateur"] { order: 4; }
+.af-colonne-cote > [data-testid="accueil-carte-horaires"]   { order: 5; }
 
 @media (min-width: 1024px) {
   .af-accueil-colonnes { flex-direction: row; align-items: flex-start; gap: 28px; }
@@ -1328,7 +1333,8 @@ body {
 }
 .af-reels::-webkit-scrollbar { width: 0; height: 0; }
 @media (min-width: 1024px) {
-  .af-reels { --reel-h: min(80vh, 760px); max-width: 480px; margin: 0; }
+  /* V645.2 : width:100% + max-width:none effacent les contraintes mobiles (500px/480px) */
+  .af-reels { --reel-h: min(80vh, 760px); width: 100%; max-width: none; margin: 0; }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
 .af-reel-carte {
@@ -1625,6 +1631,16 @@ body {
   border: 1px solid rgba(255,255,255,0.28); transition: border-color .18s, background .18s;
 }
 .af-avenir-cta:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
+
+/* ─── V645.2 — PRODUIT UNIQUE : recentrer le slider de la boutique ─────────
+   Avec un seul produit (le T-shirt), la carte de 340 px flottait à gauche
+   dans un conteneur pleine largeur. On centre le slider et on élargit la
+   carte unique pour qu'elle occupe plus d'espace visuel. */
+.af-boutique [data-testid="offers-slider"] { justify-content: center; }
+.af-boutique [data-testid="offers-slider"] > :only-child {
+  width: min(420px, 90vw) !important;
+  min-width: min(420px, 90vw) !important;
+}
 
 /* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
    et la Boutique. Classe dédiée = aucun impact sur le reste du site. */
