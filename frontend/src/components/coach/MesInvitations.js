@@ -36,9 +36,9 @@ function Vignette({ inv }) {
   const [i, setI] = useState(0);
   const src = sources[i];
   return (
-    <div data-testid={`mes-inv-vignette-${inv.id}`} style={{ width: 64, height: 36, borderRadius: 6, overflow: 'hidden', flex: '0 0 auto',
+    <div data-testid={`mes-inv-vignette-${inv.id}`} style={{ width: 96, height: 54, borderRadius: 8, overflow: 'hidden', flex: '0 0 auto',
       background: `linear-gradient(135deg, ${rgbaP(0.35)}, ${rgbaP(0.08)})` }}>
-      {src ? <img key={src} src={src} alt="" width="64" height="36" loading="lazy" onError={() => setI((x) => x + 1)}
+      {src ? <img key={src} src={src} alt="" width="96" height="54" loading="lazy" onError={() => setI((x) => x + 1)}
                   style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : null}
     </div>
   );
@@ -94,12 +94,12 @@ function Carte({ inv, onModifier, onRafraichir }) {
       .catch((e) => setRetour(detailErreur(e, 'Duplication impossible.'))).finally(() => setOccupe(false));
   };
   return (
-    <div data-testid={`mes-inv-${inv.id}`} style={{ display: 'flex', gap: 8, padding: 8, borderRadius: 10, background: 'rgba(255,255,255,0.04)', minWidth: 0, boxSizing: 'border-box',
+    <div data-testid={`mes-inv-${inv.id}`} style={{ display: 'flex', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(255,255,255,0.04)', minWidth: 0, boxSizing: 'border-box',
       border: '1px solid rgba(255,255,255,0.09)', position: 'relative', flexWrap: 'wrap' }}>
       <Vignette key={`${inv.image_url || ""}|${inv.version || 0}`} inv={inv} />
       <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: 13.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.title || LIBELLES_TYPE[inv.type]}</div>
-        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+        <div style={{ fontWeight: 800, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.title || LIBELLES_TYPE[inv.type]}</div>
+        <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)' }}>
           {LIBELLES_TYPE[inv.type] || inv.type} · <span data-testid={`mes-inv-statut-${inv.id}`} style={{ color: actif ? PRIMAIRE : 'rgba(255,255,255,0.7)', fontWeight: 700 }}>{LIBELLES_STATUT[inv.status] || inv.status}</span>
           {quand ? ` · ${quand}` : ''}
         </div>
@@ -253,7 +253,8 @@ export default function MesInvitations({ API, onPartenaires }) {
     <div data-testid="mes-invitations" style={{ marginBottom: 16, color: 'rgba(255,255,255,0.96)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontWeight: 800, fontSize: 16 }}>Mes invitations</div>
+          <div style={{ fontWeight: 800, fontSize: 17 }}>Mes invitations</div>
+          <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)' }}>Modifie textes, médias, date et tarifs sans rien casser des liens déjà partagés.</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {onPartenaires && (
@@ -269,7 +270,7 @@ export default function MesInvitations({ API, onPartenaires }) {
       {liste && liste.length === 0 ? <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14 }}>Aucune invitation pour le moment.</p> : null}
       {/* V610k : colonne bornée à la largeur disponible (avant : à 360 px la grille prenait la
           largeur du contenu — 404 px dans 314 — et le panneau rognait le bord droit des cartes). */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
         {(liste || []).map((inv) => <Carte key={inv.id} inv={inv} onModifier={setEdition} onRafraichir={charger} />)}
       </div>
       <Corbeille version={versionListe} onRestaure={charger} />
