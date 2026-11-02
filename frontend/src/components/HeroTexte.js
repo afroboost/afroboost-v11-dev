@@ -147,6 +147,27 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
       const h = noeud ? noeud.offsetHeight : 0;
       suivant[el] = borner({ x: brut.x, y: brut.y }, w, h, L, H, appareil);
     });
+    // V645.1 : anti-chevauchement titre multi-lignes / sous-titre (mode positionné).
+    // Le titre occupe désormais N lignes (rendreTitre) ; l'ancienne position du
+    // sous-titre peut se retrouver dans sa zone. On le pousse vers le bas si
+    // nécessaire. Désactivé en mode édition pour ne pas contrarier le dragging.
+    if (!modeEdition) {
+      const titreEl = elRefs.current.title;
+      const sousTitreEl = elRefs.current.subtitle;
+      if (titreEl && sousTitreEl && suivant.title && suivant.subtitle) {
+        const GAP = 12; // px minimum entre le bas du titre et le haut du sous-titre
+        const titreBas = suivant.title.y * H + titreEl.offsetHeight / 2 + GAP;
+        const sousTitreHaut = suivant.subtitle.y * H - sousTitreEl.offsetHeight / 2;
+        if (titreBas > sousTitreHaut) {
+          const yNouv = (titreBas + sousTitreEl.offsetHeight / 2) / H;
+          suivant.subtitle = borner(
+            { x: suivant.subtitle.x, y: yNouv },
+            sousTitreEl.offsetWidth, sousTitreEl.offsetHeight,
+            L, H, appareil,
+          );
+        }
+      }
+    }
     setCentres((prev) => {
       // Comparaison en px (demi-pixel) : aucun setState si rien ne bouge.
       if (prev && HERO_ELEMENTS.every((el) => prev[el]
@@ -155,7 +176,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
       return suivant;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positionne, cleDispo, appareil, L, H]);
+  }, [positionne, cleDispo, appareil, L, H, modeEdition]);
 
   useLayoutEffect(() => {
     recalculer();

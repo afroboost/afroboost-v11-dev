@@ -1772,7 +1772,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const [paymentLinks, setPaymentLinks] = useState({ stripe: "", paypal: "", twint: "", coachWhatsapp: "", coachNotificationEmail: "", coachNotificationPhone: "" });
   // v15.0: Config paiement multi-vendeurs
   const [vendorPaymentConfig, setVendorPaymentConfig] = useState({});
-  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", termsTextPartners: "", termsTextRecording: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "" });
+  const [concept, setConcept] = useState({ appName: "Afroboost", description: "", heroImageUrl: "", logoUrl: "", faviconUrl: "", termsText: "", termsTextPartners: "", termsTextRecording: "", googleReviewsUrl: "", defaultLandingSection: "sessions", vitrineSectionOrder: "sessions-first", externalLink1Title: "", externalLink1Url: "", externalLink2Title: "", externalLink2Url: "", paymentTwint: false, paymentPaypal: false, paymentCreditCard: false, eventPosterEnabled: false, eventPosterMediaUrl: "", home_shop_banner_url: "", home_shop_banner_type: "" });
   const [discountCodes, setDiscountCodes] = useState([]);
   const [codesSearch, setCodesSearch] = useState(''); // Recherche locale codes promo
   const [newCode, setNewCode] = useState({ code: "", type: "", value: "", assignedEmails: [], courses: [], maxUses: "", expiresAt: "", batchCount: 1, prefix: "", multi_member: false, shared_sessions: true, stripe_amount: "", montant_encaisse: "", origine_paiement: "" });
@@ -2619,17 +2619,19 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     }
   };
 
-  const saveConcept = async () => { 
+  // V645.1 : saveConcept sans alert() — le statut est affiché dans ConceptEditor
+  // via conceptSaveStatus. L'ancien alert() bloquait le thread navigateur et
+  // rendait l'onglet non-réactif après chaque enregistrement.
+  const saveConcept = async () => {
     try {
-      console.log("Saving concept:", concept);
-      const response = await axios.put(`${API}/concept`, concept); 
-      console.log("Concept saved successfully:", response.data);
-      alert("✅ Concept sauvegardé avec succès !");
+      setConceptSaveStatus('saving');
+      await axios.put(`${API}/concept`, concept, getCoachHeaders());
+      setConceptSaveStatus('saved');
+      setTimeout(() => setConceptSaveStatus(null), 2000);
     } catch (err) {
-      console.error("Error saving concept:", err);
-      console.error("Error details:", err.response?.data || err.message);
-      const errorMessage = err.response?.data?.detail || err.message || "Erreur inconnue";
-      alert(`❌ Erreur lors de la sauvegarde: ${errorMessage}`);
+      console.error('[COACH] Erreur sauvegarde concept:', err);
+      setConceptSaveStatus('error');
+      setTimeout(() => setConceptSaveStatus(null), 4000);
     }
   };
   const savePayments = async () => { await axios.put(`${API}/payment-links`, paymentLinks); alert("Saved!"); };
