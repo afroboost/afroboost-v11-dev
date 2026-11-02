@@ -9590,6 +9590,7 @@ function App() {
               />
               {/* V645.2 — Carte horaires hebdomadaires (planning réel Afroboost) */}
               <CarteHoraires
+                courses={courses}
                 onClick={() => setActiveFilter('sessions')}
               />
             </aside>
@@ -10866,7 +10867,7 @@ function App() {
         {/* v73: Section "Ce que disent nos clients" SUPPRIMÉE — tout passe par l'icône Glow du Hero */}
 
         {/* V645.2 — Bloc info locale + CTA essai. Visible visiteur uniquement.
-            Données réelles du planning Afroboost. */}
+            Le CTA ouvre le tunnel d'essai gratuit (même lien que le Hero). */}
         {!coachMode && (
           <div style={{ maxWidth: '600px', margin: '48px auto 0', padding: '0 16px', textAlign: 'center' }}>
             <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
@@ -10875,23 +10876,19 @@ function App() {
             <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginBottom: 28, letterSpacing: '0.02em' }}>
               Chemin des Valangines 97 · 2000 Neuchâtel
             </p>
-            <button
-              type="button"
+            <a
+              href="/?link=b83914b4-c5a"
               style={{
                 background: 'var(--primary-color, #D91CD2)',
                 color: '#fff', border: 'none', borderRadius: 999,
                 padding: '14px 32px', fontSize: 13, fontWeight: 700,
                 letterSpacing: '0.08em', cursor: 'pointer',
                 boxShadow: '0 0 24px rgba(var(--primary-rgb,217,28,210),0.35)',
-              }}
-              onClick={() => {
-                const el = document.getElementById('courses-section') || document.getElementById('offers-section');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                else setActiveFilter('sessions');
+                textDecoration: 'none', display: 'inline-block',
               }}
             >
               RÉSERVER UN COURS D'ESSAI
-            </button>
+            </a>
           </div>
         )}
 

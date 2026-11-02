@@ -1627,6 +1627,16 @@ body {
 }
 .af-avenir-cta:hover { border-color: var(--primary-color, #D91CD2); background: rgba(var(--primary-rgb, 217,28,210), 0.12); }
 
+/* ─── V645.2 — PRODUIT UNIQUE : recentrer le slider de la boutique ─────────
+   Avec un seul produit (le T-shirt), la carte de 340 px flottait à gauche
+   dans un conteneur pleine largeur. On centre le slider et on élargit la
+   carte unique pour qu'elle occupe plus d'espace visuel. */
+.af-boutique [data-testid="offers-slider"] { justify-content: center; }
+.af-boutique [data-testid="offers-slider"] > :only-child {
+  width: min(420px, 90vw) !important;
+  min-width: min(420px, 90vw) !important;
+}
+
 /* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
    et la Boutique. Classe dédiée = aucun impact sur le reste du site. */
 .af-section-titre {

@@ -224,28 +224,54 @@ export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
   </div>
 );
 
-/* V645.2 — CARTE HORAIRES. Données réelles du planning Afroboost hebdomadaire.
-   Les props `horaires` et `lieu` permettent une surcharge future sans migration. */
-export const CarteHoraires = ({ horaires, lieu, onClick }) => (
-  <div style={CADRE} data-testid="accueil-carte-horaires">
-    <div style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 13 }}>
-        <span style={{ flex: '0 0 auto', marginTop: 2, color: 'rgba(255,255,255,0.5)' }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-          </svg>
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <h3 style={TITRE}>{horaires || 'MER 18H45 · DIM 18H30'}</h3>
-          <p style={SOUS}>{lieu || 'Chemin des Valangines 97, Neuchâtel — ~1 h'}</p>
+/* V645.2 — CARTE HORAIRES DYNAMIQUES.
+   Lit les jours et heures depuis le planning réel (`courses`). Quand aucun
+   cours n'est chargé, affiche les horaires fixes historiques en fallback. */
+const JOURS_COURTS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
+var MAX_HORAIRES = 3;
+function extraireHoraires(courses) {
+  if (!Array.isArray(courses) || courses.length === 0) return { texte: '', lieu: '' };
+  var seen = {};
+  var lignes = [];
+  courses.forEach(function (c) {
+    if (c.weekday == null || !c.time) return;
+    var k = c.weekday + '|' + c.time;
+    if (seen[k]) return;
+    seen[k] = true;
+    var jour = JOURS_COURTS[c.weekday] || '';
+    var h = (c.time || '').replace(':', 'H').replace(/^0/, '');
+    lignes.push(jour + ' ' + h);
+  });
+  var affichees = lignes.slice(0, MAX_HORAIRES);
+  var reste = lignes.length - affichees.length;
+  var texte = affichees.join(' · ') + (reste > 0 ? ' +' + reste : '');
+  var avecLieu = courses.find(function (c) { return c && c.locationName; });
+  return { texte: texte, lieu: avecLieu ? avecLieu.locationName : '' };
+}
+
+export const CarteHoraires = ({ courses, lieu, onClick }) => {
+  var dynamique = extraireHoraires(courses);
+  return (
+    <div style={CADRE} data-testid="accueil-carte-horaires">
+      <div style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 13 }}>
+          <span style={{ flex: '0 0 auto', marginTop: 2, color: 'rgba(255,255,255,0.5)' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </span>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={TITRE}>{dynamique.texte || 'MER 18H45 · DIM 18H30'}</h3>
+            <p style={SOUS}>{lieu || dynamique.lieu || 'Chemin des Valangines 97, Neuchâtel — ~1 h'}</p>
+          </div>
         </div>
+        <button type="button" onClick={onClick} style={BOUTON} data-testid="accueil-horaires-voir-seances">
+          Voir les séances
+        </button>
       </div>
-      <button type="button" onClick={onClick} style={BOUTON} data-testid="accueil-horaires-voir-seances">
-        Voir les séances
-      </button>
     </div>
-  </div>
-);
+  );
+};
