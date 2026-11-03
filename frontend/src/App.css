@@ -2287,6 +2287,8 @@ body {
 
 /* Layout global : galerie 62% / infos 38% sur PC */
 .af-fiche-premium {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 @media (min-width: 768px) {
@@ -2381,6 +2383,22 @@ body {
   z-index: 2;
 }
 .af-fiche-cell:hover .af-fiche-zoom-btn { opacity: 1; }
+
+/* Badge "+N" sur la 4e cellule quand il y a plus de 4 médias */
+.af-fiche-cell-plus {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.48);
+  color: #fff;
+  font-family: 'Barlow Condensed', 'Inter', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
 
 /* Panneau infos — fond sombre, personnalité Afroboost */
 .af-fiche-infos-premium {

@@ -2298,12 +2298,23 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           onClick={toggleZoom}
         >
           <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={e => e.stopPropagation()}>
-            <img 
-              src={currentImage} 
-              alt={offer.name} 
-              className="max-w-full max-h-[80vh] object-contain rounded-xl"
-              style={{ boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}
-            />
+            {(parseMediaUrl(currentImage) || {}).type === 'video' ? (
+              <video
+                src={currentImage}
+                controls
+                autoPlay
+                loop
+                className="max-w-full max-h-[80vh] rounded-xl"
+                style={{ boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}
+              />
+            ) : (
+              <img
+                src={currentImage}
+                alt={offer.name}
+                className="max-w-full max-h-[80vh] object-contain rounded-xl"
+                style={{ boxShadow: '0 0 40px rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}
+              />
+            )}
             
             {/* Flèches UNIQUEMENT dans le zoom */}
             {hasMultipleImages && (
@@ -2351,6 +2362,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 <div className={galerieGridClass} data-testid={`product-gallery-${offer.id}`}>
                   {imagesToShow.map((im, i) => {
                     const estVideo = (parseMediaUrl(im) || {}).type === 'video';
+                    const estDerniere = i === 3 && nbImages > 4;
                     return (
                       <div key={`${im}-${i}`} className="af-fiche-cell" onClick={() => { setCurrentImageIndex(i); setShowZoom(true); }}>
                         {estVideo ? (
@@ -2362,6 +2374,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                           <button type="button" aria-label="Zoom" className="af-fiche-zoom-btn" onClick={e => { e.stopPropagation(); setCurrentImageIndex(0); setShowZoom(true); }}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
                           </button>
+                        )}
+                        {estDerniere && (
+                          <div className="af-fiche-cell-plus">+{nbImages - 4}</div>
                         )}
                       </div>
                     );
