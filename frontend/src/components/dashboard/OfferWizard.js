@@ -16,6 +16,9 @@ import { analyserMediaUrl, mediaPrincipal, champVideoEstImage } from '../../util
 // preview joue l'extrait (même hook que la vitrine).
 import VideoTrimEditor from '../VideoTrimEditor';
 import { uploadToCloudinary } from '../CloudinaryUploadButton';
+// V645.3 — rubrique « Bannière Boutique — Accueil » : média INDÉPENDANT du
+// T-shirt, écrit dans concept.home_shop_banner_url/_type. Réutilise VideoTrimEditor.
+import BanniereBoutiqueSection from './BanniereBoutiqueSection';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
@@ -37,6 +40,13 @@ const STEPS = [
 
 const PINK = 'var(--primary-color, #D91CD2)';
 const ACCENT_BORDER = 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)';
+
+// V645.3 — IDENTIFIANT STABLE de l'offre « T-shirt + 1 cours offert! » qui
+// HÉBERGE la rubrique « Bannière Boutique — Accueil ». On gate par cet ID précis
+// (vérifié en production), JAMAIS par `form.isProduct` (qui l'afficherait sur
+// TOUS les futurs produits) ni par le nom. Pour déplacer la rubrique vers une
+// autre offre un jour : changer cette seule constante.
+const TSHIRT_OFFER_ID = '84b7d8c6-b859-410a-8a09-0d1ee0069404';
 
 // V224: style commun a tous les inputs du wizard (palette v224-constraints).
 const INPUT_STYLE = {
@@ -3000,6 +3010,12 @@ export default function OfferWizard({
           </div>
         )}
       </div>
+      {/* V645.3 — BANNIÈRE BOUTIQUE — ACCUEIL. Rubrique RÉSERVÉE à l'offre
+          T-shirt (gate par ID stable, pas par `form.isProduct` : aucun futur
+          produit ne l'affichera). Média totalement indépendant des photos/vidéos
+          du produit : elle n'écrit que concept.home_shop_banner_*. Réutilise
+          l'éditeur VideoTrimEditor, aucun nouvel éditeur. */}
+      {form.id === TSHIRT_OFFER_ID && <BanniereBoutiqueSection API={API} />}
     </div>
   );
 

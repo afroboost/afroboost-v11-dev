@@ -1640,6 +1640,16 @@ class Concept(BaseModel):
     # futur boutique_page_banner : les deux médias ne s'écrasent jamais.
     home_shop_banner_url: str = ""          # URL du média (chemin /api/files/… ou http[s])
     home_shop_banner_type: str = ""         # "image" | "video" | "" (vide = aucune)
+    # V645.3c : réglages de la bannière VIDÉO. Facultatifs, rétrocompatibles —
+    # défauts 0/0/"" = AUCUNE découpe (lecture du fichier entier) + aucun poster,
+    # soit exactement le rendu d'une bannière vidéo d'avant ce lot. La découpe
+    # est une LECTURE DE SEGMENT (début/fin en secondes), pas un recodage du
+    # fichier. `thumbnail` sert de poster. Convention : découpe active SI et
+    # SEULEMENT SI trim_end > trim_start (0/0 = pas de découpe, sert aussi à
+    # effacer). Indépendants des champs vidéo de l'offre T-shirt.
+    home_shop_banner_trim_start: float = 0.0
+    home_shop_banner_trim_end: float = 0.0
+    home_shop_banner_thumbnail: str = ""    # poster (chemin /api/files/… ou http[s])
     # Personnalisation des couleurs
     primaryColor: str = "#D91CD2"  # Couleur principale (glow)
     secondaryColor: str = "#8b5cf6"  # Couleur secondaire
@@ -1690,6 +1700,10 @@ class ConceptUpdate(BaseModel):
     # V645 : bannière média de la section Boutique sur l'accueil (facultatif).
     home_shop_banner_url: Optional[str] = None
     home_shop_banner_type: Optional[str] = None
+    # V645.3c : découpe (début/fin) + miniature de la bannière vidéo (facultatifs).
+    home_shop_banner_trim_start: Optional[float] = None
+    home_shop_banner_trim_end: Optional[float] = None
+    home_shop_banner_thumbnail: Optional[str] = None
     # Personnalisation des couleurs
     primaryColor: Optional[str] = None
     secondaryColor: Optional[str] = None
@@ -21610,6 +21624,33 @@ async def get_concept(request: Request):
         return default_concept
     return concept
 
+def _v645c_normaliser_banniere(updates: dict) -> None:
+    """V645.3c — normalise/valide EN PLACE les réglages de la bannière vidéo
+    Boutique dans `updates` (miniature + découpe début/fin). Facultatif et
+    rétrocompatible : n'agit que sur les clés présentes, n'en rejette aucune.
+      - `home_shop_banner_thumbnail` : URL interne (/api/files/…) ou http(s),
+        ≤ 2048 caractères, sinon vidée (jamais stockée telle quelle).
+      - `home_shop_banner_trim_start` / `_end` : secondes, bornées [0, 86400].
+      - fin <= début (aucun extrait) → remis à 0/0 = lecture entière (sert aussi
+        à EFFACER la découpe). Pur (pas d'E/S) : testable sans base.
+    """
+    if "home_shop_banner_thumbnail" in updates:
+        _bt = (updates.get("home_shop_banner_thumbnail") or "").strip()
+        _btok = _bt == "" or _bt.startswith("/api/files/") or _bt.startswith("http://") or _bt.startswith("https://")
+        updates["home_shop_banner_thumbnail"] = _bt if (_btok and len(_bt) <= 2048) else ""
+    for _bk in ("home_shop_banner_trim_start", "home_shop_banner_trim_end"):
+        if _bk in updates:
+            try:
+                _bv = float(updates.get(_bk) or 0)
+            except (TypeError, ValueError):
+                _bv = 0.0
+            updates[_bk] = min(max(_bv, 0.0), 86400.0)
+    if "home_shop_banner_trim_start" in updates and "home_shop_banner_trim_end" in updates:
+        if updates["home_shop_banner_trim_end"] <= updates["home_shop_banner_trim_start"]:
+            updates["home_shop_banner_trim_start"] = 0.0
+            updates["home_shop_banner_trim_end"] = 0.0
+
+
 @api_router.put("/concept")
 async def update_concept(concept: ConceptUpdate, request: Request):
     # V262: ecriture -> identite verifiee. Auparavant un en-tete vide creait un
@@ -21657,6 +21698,8 @@ async def update_concept(concept: ConceptUpdate, request: Request):
             _u = (updates.get("home_shop_banner_url") or "").strip()
             _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
             updates["home_shop_banner_url"] = _u if (_ok and len(_u) <= 2048) else ""
+        # V645.3c — découpe (début/fin) + miniature de la bannière vidéo.
+        _v645c_normaliser_banniere(updates)
         updates["coach_id"] = user_email if not is_admin else None
         result = await db.concept.update_one({"id": concept_id}, {"$set": updates}, upsert=True)
         updated = await db.concept.find_one({"id": concept_id}, {"_id": 0})

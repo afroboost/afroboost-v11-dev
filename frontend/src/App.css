@@ -1333,8 +1333,13 @@ body {
 }
 .af-reels::-webkit-scrollbar { width: 0; height: 0; }
 @media (min-width: 1024px) {
-  /* V645.2 : width:100% + max-width:none effacent les contraintes mobiles (500px/480px) */
-  .af-reels { --reel-h: min(80vh, 760px); width: 100%; max-width: none; margin: 0; }
+  /* V645.3 — REEL DESKTOP RÉÉQUILIBRÉ. Le cadre montait à min(80vh,760px) sur
+     TOUTE la largeur de la colonne principale (~900 px) : un pavé quasi carré
+     où `cover` recadrait violemment les visages (signalé en capture). On
+     revient à une scène PORTRAIT premium — hauteur plafonnée, largeur ~380 px,
+     centrée — encadrée par le fond sombre #0c0c0e. Le média garde son ratio
+     (voir `reelFit` : paysage en `contain`). Défilement vertical conservé. */
+  .af-reels { --reel-h: min(66vh, 560px); width: 100%; max-width: 380px; margin: 0 auto; }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
 .af-reel-carte {
@@ -1550,8 +1555,10 @@ body {
 .af-boutique-livraison {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px;
   padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 600;
-  background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(34, 197, 94, 0.32);
-  color: rgba(134, 239, 172, 0.95);
+  /* V645.3 — palette noir/blanc/violet imposée (« aucun vert ») : le badge
+     « Livraison dispo » passe du vert à un pastille neutre blanche. */
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.82);
 }
 
 /* ─── V645 — EN-TÊTE BOUTIQUE : « Tout voir » + GRANDE BANNIÈRE ───────────── */
@@ -1640,6 +1647,27 @@ body {
 .af-boutique [data-testid="offers-slider"] > :only-child {
   width: min(420px, 90vw) !important;
   min-width: min(420px, 90vw) !important;
+}
+
+/* ─── V645.3 — VITRINE BOUTIQUE : BANNIÈRE + PRODUIT CÔTE À CÔTE ───────────
+   La carte produit unique n'est plus « isolée et centrée au milieu d'un
+   espace disproportionné » (signalé en capture) : sur grand écran elle passe
+   à DROITE de la bannière (maquette), à ~40 % de la largeur. Sur téléphone, la
+   vitrine reste un bloc normal : bannière puis produit, empilés comme avant. */
+.af-boutique-produits { min-width: 0; }
+@media (min-width: 1024px) {
+  .af-boutique-vitrine { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 18px; }
+  .af-boutique-vitrine > .af-boutique-banniere { flex: 1.6 1 0; min-width: 0; margin: 0; }
+  .af-boutique-vitrine > .af-boutique-produits { flex: 1 1 0; min-width: 320px; }
+  /* Dans la colonne de droite (plus étroite), le produit remplit la place au
+     lieu de flotter à 420px. Spécificité volontairement plus forte que les
+     règles produit-unique ci-dessus. */
+  .af-boutique .af-boutique-vitrine .af-boutique-produits [data-testid="offers-slider"] {
+    display: flex; grid-template-columns: none; justify-content: center; width: 100%;
+  }
+  .af-boutique .af-boutique-vitrine .af-boutique-produits [data-testid="offers-slider"] > :only-child {
+    width: min(360px, 100%) !important; min-width: 0 !important;
+  }
 }
 
 /* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
@@ -1783,22 +1811,19 @@ body {
     gap: 14px 10px;
   }
   .af-colonne-cote { display: contents; }
-  /* V543 — LES DEUX GRANDES CARTES QUITTENT L'ÉCRAN D'ACCUEIL MOBILE.
-     Elles occupaient la place juste avant le fil, c'est-à-dire l'endroit où
-     le contenu doit commencer. Live et Spordateur passent dans le tiroir du
-     hamburger — mêmes fonctions, mêmes routes, rien n'est supprimé — et le
-     direct, quand il y en a un, garde une pastille « EN DIRECT » dans la
-     barre. Sur grand écran, les cartes ne bougent pas. */
+  /* V543 CONSERVÉ (décision de Bassi, option « accueil épuré ») — Afroboost
+     Live et Spordateur restent HORS de l'accueil mobile (ils vivent dans le
+     tiroir du hamburger, mêmes fonctions, mêmes routes, rien n'est supprimé).
+     Sur grand écran, les cartes ne bougent pas. */
   .af-colonne-cote > [data-testid="accueil-carte-live"],
   .af-colonne-cote > [data-testid="accueil-carte-spordateur"] { display: none; }
   .af-colonne-principale                                      { order: 1; grid-column: 1 / -1; min-width: 0; }
   .af-colonne-cote > [data-testid="accueil-offre-du-moment"]  { order: 2; grid-column: 1 / -1; }
-
-  /* Les règles V542 qui mettaient ces deux cartes côte à côte (empilement de
-     Spordateur en demi-colonne, `display: flex` pour égaliser les hauteurs)
-     sont retirées : elles n'ont plus d'objet puisque les cartes ne sont plus
-     rendues ici — et la dernière d'entre elles ÉCRASAIT le `display: none`
-     ci-dessus, ce qui les laissait à l'écran. Mesuré, puis corrigé. */
+  /* V645.3 — SEULE CORRECTION MOBILE : la carte Horaires (ajoutée en V645.2
+     sans placement mobile) tombait en DEMI-COLONNE — « petite colonne coincée
+     à gauche » (capture). Elle passe en PLEINE LARGEUR, sous l'offre. L'accueil
+     épuré est préservé : ni Live ni Spordateur ne sont réaffichés ni dupliqués. */
+  .af-colonne-cote > [data-testid="accueil-carte-horaires"]   { order: 3; grid-column: 1 / -1; }
 }
 
 /* ═══ V542 — BOUTIQUE MOBILE : L'IMAGE D'ABORD ═══════════════════════════
