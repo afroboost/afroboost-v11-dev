@@ -1668,6 +1668,10 @@ class Concept(BaseModel):
     # historique (bloc centre) : un concept existant rend exactement la meme chose.
     # Toujours normalisee par v554_normaliser_hero_layout avant ecriture.
     heroLayout: Optional[dict] = None
+    # V645.4j : gradient du titre Hero + espacement inter-lignes. Facultatifs,
+    # rétrocompatibles — absents = le composant HeroEditeurVisuel utilise ses défauts.
+    heroGradientTitre: Optional[dict] = None
+    heroTitreLineGap: Optional[int] = None
 
 class ConceptUpdate(BaseModel):
     appName: Optional[str] = None  # Nom de l'application
@@ -1719,6 +1723,9 @@ class ConceptUpdate(BaseModel):
     # Remise a zero : le client envoie {"v":1,"desktop":null,"mobile":null}
     # (un None tout court serait filtre par `if v is not None`).
     heroLayout: Optional[dict] = None
+    # V645.4j : gradient du titre Hero + espacement inter-lignes.
+    heroGradientTitre: Optional[dict] = None
+    heroTitreLineGap: Optional[int] = None
 
 # V547 : bornes des textes du Hero. On TRONQUE cote serveur au lieu d'un
 # Field(max_length) : un 422 ferait echouer tout l'auto-save du ConceptEditor
@@ -21624,6 +21631,66 @@ async def get_concept(request: Request):
         return default_concept
     return concept
 
+import re as _re_hex
+_HEX_RE = _re_hex.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _v645j_normaliser_hero_gradient(updates: dict) -> None:
+    """V645.4j — valide/normalise EN PLACE heroGradientTitre et heroTitreLineGap.
+
+    Contrat frontend réel (HeroEditeurVisuel.js) :
+      heroGradientTitre = {
+        actif: bool,          # false = gradient désactivé, DOIT être préservé
+        debut: "#RRGGBB",     # requis, HEX6
+        milieu: "#RRGGBB",    # facultatif, HEX6 si présent
+        fin: "#RRGGBB",       # requis, HEX6
+        direction: 0-360      # degrés entiers
+      }
+      Toute clé inconnue est retirée. Clés manquantes = absentes du sanitized
+      (pas d'écrasement de l'existant en base lors d'une mise à jour partielle).
+      Si le dict résultant est vide, la clé est supprimée des updates.
+
+    heroTitreLineGap : entier borné [-24, 32] (frontend : espacement inter-lignes
+      pouvant être négatif). Toute valeur non numérique → 0.
+
+    Pur (pas d'E/S) : testable sans base.
+    """
+    if "heroGradientTitre" in updates:
+        raw = updates.get("heroGradientTitre")
+        if not isinstance(raw, dict):
+            updates.pop("heroGradientTitre", None)
+        else:
+            sanitized = {}
+            # actif : booléen — False DOIT être conservé (gradient désactivé)
+            if "actif" in raw:
+                sanitized["actif"] = bool(raw["actif"])
+            # debut / fin : HEX6 requis ; milieu : HEX6 facultatif
+            for champ in ("debut", "milieu", "fin"):
+                val = raw.get(champ)
+                if val is not None:
+                    if isinstance(val, str) and _HEX_RE.match(val):
+                        sanitized[champ] = val
+                    # valeur invalide → champ absent du sanitized (pas stocké)
+            # direction : entier [0, 360]
+            if "direction" in raw:
+                try:
+                    d = int(float(raw["direction"]))
+                    sanitized["direction"] = min(max(d, 0), 360)
+                except (TypeError, ValueError):
+                    pass
+            if sanitized:
+                updates["heroGradientTitre"] = sanitized
+            else:
+                updates.pop("heroGradientTitre", None)
+
+    if "heroTitreLineGap" in updates:
+        try:
+            gap = int(float(updates.get("heroTitreLineGap") or 0))
+            updates["heroTitreLineGap"] = min(max(gap, -24), 32)
+        except (TypeError, ValueError):
+            updates["heroTitreLineGap"] = 0
+
+
 def _v645c_normaliser_banniere(updates: dict) -> None:
     """V645.3c — normalise/valide EN PLACE les réglages de la bannière vidéo
     Boutique dans `updates` (miniature + découpe début/fin). Facultatif et
@@ -21698,6 +21765,8 @@ async def update_concept(concept: ConceptUpdate, request: Request):
             _u = (updates.get("home_shop_banner_url") or "").strip()
             _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
             updates["home_shop_banner_url"] = _u if (_ok and len(_u) <= 2048) else ""
+        # V645.4j — gradient titre Hero + espacement inter-lignes.
+        _v645j_normaliser_hero_gradient(updates)
         # V645.3c — découpe (début/fin) + miniature de la bannière vidéo.
         _v645c_normaliser_banniere(updates)
         updates["coach_id"] = user_email if not is_admin else None

@@ -114,6 +114,34 @@ const IconeLogo = () => (
   </svg>
 );
 
+/* V645.4j-fix — Champ HEX avec saisie caractère par caractère */
+function ChampHex({ valeur, defaut, onChange }) {
+  const [brouillon, setBrouillon] = useState(valeur || defaut);
+  useEffect(() => { setBrouillon(valeur || defaut); }, [valeur, defaut]);
+  const valider = (v) => {
+    const hex = v.startsWith('#') ? v : '#' + v;
+    return /^#[0-9a-fA-F]{6}$/i.test(hex) ? hex : null;
+  };
+  return (
+    <input
+      type="text"
+      value={brouillon}
+      maxLength={7}
+      onChange={(e) => {
+        setBrouillon(e.target.value);
+        const hex = valider(e.target.value);
+        if (hex) onChange(hex);
+      }}
+      onBlur={() => {
+        const hex = valider(brouillon);
+        if (hex) { setBrouillon(hex); onChange(hex); }
+        else setBrouillon(valeur || defaut);
+      }}
+      style={{ width: 64, fontSize: 10, textAlign: 'center', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: '#fff', padding: '3px 4px' }}
+    />
+  );
+}
+
 export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStatus }) {
   const c = concept || {};
   const [appareil, setAppareil] = useState('desktop');
@@ -311,6 +339,34 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
   };
   const reinitElement = () => { if (sel) appliquer((l) => reinitialiserElement(l, appareil, sel)); };
   const reinitLayout = () => appliquer((l) => reinitialiserAppareil(l, appareil));
+
+  // V645.4j — gradient titre + espacement lignes (stockés dans concept, pas heroLayout)
+  const GRADIENT_DEFAUT = { actif: true, debut: '#D91CD2', milieu: '#A527D2', fin: '#7021B8', direction: 110 };
+  const gTitre = c.heroGradientTitre || GRADIENT_DEFAUT;
+  const lineGapActuel = c.heroTitreLineGap != null ? c.heroTitreLineGap : 0;
+
+  const majGradient = (update) => {
+    setConcept((prev) => {
+      const p2 = prev || {};
+      const next = { ...GRADIENT_DEFAUT, ...(p2.heroGradientTitre || {}), ...update };
+      return { ...p2, heroGradientTitre: next };
+    });
+  };
+  const majLineGap = (delta) => {
+    setConcept((prev) => {
+      const p2 = prev || {};
+      const actuel = p2.heroTitreLineGap != null ? p2.heroTitreLineGap : 0;
+      const prochain = Math.round(Math.max(-24, Math.min(32, actuel + delta)));
+      if (prochain === actuel) return prev;
+      return { ...p2, heroTitreLineGap: prochain };
+    });
+  };
+  const reinitGradient = () => {
+    setConcept((prev) => {
+      const p2 = prev || {};
+      return { ...p2, heroGradientTitre: GRADIENT_DEFAUT, heroTitreLineGap: 0 };
+    });
+  };
 
   const surTouche = (evt) => {
     if (evt.key === 'Escape') { setSelection((prev) => (prev === null ? prev : null)); return; }
@@ -565,6 +621,94 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
         </div>
       )}
 
+      {/* V645.4j — Panneau gradient + espacement inter-lignes (titre uniquement) */}
+      {sel === 'title' && (
+        <div
+          data-testid="hero-editeur-gradient-panel"
+          style={{ marginTop: 10, padding: 10, borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Gradient « LÂCHE PRISE. »</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                className="hero-editeur-btn"
+                data-testid="hero-editeur-gradient-toggle"
+                aria-pressed={gTitre.actif !== false}
+                onClick={() => majGradient({ actif: gTitre.actif === false ? true : false })}
+                style={styleBouton(gTitre.actif !== false)}
+                title="Activer / désactiver le dégradé"
+              >
+                {gTitre.actif !== false ? 'Activé' : 'Désactivé'}
+              </button>
+              <button
+                type="button"
+                className="hero-editeur-btn"
+                data-testid="hero-editeur-gradient-reset"
+                onClick={reinitGradient}
+                style={styleBouton(false)}
+                title="Rétablir le gradient Afroboost par défaut"
+              >
+                <SvgIcon name="refresh" size={13} />
+              </button>
+            </div>
+          </div>
+
+          {gTitre.actif !== false && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' }}>
+              {/* Couleurs */}
+              {[
+                ['debut', 'Départ', '#D91CD2'],
+                ['milieu', 'Milieu (opt.)', '#A527D2'],
+                ['fin', 'Fin', '#7021B8'],
+              ].map(([champ, libelle, defautChamp]) => (
+                <div key={champ} style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>{libelle}</span>
+                  <input
+                    type="color"
+                    value={gTitre[champ] || defautChamp}
+                    onChange={(e) => majGradient({ [champ]: e.target.value })}
+                    style={{ width: 36, height: 36, padding: 2, borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', cursor: 'pointer' }}
+                    data-testid={`hero-gradient-${champ}`}
+                    title={`Couleur ${libelle}`}
+                  />
+                  <ChampHex
+                    valeur={gTitre[champ]}
+                    defaut={defautChamp}
+                    onChange={(hex) => majGradient({ [champ]: hex })}
+                  />
+                </div>
+              ))}
+
+              {/* Direction */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 80 }}>
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>Direction ({gTitre.direction || 110}°)</span>
+                <input
+                  type="range"
+                  min={0} max={360}
+                  value={gTitre.direction != null ? gTitre.direction : 110}
+                  onChange={(e) => majGradient({ direction: Number(e.target.value) })}
+                  style={{ width: 80 }}
+                  data-testid="hero-gradient-direction"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Espacement inter-lignes du titre */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' }}>Espace inter-lignes</span>
+            <button type="button" className="hero-editeur-btn" onClick={() => majLineGap(-2)} style={styleBouton(false)} aria-label="Rapprocher les lignes" title="Rapprocher">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <span style={{ minWidth: 40, textAlign: 'center', color: 'white', fontSize: 12, fontWeight: 600 }}>{lineGapActuel >= 0 ? `+${lineGapActuel}` : lineGapActuel}px</span>
+            <button type="button" className="hero-editeur-btn" onClick={() => majLineGap(2)} style={styleBouton(false)} aria-label="Écarter les lignes" title="Écarter">
+              <SvgIcon name="plus" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 10 }}>
         <button
           type="button"
@@ -579,7 +723,7 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
         </button>
         {!sel && (
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
-            Touchez un élément de l’aperçu pour le sélectionner.
+            Touchez un élément de l'aperçu pour le sélectionner.
           </span>
         )}
       </div>

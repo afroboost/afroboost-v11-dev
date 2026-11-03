@@ -333,14 +333,37 @@ export const v542LienPublication = (pub) => {
   return `${base}/?publication=${encodeURIComponent(pub && pub.id)}`;
 };
 
+// V645.4i — COLONNE D'ACTIONS SIMPLIFIÉE : J'aime + Avis + menu « ⋮ »
+// Partager / Séances / Offres sont regroupés dans un menu discret qui
+// s'ouvre sur le bouton vertical-points, se ferme sur Esc, clic extérieur
+// ou sélection. Le menu sort du flux via `createPortal` pour ne jamais être
+// rogné par `overflow: hidden` des cartes.
 const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
   const [copie, setCopie] = useState(false);
+  const [menuOuvert, setMenuOuvert] = useState(false);
+  const [menuPos, setMenuPos] = useState({ right: 60, top: 0 });
+  const menuRef = useRef(null);
+  const btnMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOuvert) return;
+    const fermer = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target) &&
+          btnMenuRef.current && !btnMenuRef.current.contains(e.target)) {
+        setMenuOuvert(false);
+      }
+    };
+    const echappe = (e) => { if (e.key === 'Escape') setMenuOuvert(false); };
+    document.addEventListener('pointerdown', fermer);
+    document.addEventListener('keydown', echappe);
+    return () => {
+      document.removeEventListener('pointerdown', fermer);
+      document.removeEventListener('keydown', echappe);
+    };
+  }, [menuOuvert]);
+
   if (!actions) return null;
 
-  /* Partage natif quand le téléphone le propose, copie du lien sinon —
-     exactement la logique déjà employée pour les offres, transposée telle
-     quelle. On n'envoie que ce qui est public : le titre, la légende
-     tronquée, le lien. Jamais d'e-mail, de jeton ni d'identifiant interne. */
   const partager = () => {
     if (!pub) return;
     const url = v542LienPublication(pub);
@@ -359,6 +382,28 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
     }
   };
 
+  const ouvrirMenu = (e) => {
+    e.stopPropagation();
+    if (btnMenuRef.current) {
+      const r = btnMenuRef.current.getBoundingClientRect();
+      const menuW = 196;
+      // Essayer d'ouvrir à gauche du bouton, sinon à droite, sinon caler à 8px
+      let left = r.left - menuW - 6;
+      if (left < 8) left = r.right + 6;
+      if (left + menuW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - menuW - 8);
+      setMenuPos({ left, top: Math.max(8, r.top - 4) });
+    }
+    setMenuOuvert(v => !v);
+  };
+
+  const menuItemStyle = {
+    display: 'flex', alignItems: 'center', gap: 10,
+    width: '100%', padding: '10px 16px',
+    background: 'none', border: 'none',
+    color: '#fff', cursor: 'pointer',
+    fontSize: 14, fontWeight: 500, textAlign: 'left',
+  };
+
   return (
     <div
       data-testid="uipub2-actions"
@@ -369,8 +414,6 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
       }}
     >
-      {/* LIKE et AVIS restent ce qu'ils sont : les compteurs de TOUTE LA PAGE.
-          Ce lot est visuel — aucune métrique par publication n'est créée. */}
       <UiPub2Action
         nom="heart" aria="J'aime la page Afroboost (compteur commun à toute la page)"
         valeur={actions.likesCount}
@@ -382,42 +425,83 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
         valeur={actions.commentsCount || null}
         onClick={actions.onComments}
       />
-      {/* Sans ce rappel, un chiffre posé à côté d'une publication se lit comme
-          le sien. Il ne l'est pas : c'est celui de toute la page, et le dire
-          coûte deux lignes de 8,5 px. */}
       <span className="af-uipub-legende" style={{
         fontSize: 8.5, lineHeight: 1.1, textAlign: 'center', letterSpacing: '.02em',
         color: 'rgba(255,255,255,0.62)', maxWidth: 52, margin: '-1px 0 3px',
         textShadow: '0 1px 3px rgba(0,0,0,0.95)',
       }}>de toute la page</span>
-      {pub ? (
-        <UiPub2Action
-          nom="share" aria="Partager cette publication"
-          valeur={copie ? 'Copié' : 'Partager'}
-          onClick={partager}
-          testId="publication-partager"
-        />
-      ) : null}
-      {/* Deux accès rapides, deux destinations DIFFÉRENTES — c'est ce qui
-          justifie de les garder tous les deux : le calendrier ouvre la fenêtre
-          des séances (`SessionsModal`), « Offres » mène au catalogue. Le
-          bouton « Réserver » d'avant ne réservait pas : il descendait vers les
-          offres. Son handler est CONSERVÉ tel quel, il porte désormais le nom
-          et l'icône de ce qu'il fait vraiment. */}
-      {actions.onSessions ? (
-        <UiPub2Action
-          nom="calendar" aria="Voir les séances"
-          valeur="Séances"
-          onClick={actions.onSessions}
-          testId="publication-sessions"
-        />
-      ) : null}
-      <UiPub2Action
-        nom="gift" aria="Voir les offres"
-        valeur="Offres"
-        onClick={actions.onReserve}
-        testId="publication-offres"
-      />
+      {/* Bouton « ⋮ » — ouvre le menu secondaire */}
+      <button
+        ref={btnMenuRef}
+        type="button"
+        aria-label="Plus d'actions"
+        aria-expanded={menuOuvert}
+        aria-haspopup="menu"
+        data-testid="publication-menu"
+        onClick={ouvrirMenu}
+        style={{
+          width: 46, height: 46, padding: 0, border: 'none',
+          background: 'transparent', borderRadius: 999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', color: '#fff',
+          filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.9))',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="12" cy="5" r="2.2"/>
+          <circle cx="12" cy="12" r="2.2"/>
+          <circle cx="12" cy="19" r="2.2"/>
+        </svg>
+      </button>
+      {menuOuvert && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Actions sur la publication"
+          style={{
+            position: 'fixed', left: menuPos.left, top: menuPos.top,
+            background: 'rgba(12,12,18,0.94)',
+            backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 14, padding: '6px 0',
+            minWidth: 190, zIndex: 99999,
+            boxShadow: '0 8px 40px rgba(0,0,0,0.55)',
+          }}
+        >
+          {pub ? (
+            <button role="menuitem" type="button" data-testid="publication-partager"
+              onClick={(e) => { e.stopPropagation(); partager(); setMenuOuvert(false); }}
+              style={menuItemStyle}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+            >
+              <SvgIcon name="share" size={16} />
+              <span>{copie ? 'Copié !' : 'Partager'}</span>
+            </button>
+          ) : null}
+          {actions.onSessions ? (
+            <button role="menuitem" type="button" data-testid="publication-sessions"
+              onClick={(e) => { e.stopPropagation(); actions.onSessions(); setMenuOuvert(false); }}
+              style={menuItemStyle}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+            >
+              <SvgIcon name="calendar" size={16} />
+              <span>Séances</span>
+            </button>
+          ) : null}
+          <button role="menuitem" type="button" data-testid="publication-offres"
+            onClick={(e) => { e.stopPropagation(); actions.onReserve(); setMenuOuvert(false); }}
+            style={menuItemStyle}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+          >
+            <SvgIcon name="gift" size={16} />
+            <span>Voir les offres</span>
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
@@ -1101,10 +1185,12 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
         {/* Couleur explicite : `body` est en rgb(10,10,10), hériter rendrait
             le nom noir sur noir. */}
         <span style={{ fontSize: 14, fontWeight: 650, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{nom}</span>
-        <span style={{
-          flex: '0 0 auto', padding: '3px 8px', borderRadius: 999, fontSize: 10, letterSpacing: '.05em', fontWeight: 700,
-          background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)',
-        }}>{estCoach ? 'COACH' : 'MEMBRE'}</span>
+        {estCoach && (
+          <span style={{
+            flex: '0 0 auto', padding: '2px 6px', borderRadius: 999, fontSize: 9, letterSpacing: '.06em', fontWeight: 700,
+            background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.5)',
+          }}>COACH</span>
+        )}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: 'rgba(255,255,255,0.6)', flex: '0 0 auto' }}>
           {v540Depuis(pub.created_at)}
         </span>
@@ -1248,6 +1334,12 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
   // V268 (F2): publication ouverte en plein ecran, ou null.
   const [lightbox, setLightbox] = useState(null);
 
+  // V645.4d — flèches + dots carousel PC (mode "fil" uniquement)
+  const reelsRef = useRef(null);
+  const [scrollIdx, setScrollIdx] = useState(0);
+  // V645.4i — drag souris (doit être au niveau du composant, pas dans un bloc if)
+  const dragRef = useRef({ active: false, startX: 0, startScroll: 0, moved: false });
+
   /* V542 — LE LIEN PARTAGÉ OUVRE LA BONNE PUBLICATION.
      `?publication=<id>` est lu ICI, là où la liste est déjà chargée et où le
      viewer existe déjà : aucun routeur nouveau, aucun appel réseau de plus.
@@ -1290,6 +1382,63 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
      tout appelant présent ou futur. Une seule publication par ligne, jamais
      deux côte à côte, quelle que soit la largeur de l'écran. */
   if (disposition === 'fil') {
+    // V645.4i — Carousel PC : une carte à la fois + drag souris
+    const NB_PAR_PAGE = 4;
+    const nbPages = Math.max(1, Math.ceil((publications || []).length / NB_PAR_PAGE));
+    const getCardWidth = () => {
+      if (!reelsRef.current) return 0;
+      const card = reelsRef.current.querySelector('.af-reel-carte');
+      return card ? card.offsetWidth + 12 : 0; // 12 = gap CSS
+    };
+    const scrollPrev = () => {
+      const cw = getCardWidth();
+      if (reelsRef.current && cw > 0) reelsRef.current.scrollBy({ left: -cw, behavior: 'smooth' });
+    };
+    const scrollNext = () => {
+      const cw = getCardWidth();
+      if (reelsRef.current && cw > 0) reelsRef.current.scrollBy({ left: cw, behavior: 'smooth' });
+    };
+    const onScroll = () => {
+      if (!reelsRef.current) return;
+      const cw = getCardWidth() || 1;
+      const idx = Math.round(reelsRef.current.scrollLeft / cw);
+      setScrollIdx(Math.max(0, Math.min(idx, publications.length - 1)));
+    };
+    const allerAPage = (i) => {
+      const cw = getCardWidth();
+      const carteIdx = i * NB_PAR_PAGE;
+      if (reelsRef.current && cw > 0) reelsRef.current.scrollTo({ left: carteIdx * cw, behavior: 'smooth' });
+      setScrollIdx(Math.max(0, Math.min(carteIdx, publications.length - 1)));
+    };
+    const aFlechesPrev = publications.length > NB_PAR_PAGE;
+    const aFlechesNext = publications.length > NB_PAR_PAGE;
+    // Drag souris : ne pas ouvrir Reel ni déclencher J'aime après un glissement
+    const onPointerDown = (e) => {
+      if (e.pointerType !== 'mouse' || e.button !== 0 || !reelsRef.current) return;
+      dragRef.current = { active: true, startX: e.clientX, startScroll: reelsRef.current.scrollLeft, moved: false };
+      try { reelsRef.current.setPointerCapture(e.pointerId); } catch (_) {}
+    };
+    const onPointerMove = (e) => {
+      if (!dragRef.current.active) return;
+      const dx = e.clientX - dragRef.current.startX;
+      if (Math.abs(dx) > 5) dragRef.current.moved = true;
+      if (dragRef.current.moved && reelsRef.current) reelsRef.current.scrollLeft = dragRef.current.startScroll - dx;
+    };
+    const onPointerUp = () => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      if (dragRef.current.moved && reelsRef.current) {
+        const cw = getCardWidth();
+        if (cw > 0) {
+          const idx = Math.round(reelsRef.current.scrollLeft / cw);
+          reelsRef.current.scrollTo({ left: idx * cw, behavior: 'smooth' });
+        }
+      }
+    };
+    const onClickCapture = (e) => {
+      if (dragRef.current.moved) { e.stopPropagation(); dragRef.current.moved = false; }
+    };
+
     return (
       <div className="mb-8" data-testid="publications-fil">
         {/* V645 — EXPÉRIENCE REELS : défilement vertical à aimant (scroll-snap),
@@ -1297,18 +1446,65 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
             conteneur a une hauteur BORNÉE : le scroll de la page d'accueil reste
             fonctionnel au-dessus et en dessous (il n'est jamais capturé). La
             lecture/pause auto hors écran est gérée par VideoPublication
-            (IntersectionObserver), inchangée. */}
-        <div className="af-reels" data-testid="publications-reels">
-          {publications.map((pub, i) => (
-            <V540CartePublication
-              key={pub.id}
-              pub={pub}
-              reel
-              actions={actions}
-              onOpen={() => setLightbox({ pub, index: i })}
-            />
-          ))}
+            (IntersectionObserver), inchangée.
+            V645.4d — PC : flèches gauche/droite + dots. Mobile Reel inchangé. */}
+        <div className="af-reels-wrap">
+          {aFlechesPrev && (
+            <button
+              type="button"
+              className="af-reels-nav af-reels-nav--prev"
+              onClick={scrollPrev}
+              aria-label="Publications précédentes"
+              disabled={scrollIdx <= 0}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          )}
+          <div className="af-reels" data-testid="publications-reels" ref={reelsRef} onScroll={onScroll}
+            onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
+            onClickCapture={onClickCapture}
+          >
+            {publications.map((pub, i) => (
+              <V540CartePublication
+                key={pub.id}
+                pub={pub}
+                reel
+                actions={actions}
+                onOpen={() => setLightbox({ pub, index: i })}
+              />
+            ))}
+          </div>
+          {aFlechesNext && (
+            <button
+              type="button"
+              className="af-reels-nav af-reels-nav--next"
+              onClick={scrollNext}
+              aria-label="Publications suivantes"
+              disabled={scrollIdx >= publications.length - 1}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+          )}
         </div>
+        {/* Dots de navigation (PC uniquement, CSS masqués sur mobile) */}
+        {nbPages > 1 && (
+          <div className="af-reels-dots" aria-label="Navigation publications">
+            {Array.from({ length: nbPages }).map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                className={`af-reels-dot${i === Math.floor(scrollIdx / NB_PAR_PAGE) ? ' af-reels-dot--actif' : ''}`}
+                onClick={() => allerAPage(i)}
+                aria-label={`Page ${i + 1}`}
+              />
+            ))}
+          </div>
+        )}
         {lightbox && createPortal(
           <V268Lightbox
             pub={lightbox.pub}
