@@ -1932,6 +1932,10 @@ body {
      à gauche » (capture). Elle passe en PLEINE LARGEUR, sous l'offre. L'accueil
      épuré est préservé : ni Live ni Spordateur ne sont réaffichés ni dupliqués. */
   .af-colonne-cote > [data-testid="accueil-carte-horaires"]   { order: 3; grid-column: 1 / -1; }
+  /* V645.4c-mobile — rétablir le ratio 16/9 pour l'image de l'offre sur mobile.
+     La hauteur fixe 130px a été posée pour compacter la colonne droite desktop ;
+     elle ne doit pas rétrécir l'image sur téléphone, où 16/9 est plus lisible. */
+  [data-testid="accueil-offre-du-moment"] > div:first-child { height: auto !important; aspect-ratio: 16 / 9 !important; }
 }
 
 /* ═══ V542 — BOUTIQUE MOBILE : L'IMAGE D'ABORD ═══════════════════════════
