@@ -1119,28 +1119,19 @@ video:-ms-fullscreen {
   .af-accueil-colonnes { flex-direction: row; align-items: flex-start; gap: 28px; }
   .af-colonne-principale { order: 1; flex: 1 1 auto; }
   .af-colonne-cote {
-    display: flex; flex-direction: column; gap: 16px;
-    width: 340px; flex: 0 0 340px; order: 2;
+    /* V645.4b — PLUS DE SCROLL INTERNE. La colonne n'est plus bornée en hauteur
+       ni défilante : on accède à « Voir les séances » (carte Horaires) par le
+       défilement NORMAL de la page, jamais par un scroll secondaire du panneau.
+       `align-self: flex-start` + sticky : la colonne suit tant qu'elle tient à
+       l'écran, et quand elle est plus haute que la fenêtre (1024×768), son bas
+       — donc la carte Horaires — reste atteignable par le scroll de la page,
+       sans jamais être coupé. Gap resserré (12 → 10) pour la compacité. */
+    display: flex; flex-direction: column; gap: 10px;
+    width: 340px; flex: 0 0 340px; order: 2; align-self: flex-start;
     /* Le `top` se calcule : bandeau du compte à rebours (mesuré à l'exécution,
        0 quand il n'y en a pas) + barre de navigation + 12 px d'air. */
     position: sticky; top: calc(var(--af-bandeau, 0px) + var(--af-nav, 49px) + 12px);
-    /* Une colonne plus haute que l'écran ne doit pas se retrouver coupée : on
-       la laisse défiler d'elle-même au lieu de masquer sa fin. */
-    max-height: calc(100vh - var(--af-bandeau, 0px) - var(--af-nav, 49px) - 24px);
-    overflow-y: auto;
-    /* V543 — LA BARRE DE DÉFILEMENT REDEVIENT VISIBLE. Elle était masquée
-       (V541) à une époque où la colonne tenait toujours dans l'écran. Depuis
-       que les cartes gardent leur hauteur intrinsèque, l'ensemble peut
-       dépasser — mesuré : 880 px de contenu pour 775 disponibles à
-       1440×900. Sans barre, la carte Spordateur devenait simplement
-       inatteignable : rien n'était « coupé », mais rien ne disait qu'il y
-       avait la suite. Une barre fine suffit à le dire. */
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
   }
-  .af-colonne-cote::-webkit-scrollbar { width: 6px; }
-  .af-colonne-cote::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 999px; }
-  .af-colonne-cote::-webkit-scrollbar-track { background: transparent; }
   .af-colonne-cote > * { order: initial; }
 }
 
@@ -1333,13 +1324,67 @@ body {
 }
 .af-reels::-webkit-scrollbar { width: 0; height: 0; }
 @media (min-width: 1024px) {
-  /* V645.3 — REEL DESKTOP RÉÉQUILIBRÉ. Le cadre montait à min(80vh,760px) sur
-     TOUTE la largeur de la colonne principale (~900 px) : un pavé quasi carré
-     où `cover` recadrait violemment les visages (signalé en capture). On
-     revient à une scène PORTRAIT premium — hauteur plafonnée, largeur ~380 px,
-     centrée — encadrée par le fond sombre #0c0c0e. Le média garde son ratio
-     (voir `reelFit` : paysage en `contain`). Défilement vertical conservé. */
-  .af-reels { --reel-h: min(66vh, 560px); width: 100%; max-width: 380px; margin: 0 auto; }
+  /* V645.4 — PUBLICATIONS PC : 4 REELS CÔTE À CÔTE. Le reel géant unique
+     (scroll-snap vertical) est remplacé sur grand écran par une rangée de
+     cartes portrait de taille IDENTIQUE. Rangée en flex à largeur fixe par
+     carte (1/4 de la rangée) : 4 publications remplissent la ligne ; moins de 4
+     restent à la même taille, alignées à gauche, SANS cellule vide ni carte
+     fictive ; plus de 4 défilent horizontalement (navigation discrète). Le
+     conteneur perd sa hauteur bornée et son fond sombre : chaque carte porte le
+     sien. Mobile (< 1024 px) garde le lecteur reel vertical intact. */
+  .af-reels {
+    /* V645.4c — reels plus hauts (360 → 480) pour rapprocher la hauteur des
+       deux zones et réduire le vide sous les publications, SANS étirer ni
+       recadrer excessivement : le média garde `cover`/`contain` (voir reelFit) ;
+       le sujet, centré, n'est que légèrement rogné sur les côtés. Rééquilibrage
+       complété par la compaction de la colonne droite. */
+    --reel-h: min(66vh, 520px);
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 12px;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    margin: 0;
+    overflow-x: auto;
+    overflow-y: visible;
+    scroll-snap-type: x proximity;
+    border-radius: 0;
+    background: transparent;
+    padding-bottom: 4px;
+  }
+  .af-reels > .af-reel-carte {
+    flex: 0 0 auto;
+    width: calc((100% - 36px) / 4);
+    min-width: 0;
+    height: var(--reel-h);
+    border-radius: 14px;
+    scroll-snap-align: start;
+  }
+  /* V645.4c — ACTIONS ÉPURÉES SUR LES CARTES ÉTROITES (4 par rangée).
+     Sur ces cartes, les LIBELLÉS texte (« Partager », « Séances », « Offres »)
+     et la légende « de toute la page » encombraient le média. On n'affiche plus
+     que des ICÔNES cohérentes (plus le compteur de j'aime / avis), ce qui
+     dégage la vidéo. AUCUNE action n'est retirée ni cachée au survol :
+     chaque icône reste un bouton cliquable (tap/clavier), avec son `aria-label`
+     et son `title` (infobulle) — l'intitulé reste donc accessible. Mobile et
+     lightbox (hors `.af-reels`) gardent les libellés. */
+  .af-reels .af-reel-carte [data-testid="uipub2-actions"] {
+    right: 4px !important;
+    gap: 4px !important;
+  }
+  /* Masquer la légende d'ensemble et les libellés des 3 actions secondaires. */
+  .af-reels .af-reel-carte .af-uipub-legende,
+  .af-reels .af-reel-carte [data-testid="publication-partager"] > span,
+  .af-reels .af-reel-carte [data-testid="publication-sessions"] > span,
+  .af-reels .af-reel-carte [data-testid="publication-offres"] > span {
+    display: none !important;
+  }
+  /* Pastille discrète sous chaque icône pour une cible nette sur le média. */
+  .af-reels .af-reel-carte [data-testid="uipub2-actions"] > button {
+    width: 40px !important; height: 40px !important;
+    border-radius: 999px; background: rgba(0,0,0,0.32) !important;
+  }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
 .af-reel-carte {
@@ -1670,6 +1715,69 @@ body {
   }
 }
 
+/* ─── V645.4 — BANNIÈRE PLEINE LARGEUR + FICHE PRODUIT INLINE ──────────────────
+   La bannière occupe TOUTE la largeur du conteneur de l'accueil (plus enfermée
+   dans une colonne) et devient plus haute / immersive. La fiche produit se place
+   DESSOUS, en pleine largeur : galerie à gauche (~60 %), infos d'achat à droite
+   (~40 %) sur desktop ; empilées sur mobile. Noir / blanc / violet uniquement. */
+.af-boutique-banniere--pleine {
+  width: 100%;
+  aspect-ratio: auto;
+  height: clamp(260px, 27vw, 440px);
+  margin-bottom: 22px;
+}
+@media (max-width: 640px) {
+  /* Mobile : bannière PLUS GRANDE et immersive qu'avant, sans débordement. */
+  .af-boutique-banniere--pleine { height: clamp(230px, 56vw, 340px); aspect-ratio: auto; }
+}
+
+.af-boutique-fiche { width: 100%; margin-top: 4px; }
+/* Desktop : fiche inline (galerie + infos). Mobile : carte produit préservée.
+   Une seule des deux est visible selon la largeur, jamais les deux. */
+.af-boutique-fiche--inline { display: none; }
+.af-boutique-fiche--carte { display: block; }
+@media (min-width: 1024px) {
+  .af-boutique-fiche--inline { display: block; }
+  .af-boutique-fiche--carte { display: none; }
+}
+.af-boutique-fiche-titre {
+  margin: 0 0 14px; color: #fff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 900; letter-spacing: -0.015em; text-transform: uppercase;
+  font-size: clamp(1.1rem, 3.4vw, 1.5rem); line-height: 1.05;
+}
+
+/* Fiche inline (OfferCardSlider inlineDetail). Le corps réutilisé porte déjà
+   `flex flex-col md:flex-row` : empilé sur mobile, côte à côte dès 768 px. On
+   l'habille d'une carte sobre, et on borne la hauteur de la galerie pour que la
+   grande photo reste élégante sur grand écran. */
+.af-fiche-produit {
+  width: 100%;
+  border-radius: 18px; overflow: hidden;
+  background: #111014; border: 1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.18);
+}
+.af-fiche-produit .af-fiche-galerie-media,
+.af-fiche-produit [data-testid^="product-detail-thumbs-"] { }
+@media (min-width: 768px) {
+  /* V645.4c — GALERIE DESKTOP : miniatures VERTICALES à GAUCHE de la grande
+     image (quand la largeur le permet), image mise en valeur avec moins de
+     marges sombres. Sur mobile (< 768px), les miniatures restent EN BAS
+     (flux naturel du corps de fiche). L'image garde `contain` (aucun sujet
+     rogné, ratio respecté, aucun zoom artificiel imposé). */
+  .af-fiche-produit .af-fiche-galerie { display: flex; flex-direction: row-reverse; gap: 12px; align-items: stretch; }
+  .af-fiche-produit .af-fiche-galerie .af-fiche-scene {
+    flex: 1 1 auto; min-width: 0;
+    aspect-ratio: auto !important; height: clamp(380px, 44vw, 560px);
+  }
+  .af-fiche-produit .af-fiche-galerie [data-testid^="product-detail-thumbs-"] {
+    flex: 0 0 auto; flex-direction: column; flex-wrap: nowrap;
+    margin-top: 0 !important; width: 64px; overflow-y: auto; max-height: clamp(380px, 44vw, 560px);
+  }
+  .af-fiche-produit .af-fiche-galerie [data-testid^="product-detail-thumbs-"] > button {
+    width: 56px !important; height: 70px !important;
+  }
+}
+
 /* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
    et la Boutique. Classe dédiée = aucun impact sur le reste du site. */
 .af-section-titre {
@@ -1824,6 +1932,10 @@ body {
      à gauche » (capture). Elle passe en PLEINE LARGEUR, sous l'offre. L'accueil
      épuré est préservé : ni Live ni Spordateur ne sont réaffichés ni dupliqués. */
   .af-colonne-cote > [data-testid="accueil-carte-horaires"]   { order: 3; grid-column: 1 / -1; }
+  /* V645.4c-mobile — rétablir le ratio 16/9 pour l'image de l'offre sur mobile.
+     La hauteur fixe 130px a été posée pour compacter la colonne droite desktop ;
+     elle ne doit pas rétrécir l'image sur téléphone, où 16/9 est plus lisible. */
+  [data-testid="accueil-offre-du-moment"] > div:first-child { height: auto !important; aspect-ratio: 16 / 9 !important; }
 }
 
 /* ═══ V542 — BOUTIQUE MOBILE : L'IMAGE D'ABORD ═══════════════════════════

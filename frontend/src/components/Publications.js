@@ -385,7 +385,7 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
       {/* Sans ce rappel, un chiffre posé à côté d'une publication se lit comme
           le sien. Il ne l'est pas : c'est celui de toute la page, et le dire
           coûte deux lignes de 8,5 px. */}
-      <span style={{
+      <span className="af-uipub-legende" style={{
         fontSize: 8.5, lineHeight: 1.1, textAlign: 'center', letterSpacing: '.02em',
         color: 'rgba(255,255,255,0.62)', maxWidth: 52, margin: '-1px 0 3px',
         textShadow: '0 1px 3px rgba(0,0,0,0.95)',
