@@ -1248,6 +1248,10 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
   // V268 (F2): publication ouverte en plein ecran, ou null.
   const [lightbox, setLightbox] = useState(null);
 
+  // V645.4d — flèches + dots carousel PC (mode "fil" uniquement)
+  const reelsRef = useRef(null);
+  const [scrollIdx, setScrollIdx] = useState(0);
+
   /* V542 — LE LIEN PARTAGÉ OUVRE LA BONNE PUBLICATION.
      `?publication=<id>` est lu ICI, là où la liste est déjà chargée et où le
      viewer existe déjà : aucun routeur nouveau, aucun appel réseau de plus.
@@ -1290,6 +1294,28 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
      tout appelant présent ou futur. Une seule publication par ligne, jamais
      deux côte à côte, quelle que soit la largeur de l'écran. */
   if (disposition === 'fil') {
+    // V645.4d — Carousel PC : flèches de navigation + dots optionnels
+    const NB_PAR_PAGE = 4; // correspond à la grille CSS 4-up (≥1024px)
+    const nbPages = Math.max(1, Math.ceil((publications || []).length / NB_PAR_PAGE));
+    const scrollPrev = () => {
+      if (reelsRef.current) reelsRef.current.scrollBy({ left: -(reelsRef.current.clientWidth + 1), behavior: 'smooth' });
+    };
+    const scrollNext = () => {
+      if (reelsRef.current) reelsRef.current.scrollBy({ left: reelsRef.current.clientWidth + 1, behavior: 'smooth' });
+    };
+    const onScroll = () => {
+      if (!reelsRef.current) return;
+      const cw = reelsRef.current.clientWidth || 1;
+      const idx = Math.round(reelsRef.current.scrollLeft / cw);
+      setScrollIdx(Math.max(0, Math.min(idx, nbPages - 1)));
+    };
+    const allerAPage = (i) => {
+      if (reelsRef.current) reelsRef.current.scrollTo({ left: i * reelsRef.current.clientWidth, behavior: 'smooth' });
+      setScrollIdx(i);
+    };
+    const aFlechesPrev = publications.length > NB_PAR_PAGE;
+    const aFlechesNext = publications.length > NB_PAR_PAGE;
+
     return (
       <div className="mb-8" data-testid="publications-fil">
         {/* V645 — EXPÉRIENCE REELS : défilement vertical à aimant (scroll-snap),
@@ -1297,18 +1323,61 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
             conteneur a une hauteur BORNÉE : le scroll de la page d'accueil reste
             fonctionnel au-dessus et en dessous (il n'est jamais capturé). La
             lecture/pause auto hors écran est gérée par VideoPublication
-            (IntersectionObserver), inchangée. */}
-        <div className="af-reels" data-testid="publications-reels">
-          {publications.map((pub, i) => (
-            <V540CartePublication
-              key={pub.id}
-              pub={pub}
-              reel
-              actions={actions}
-              onOpen={() => setLightbox({ pub, index: i })}
-            />
-          ))}
+            (IntersectionObserver), inchangée.
+            V645.4d — PC : flèches gauche/droite + dots. Mobile Reel inchangé. */}
+        <div className="af-reels-wrap">
+          {aFlechesPrev && (
+            <button
+              type="button"
+              className="af-reels-nav af-reels-nav--prev"
+              onClick={scrollPrev}
+              aria-label="Publications précédentes"
+              disabled={scrollIdx === 0}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          )}
+          <div className="af-reels" data-testid="publications-reels" ref={reelsRef} onScroll={onScroll}>
+            {publications.map((pub, i) => (
+              <V540CartePublication
+                key={pub.id}
+                pub={pub}
+                reel
+                actions={actions}
+                onOpen={() => setLightbox({ pub, index: i })}
+              />
+            ))}
+          </div>
+          {aFlechesNext && (
+            <button
+              type="button"
+              className="af-reels-nav af-reels-nav--next"
+              onClick={scrollNext}
+              aria-label="Publications suivantes"
+              disabled={scrollIdx >= nbPages - 1}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+          )}
         </div>
+        {/* Dots de navigation (PC uniquement, CSS masqués sur mobile) */}
+        {nbPages > 1 && (
+          <div className="af-reels-dots" aria-label="Navigation publications">
+            {Array.from({ length: nbPages }).map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                className={`af-reels-dot${i === scrollIdx ? ' af-reels-dot--actif' : ''}`}
+                onClick={() => allerAPage(i)}
+                aria-label={`Page ${i + 1}`}
+              />
+            ))}
+          </div>
+        )}
         {lightbox && createPortal(
           <V268Lightbox
             pub={lightbox.pub}

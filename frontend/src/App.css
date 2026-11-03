@@ -2153,3 +2153,129 @@ body {
 /* V622 — le bloc de présentation SEO, déplacé juste avant le pied de page : sa marge basse
    (prévue quand il était le dernier élément) devient inutile. Le HTML serveur est inchangé. */
 #af-presentation-slot > #af-presentation { padding-bottom: 8px !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V645.4d — CORRECTIONS DESIGN FINAL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Item 1 : Espacement nav → titre publications (28-36 px sur PC) ──────── */
+@media (min-width: 1024px) {
+  .af-accueil-contenu { padding-top: 32px !important; }
+}
+
+/* ── Items 2 + 5 : Compacter la colonne droite — réduire le vide noir ─────── */
+@media (min-width: 1024px) {
+  /* Réduire l'écart entre les cartes sidebar */
+  .af-colonne-cote { gap: 8px; }
+
+  /* Image offre du moment : 110 px au lieu de 130 px */
+  [data-testid="accueil-offre-du-moment"] > div:first-child { height: 110px !important; }
+
+  /* Padding interne des cartes légèrement réduit */
+  [data-testid="accueil-carte-live"] > div,
+  [data-testid="accueil-carte-horaires"] > div { padding: 11px !important; }
+
+  /* Hauteur des publications PC légèrement augmentée pour équilibrer */
+  .af-reels { --reel-h: min(66vh, 560px); }
+}
+
+/* ── Item 3 : Carousel PC — wrapper pour les flèches ────────────────────── */
+.af-reels-wrap { position: relative; width: 100%; }
+
+.af-reels-nav {
+  display: none; /* masqué sur mobile : le scroll tactile suffit */
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  z-index: 10;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62); color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer; align-items: center; justify-content: center;
+  transition: background .15s, opacity .15s, box-shadow .15s;
+  padding: 0;
+}
+.af-reels-nav:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+.af-reels-nav:not(:disabled):hover {
+  background: rgba(0, 0, 0, 0.85);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+.af-reels-nav:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.af-reels-nav--prev { left: -20px; }
+.af-reels-nav--next { right: -20px; }
+
+@media (min-width: 1024px) {
+  .af-reels-nav { display: inline-flex; }
+}
+
+/* Dots */
+.af-reels-dots {
+  display: none;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+@media (min-width: 1024px) {
+  .af-reels-dots { display: flex; }
+}
+.af-reels-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  border: none; cursor: pointer; padding: 0;
+  transition: background .15s, transform .15s;
+}
+.af-reels-dot--actif {
+  background: var(--primary-color, #D91CD2);
+  transform: scale(1.2);
+}
+.af-reels-dot:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+/* ── Item 4 : Gradient CTA sur les boutons principaux ───────────────────── */
+/* Formule : linear-gradient(110deg, --primary-color 0%, #9B25D5 55%, #7021B8 100%) */
+
+/* Bouton « Retour au dashboard » (déjà gradient, on met à jour) */
+.af-barre-haute-retour {
+  background: linear-gradient(110deg, var(--primary-color, #D91CD2) 0%, #9B25D5 55%, #7021B8 100%) !important;
+  box-shadow: 0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.22);
+}
+
+/* Hero CTA — style inline → !important */
+[data-testid="c1-hero-cta"] {
+  background: linear-gradient(110deg, var(--primary-color, #D91CD2) 0%, #9B25D5 55%, #7021B8 100%) !important;
+  box-shadow: 0 6px 24px rgba(var(--primary-rgb, 217, 28, 210), 0.45) !important;
+}
+[data-testid="c1-hero-cta"]:hover { filter: brightness(1.08); }
+[data-testid="c1-hero-cta"]:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+/* Boutons sidebar (styles inline ColonneAccueil.js → !important) */
+[data-testid="accueil-live-ouvrir"],
+[data-testid="accueil-offre-cta"],
+[data-testid="accueil-horaires-voir-seances"] {
+  background: linear-gradient(110deg, var(--primary-color, #D91CD2) 0%, #9B25D5 55%, #7021B8 100%) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+[data-testid="accueil-live-ouvrir"]:not(:disabled):hover,
+[data-testid="accueil-offre-cta"]:hover,
+[data-testid="accueil-horaires-voir-seances"]:hover { filter: brightness(1.08); }
+[data-testid="accueil-live-ouvrir"]:focus-visible,
+[data-testid="accueil-offre-cta"]:focus-visible,
+[data-testid="accueil-horaires-voir-seances"]:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Bannière boutique « Découvrir » */
+.af-boutique-banniere-cta {
+  background: linear-gradient(110deg, var(--primary-color, #D91CD2) 0%, #9B25D5 55%, #7021B8 100%) !important;
+  color: #fff !important;
+}
+.af-boutique-banniere-cta:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(var(--primary-rgb, 217, 28, 210), 0.35); }
+
+/* Checkout « Réserver » (T-shirt + parcours payant) */
+[data-testid="submit-reservation-btn"].btn-primary {
+  background: linear-gradient(110deg, var(--primary-color, #D91CD2) 0%, #9B25D5 55%, #7021B8 100%) !important;
+  background-size: unset !important;
+  animation: none !important;
+  box-shadow: 0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.35) !important;
+}
+[data-testid="submit-reservation-btn"].btn-primary:not(:disabled):hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
