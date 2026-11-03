@@ -21637,10 +21637,22 @@ _HEX_RE = _re_hex.compile(r'^#[0-9a-fA-F]{6}$')
 
 def _v645j_normaliser_hero_gradient(updates: dict) -> None:
     """V645.4j — valide/normalise EN PLACE heroGradientTitre et heroTitreLineGap.
-    heroGradientTitre : dict {couleurs: [...], direction: 0-360}. Toute couleur
-    non-HEX6 ou clé inconnue est retirée. Si le dict résultant est vide, il est
-    supprimé des updates (= pas d'écrasement du document existant).
-    heroTitreLineGap : entier borné [0, 200]. Toute valeur non numérique → 0.
+
+    Contrat frontend réel (HeroEditeurVisuel.js) :
+      heroGradientTitre = {
+        actif: bool,          # false = gradient désactivé, DOIT être préservé
+        debut: "#RRGGBB",     # requis, HEX6
+        milieu: "#RRGGBB",    # facultatif, HEX6 si présent
+        fin: "#RRGGBB",       # requis, HEX6
+        direction: 0-360      # degrés entiers
+      }
+      Toute clé inconnue est retirée. Clés manquantes = absentes du sanitized
+      (pas d'écrasement de l'existant en base lors d'une mise à jour partielle).
+      Si le dict résultant est vide, la clé est supprimée des updates.
+
+    heroTitreLineGap : entier borné [-24, 32] (frontend : espacement inter-lignes
+      pouvant être négatif). Toute valeur non numérique → 0.
+
     Pur (pas d'E/S) : testable sans base.
     """
     if "heroGradientTitre" in updates:
@@ -21649,15 +21661,20 @@ def _v645j_normaliser_hero_gradient(updates: dict) -> None:
             updates.pop("heroGradientTitre", None)
         else:
             sanitized = {}
-            couleurs = raw.get("couleurs")
-            if isinstance(couleurs, list):
-                valid_couleurs = [c for c in couleurs if isinstance(c, str) and _HEX_RE.match(c)]
-                if valid_couleurs:
-                    sanitized["couleurs"] = valid_couleurs
-            direction = raw.get("direction")
-            if direction is not None:
+            # actif : booléen — False DOIT être conservé (gradient désactivé)
+            if "actif" in raw:
+                sanitized["actif"] = bool(raw["actif"])
+            # debut / fin : HEX6 requis ; milieu : HEX6 facultatif
+            for champ in ("debut", "milieu", "fin"):
+                val = raw.get(champ)
+                if val is not None:
+                    if isinstance(val, str) and _HEX_RE.match(val):
+                        sanitized[champ] = val
+                    # valeur invalide → champ absent du sanitized (pas stocké)
+            # direction : entier [0, 360]
+            if "direction" in raw:
                 try:
-                    d = int(float(direction))
+                    d = int(float(raw["direction"]))
                     sanitized["direction"] = min(max(d, 0), 360)
                 except (TypeError, ValueError):
                     pass
@@ -21669,7 +21686,7 @@ def _v645j_normaliser_hero_gradient(updates: dict) -> None:
     if "heroTitreLineGap" in updates:
         try:
             gap = int(float(updates.get("heroTitreLineGap") or 0))
-            updates["heroTitreLineGap"] = min(max(gap, 0), 200)
+            updates["heroTitreLineGap"] = min(max(gap, -24), 32)
         except (TypeError, ValueError):
             updates["heroTitreLineGap"] = 0
 
