@@ -1696,7 +1696,7 @@ const V223_TIERS = {
 // NOTE V224: le bouton se desactive sur `checkoutBusy`, PAS sur `loading` — voir
 // la declaration de checkoutBusy dans App. `loading` reste relaye tel quel pour
 // ne rien retirer a l'API du composant.
-const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false }) => {
+const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false, inlineDetail = false }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   // V645.3 — fiche produit « façon Adidas » (galerie + infos + variantes),
@@ -2289,10 +2289,10 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   //    http, sinon on retombe sur la recherche.
   const v225LocHref = u_lienMapsLieu(offer);
 
-  return (
-    <>
-      {/* Zoom Modal - flèches uniquement dans le zoom */}
-      {showZoom && (
+  // V645.4 — zoom + corps de fiche extraits en constantes pour être partagés
+  // entre la modale « Voir le produit » (carte) et le rendu INLINE de la
+  // boutique (prop inlineDetail). Mêmes galerie, variantes, quantité et checkout.
+  const zoomModal = showZoom && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90"
           onClick={toggleZoom}
@@ -2336,37 +2336,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             )}
           </div>
         </div>
-      )}
-
-      {/* V645.3 — FICHE PRODUIT « façon Adidas » (structure, pas la marque).
-          Galerie à gauche (desktop) / au-dessus (mobile), infos à droite / en
-          dessous. RÉUTILISE la galerie, les variantes (v226Variants) et le
-          checkout EXISTANTS : aucun panier, aucun prix ni avis inventé, le prix
-          et le parcours d'achat sont ceux de la carte. Couleurs : noir / blanc /
-          violet uniquement. */}
-      {showDetail && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-6"
-          onClick={() => setShowDetail(false)}
-          data-testid={`product-detail-${offer.id}`}
-        >
-          <div
-            className="relative w-full flex flex-col overflow-hidden rounded-2xl"
-            style={{ maxWidth: '920px', maxHeight: '92vh', background: '#111014', border: '1px solid rgba(var(--primary-rgb,217,28,210),0.22)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => setShowDetail(false)}
-              aria-label="Fermer"
-              className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 text-white text-xl flex items-center justify-center hover:bg-black/80"
-            >
-              ×
-            </button>
+  );
+  const ficheCorps = (
             <div className="flex flex-col md:flex-row overflow-y-auto">
               {/* GALERIE */}
-              <div className="md:w-[55%] md:flex-shrink-0 p-3 sm:p-4" style={{ background: '#0c0c0e' }}>
-                <div className="relative w-full rounded-xl overflow-hidden" style={{ aspectRatio: '4 / 5', background: '#0c0c0e' }}>
+              <div className="md:w-[60%] md:flex-shrink-0 p-3 sm:p-4" style={{ background: '#0c0c0e' }}>
+                <div className="af-fiche-scene relative w-full rounded-xl overflow-hidden" style={{ aspectRatio: '4 / 5', background: '#0c0c0e' }}>
                   {currentMedia && currentMedia.type === 'video' ? (
                     <video src={currentImage} muted loop autoPlay playsInline className="w-full h-full" style={{ objectFit: 'contain' }} />
                   ) : (
@@ -2411,7 +2386,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 )}
               </div>
               {/* INFOS */}
-              <div className="md:w-[45%] p-4 sm:p-5 flex flex-col gap-3" style={{ color: '#fff' }}>
+              <div className="md:w-[40%] p-4 sm:p-5 flex flex-col gap-3" style={{ color: '#fff' }}>
                 <h3 className="font-bold" style={{ fontSize: 20, lineHeight: 1.2 }}>{offer.name}</h3>
                 <div className="text-2xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
                   CHF {v225FormatAmount(v223UnitPrice(offer))}.-
@@ -2494,6 +2469,48 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 )}
               </div>
             </div>
+  );
+  if (inlineDetail) {
+    return (
+      <>
+        {zoomModal}
+        <section className="af-fiche-produit" data-testid={`fiche-produit-${offer.id}`}>
+          {ficheCorps}
+        </section>
+      </>
+    );
+  }
+  return (
+    <>
+      {/* Zoom Modal - flèches uniquement dans le zoom */}
+      {zoomModal}
+
+      {/* V645.3 — FICHE PRODUIT « façon Adidas » (structure, pas la marque).
+          Galerie à gauche (desktop) / au-dessus (mobile), infos à droite / en
+          dessous. RÉUTILISE la galerie, les variantes (v226Variants) et le
+          checkout EXISTANTS : aucun panier, aucun prix ni avis inventé, le prix
+          et le parcours d'achat sont ceux de la carte. Couleurs : noir / blanc /
+          violet uniquement. */}
+      {showDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 sm:p-6"
+          onClick={() => setShowDetail(false)}
+          data-testid={`product-detail-${offer.id}`}
+        >
+          <div
+            className="relative w-full flex flex-col overflow-hidden rounded-2xl"
+            style={{ maxWidth: '920px', maxHeight: '92vh', background: '#111014', border: '1px solid rgba(var(--primary-rgb,217,28,210),0.22)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowDetail(false)}
+              aria-label="Fermer"
+              className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 text-white text-xl flex items-center justify-center hover:bg-black/80"
+            >
+              ×
+            </button>
+              {ficheCorps}
           </div>
         </div>
       )}
@@ -9773,9 +9790,15 @@ function App() {
                 }}
               />
               {/* V645.2 — Carte horaires hebdomadaires (planning réel Afroboost) */}
+              {/* V645.4 — CALENDRIER UNIQUE : « Voir les séances » ouvre la MÊME
+                  fenêtre (SessionsModal) que l'onglet Sessions et l'action
+                  « Séances » des publications. Plus de divergence (avant :
+                  setActiveFilter('sessions') filtrait la page au lieu d'ouvrir
+                  le calendrier). Un seul composant, un seul handler, mêmes
+                  données et mêmes règles de réservation. */}
               <CarteHoraires
                 courses={courses}
-                onClick={() => setActiveFilter('sessions')}
+                onClick={() => setShowSessionsModal(true)}
               />
             </aside>
           );
@@ -10155,8 +10178,11 @@ function App() {
             {/* V645.3 — VITRINE : bannière + produit côte à côte sur desktop
                 (maquette). La carte produit n'est plus isolée au centre d'un
                 grand vide ; sur mobile, tout s'empile (bannière puis produit). */}
-            <div className="af-boutique-vitrine">
-            <div className="af-boutique-banniere">
+            {/* V645.4 — BANNIÈRE PLEINE LARGEUR. Elle n'est plus enfermée dans
+                une colonne à côté du produit : elle occupe TOUTE la largeur
+                utile du conteneur de l'accueil, au-dessus de la fiche produit.
+                Plus haute et immersive (voir .af-boutique-banniere--pleine). */}
+            <div className="af-boutique-banniere af-boutique-banniere--pleine">
               {/* V645.3c — média de la bannière : vidéo lue sur son segment
                   [début, fin] en boucle muette avec miniature en poster, image,
                   ou fallback dégradé. Rétrocompatible (pas d'extrait = fichier
@@ -10174,36 +10200,82 @@ function App() {
                 <button
                   type="button"
                   className="af-boutique-banniere-cta"
-                  onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                  onClick={() => { const el = document.querySelector('#products-section .af-boutique-fiche, #products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
                 >
                   Découvrir
                 </button>
               </div>
             </div>
-            <div className="af-boutique-produits">
-            <OffersSliderAutoPlay
-              offers={filteredProducts}
-              selectedOffer={selectedOffer}
-              pendingOffer={pendingOffer}
-              onSelectOffer={(product) => {
-                // Pour les produits, pas besoin de cours/dates
-                // V226: ces deux resets sont CONSERVES — ils couvrent le
-                // parcours formulaire (offre a 0 CHF), qui ne passe jamais par
-                // startProgressiveCheckout. Le checkout direct, lui, les refait
-                // desormais lui-meme : ils y sont idempotents.
-                setSelectedCourse(null);
-                setSelectedDates([]);
-                handleSelectOffer(product);
-              }}
-              /* V224 */
-              courses={courses}
-              lang={lang}
-              startProgressiveCheckout={startProgressiveCheckout}
-              loading={loading}
-              checkoutBusy={checkoutBusy} /* V224 */
-            />
-            </div>{/* .af-boutique-produits */}
-            </div>{/* .af-boutique-vitrine */}
+            {/* V645.4 — FICHE PRODUIT SOUS LA BANNIÈRE.
+                DESKTOP (≥1024px) : un seul produit (le T-shirt) → fiche « façon
+                boutique » rendue INLINE, galerie à gauche (~60 %), infos d'achat
+                à droite (~40 %). Réutilise OfferCardSlider (galerie, zoom,
+                variantes, quantité, checkout EXISTANTS) via inlineDetail, sans
+                modale ni nouveau panier.
+                MOBILE : on PRÉSERVE la présentation actuelle du produit (carte
+                compacte du slider + « Voir le produit »). La visibilité des deux
+                blocs est pilotée en CSS (`--inline` / `--carte`).
+                Plusieurs produits : le slider horizontal d'origine, pour les
+                deux tailles d'écran. */}
+            {filteredProducts.length > 0 && (
+              <div className="af-boutique-fiche af-boutique-produits" data-testid="boutique-fiche">
+                <h3 className="af-boutique-fiche-titre">
+                  {(filteredProducts.length === 1 && filteredProducts[0].name)
+                    ? filteredProducts[0].name
+                    : 'La boutique'}
+                </h3>
+                {filteredProducts.length === 1 ? (
+                  <>
+                    {/* Desktop : fiche inline galerie + infos */}
+                    <div className="af-boutique-fiche--inline" data-testid="boutique-fiche-inline">
+                      <OfferCardSlider
+                        offer={filteredProducts[0]}
+                        selected={selectedOffer?.id === filteredProducts[0].id}
+                        pending={pendingOffer?.id === filteredProducts[0].id && !selectedOffer}
+                        onClick={() => { setSelectedCourse(null); setSelectedDates([]); handleSelectOffer(filteredProducts[0]); }}
+                        courses={courses}
+                        lang={lang}
+                        startProgressiveCheckout={startProgressiveCheckout}
+                        loading={loading}
+                        checkoutBusy={checkoutBusy}
+                        inlineDetail
+                      />
+                    </div>
+                    {/* Mobile : présentation produit actuelle préservée */}
+                    <div className="af-boutique-fiche--carte" data-testid="boutique-fiche-carte">
+                      <OffersSliderAutoPlay
+                        offers={filteredProducts}
+                        selectedOffer={selectedOffer}
+                        pendingOffer={pendingOffer}
+                        onSelectOffer={(product) => { setSelectedCourse(null); setSelectedDates([]); handleSelectOffer(product); }}
+                        courses={courses}
+                        lang={lang}
+                        startProgressiveCheckout={startProgressiveCheckout}
+                        loading={loading}
+                        checkoutBusy={checkoutBusy}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <OffersSliderAutoPlay
+                    offers={filteredProducts}
+                    selectedOffer={selectedOffer}
+                    pendingOffer={pendingOffer}
+                    onSelectOffer={(product) => {
+                      // Pour les produits, pas besoin de cours/dates
+                      setSelectedCourse(null);
+                      setSelectedDates([]);
+                      handleSelectOffer(product);
+                    }}
+                    courses={courses}
+                    lang={lang}
+                    startProgressiveCheckout={startProgressiveCheckout}
+                    loading={loading}
+                    checkoutBusy={checkoutBusy}
+                  />
+                )}
+              </div>
+            )}
 
             {/* V645.2 — CARTES « À VENIR » MASQUÉES (chaussettes non commercialisées).
                 Code conservé intégralement, aucune donnée supprimée.

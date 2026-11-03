@@ -1119,7 +1119,10 @@ video:-ms-fullscreen {
   .af-accueil-colonnes { flex-direction: row; align-items: flex-start; gap: 28px; }
   .af-colonne-principale { order: 1; flex: 1 1 auto; }
   .af-colonne-cote {
-    display: flex; flex-direction: column; gap: 16px;
+    /* V645.4 — colonne droite plus compacte (gap 16 → 12). Reste sticky, bornée
+       en hauteur et défilante : « Voir les séances » demeure visible et jamais
+       coupé. */
+    display: flex; flex-direction: column; gap: 12px;
     width: 340px; flex: 0 0 340px; order: 2;
     /* Le `top` se calcule : bandeau du compte à rebours (mesuré à l'exécution,
        0 quand il n'y en a pas) + barre de navigation + 12 px d'air. */
@@ -1333,13 +1336,47 @@ body {
 }
 .af-reels::-webkit-scrollbar { width: 0; height: 0; }
 @media (min-width: 1024px) {
-  /* V645.3 — REEL DESKTOP RÉÉQUILIBRÉ. Le cadre montait à min(80vh,760px) sur
-     TOUTE la largeur de la colonne principale (~900 px) : un pavé quasi carré
-     où `cover` recadrait violemment les visages (signalé en capture). On
-     revient à une scène PORTRAIT premium — hauteur plafonnée, largeur ~380 px,
-     centrée — encadrée par le fond sombre #0c0c0e. Le média garde son ratio
-     (voir `reelFit` : paysage en `contain`). Défilement vertical conservé. */
-  .af-reels { --reel-h: min(66vh, 560px); width: 100%; max-width: 380px; margin: 0 auto; }
+  /* V645.4 — PUBLICATIONS PC : 4 REELS CÔTE À CÔTE. Le reel géant unique
+     (scroll-snap vertical) est remplacé sur grand écran par une rangée de
+     cartes portrait de taille IDENTIQUE. Rangée en flex à largeur fixe par
+     carte (1/4 de la rangée) : 4 publications remplissent la ligne ; moins de 4
+     restent à la même taille, alignées à gauche, SANS cellule vide ni carte
+     fictive ; plus de 4 défilent horizontalement (navigation discrète). Le
+     conteneur perd sa hauteur bornée et son fond sombre : chaque carte porte le
+     sien. Mobile (< 1024 px) garde le lecteur reel vertical intact. */
+  .af-reels {
+    --reel-h: min(46vh, 360px);
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 12px;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    margin: 0;
+    overflow-x: auto;
+    overflow-y: visible;
+    scroll-snap-type: x proximity;
+    border-radius: 0;
+    background: transparent;
+    padding-bottom: 4px;
+  }
+  .af-reels > .af-reel-carte {
+    flex: 0 0 auto;
+    width: calc((100% - 36px) / 4);
+    min-width: 0;
+    height: var(--reel-h);
+    border-radius: 14px;
+    scroll-snap-align: start;
+  }
+  /* V645.4 — Sur les cartes étroites (4 par rangée), la colonne d'actions est
+     resserrée et réduite pour rester lisible sans masquer le média. Toutes les
+     actions restent présentes et cliquables ; seul le gabarit change, et
+     uniquement dans cette grille desktop (mobile et lightbox intacts). */
+  .af-reels .af-reel-carte [data-testid="uipub2-actions"] {
+    transform: translateY(-50%) scale(0.82) !important;
+    transform-origin: right center;
+    right: 2px !important;
+  }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
 .af-reel-carte {
@@ -1668,6 +1705,57 @@ body {
   .af-boutique .af-boutique-vitrine .af-boutique-produits [data-testid="offers-slider"] > :only-child {
     width: min(360px, 100%) !important; min-width: 0 !important;
   }
+}
+
+/* ─── V645.4 — BANNIÈRE PLEINE LARGEUR + FICHE PRODUIT INLINE ──────────────────
+   La bannière occupe TOUTE la largeur du conteneur de l'accueil (plus enfermée
+   dans une colonne) et devient plus haute / immersive. La fiche produit se place
+   DESSOUS, en pleine largeur : galerie à gauche (~60 %), infos d'achat à droite
+   (~40 %) sur desktop ; empilées sur mobile. Noir / blanc / violet uniquement. */
+.af-boutique-banniere--pleine {
+  width: 100%;
+  aspect-ratio: auto;
+  height: clamp(260px, 27vw, 440px);
+  margin-bottom: 22px;
+}
+@media (max-width: 640px) {
+  /* Mobile : bannière PLUS GRANDE et immersive qu'avant, sans débordement. */
+  .af-boutique-banniere--pleine { height: clamp(230px, 56vw, 340px); aspect-ratio: auto; }
+}
+
+.af-boutique-fiche { width: 100%; margin-top: 4px; }
+/* Desktop : fiche inline (galerie + infos). Mobile : carte produit préservée.
+   Une seule des deux est visible selon la largeur, jamais les deux. */
+.af-boutique-fiche--inline { display: none; }
+.af-boutique-fiche--carte { display: block; }
+@media (min-width: 1024px) {
+  .af-boutique-fiche--inline { display: block; }
+  .af-boutique-fiche--carte { display: none; }
+}
+.af-boutique-fiche-titre {
+  margin: 0 0 14px; color: #fff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 900; letter-spacing: -0.015em; text-transform: uppercase;
+  font-size: clamp(1.1rem, 3.4vw, 1.5rem); line-height: 1.05;
+}
+
+/* Fiche inline (OfferCardSlider inlineDetail). Le corps réutilisé porte déjà
+   `flex flex-col md:flex-row` : empilé sur mobile, côte à côte dès 768 px. On
+   l'habille d'une carte sobre, et on borne la hauteur de la galerie pour que la
+   grande photo reste élégante sur grand écran. */
+.af-fiche-produit {
+  width: 100%;
+  border-radius: 18px; overflow: hidden;
+  background: #111014; border: 1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.18);
+}
+.af-fiche-produit .af-fiche-galerie-media,
+.af-fiche-produit [data-testid^="product-detail-thumbs-"] { }
+@media (min-width: 768px) {
+  /* La galerie ne doit pas s'étirer au-delà d'une hauteur confortable : on
+     plafonne la SCÈNE (l'image reste en `contain`, aucun sujet rogné) pour
+     que la fiche ne devienne pas démesurément haute et que la colonne infos
+     reste alignée. */
+  .af-fiche-produit .af-fiche-scene { aspect-ratio: auto !important; height: clamp(360px, 42vw, 520px); }
 }
 
 /* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
