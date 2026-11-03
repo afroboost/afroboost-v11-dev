@@ -114,6 +114,34 @@ const IconeLogo = () => (
   </svg>
 );
 
+/* V645.4j-fix — Champ HEX avec saisie caractère par caractère */
+function ChampHex({ valeur, defaut, onChange }) {
+  const [brouillon, setBrouillon] = useState(valeur || defaut);
+  useEffect(() => { setBrouillon(valeur || defaut); }, [valeur, defaut]);
+  const valider = (v) => {
+    const hex = v.startsWith('#') ? v : '#' + v;
+    return /^#[0-9a-fA-F]{6}$/i.test(hex) ? hex : null;
+  };
+  return (
+    <input
+      type="text"
+      value={brouillon}
+      maxLength={7}
+      onChange={(e) => {
+        setBrouillon(e.target.value);
+        const hex = valider(e.target.value);
+        if (hex) onChange(hex);
+      }}
+      onBlur={() => {
+        const hex = valider(brouillon);
+        if (hex) { setBrouillon(hex); onChange(hex); }
+        else setBrouillon(valeur || defaut);
+      }}
+      style={{ width: 64, fontSize: 10, textAlign: 'center', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: '#fff', padding: '3px 4px' }}
+    />
+  );
+}
+
 export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStatus }) {
   const c = concept || {};
   const [appareil, setAppareil] = useState('desktop');
@@ -644,12 +672,10 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
                     data-testid={`hero-gradient-${champ}`}
                     title={`Couleur ${libelle}`}
                   />
-                  <input
-                    type="text"
-                    value={gTitre[champ] || defautChamp}
-                    maxLength={7}
-                    onChange={(e) => { if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) majGradient({ [champ]: e.target.value }); }}
-                    style={{ width: 64, fontSize: 10, textAlign: 'center', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: '#fff', padding: '3px 4px' }}
+                  <ChampHex
+                    valeur={gTitre[champ]}
+                    defaut={defautChamp}
+                    onChange={(hex) => majGradient({ [champ]: hex })}
                   />
                 </div>
               ))}
