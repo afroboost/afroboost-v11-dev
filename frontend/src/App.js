@@ -10157,12 +10157,16 @@ function App() {
                   </svg>
                   {t('deliveryAvailable')}
                 </span>
-                {/* V645 : « Tout voir » défile vers les cartes produits réelles ci-dessous
-                    (action réelle — aucun bouton inerte). */}
+                {/* V645.4b : « Tout voir » défile vers la fiche produit RÉELLEMENT
+                    VISIBLE. Sur desktop à un seul produit, le slider historique
+                    est masqué et c'est la fiche inline qui s'affiche : on cible
+                    donc le conteneur `.af-boutique-fiche` (toujours présent et
+                    visible, quel que soit le nombre de produits et la largeur),
+                    jamais un slider caché. */}
                 <button
                   type="button"
                   className="af-boutique-toutvoir"
-                  onClick={() => { const el = document.querySelector('#products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
+                  onClick={() => { const el = document.querySelector('#products-section .af-boutique-fiche') || document.querySelector('#products-section [data-testid="offers-slider"]') || document.getElementById('products-section'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                 >
                   Tout voir
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>

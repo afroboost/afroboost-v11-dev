@@ -1119,31 +1119,19 @@ video:-ms-fullscreen {
   .af-accueil-colonnes { flex-direction: row; align-items: flex-start; gap: 28px; }
   .af-colonne-principale { order: 1; flex: 1 1 auto; }
   .af-colonne-cote {
-    /* V645.4 — colonne droite plus compacte (gap 16 → 12). Reste sticky, bornée
-       en hauteur et défilante : « Voir les séances » demeure visible et jamais
-       coupé. */
-    display: flex; flex-direction: column; gap: 12px;
-    width: 340px; flex: 0 0 340px; order: 2;
+    /* V645.4b — PLUS DE SCROLL INTERNE. La colonne n'est plus bornée en hauteur
+       ni défilante : on accède à « Voir les séances » (carte Horaires) par le
+       défilement NORMAL de la page, jamais par un scroll secondaire du panneau.
+       `align-self: flex-start` + sticky : la colonne suit tant qu'elle tient à
+       l'écran, et quand elle est plus haute que la fenêtre (1024×768), son bas
+       — donc la carte Horaires — reste atteignable par le scroll de la page,
+       sans jamais être coupé. Gap resserré (12 → 10) pour la compacité. */
+    display: flex; flex-direction: column; gap: 10px;
+    width: 340px; flex: 0 0 340px; order: 2; align-self: flex-start;
     /* Le `top` se calcule : bandeau du compte à rebours (mesuré à l'exécution,
        0 quand il n'y en a pas) + barre de navigation + 12 px d'air. */
     position: sticky; top: calc(var(--af-bandeau, 0px) + var(--af-nav, 49px) + 12px);
-    /* Une colonne plus haute que l'écran ne doit pas se retrouver coupée : on
-       la laisse défiler d'elle-même au lieu de masquer sa fin. */
-    max-height: calc(100vh - var(--af-bandeau, 0px) - var(--af-nav, 49px) - 24px);
-    overflow-y: auto;
-    /* V543 — LA BARRE DE DÉFILEMENT REDEVIENT VISIBLE. Elle était masquée
-       (V541) à une époque où la colonne tenait toujours dans l'écran. Depuis
-       que les cartes gardent leur hauteur intrinsèque, l'ensemble peut
-       dépasser — mesuré : 880 px de contenu pour 775 disponibles à
-       1440×900. Sans barre, la carte Spordateur devenait simplement
-       inatteignable : rien n'était « coupé », mais rien ne disait qu'il y
-       avait la suite. Une barre fine suffit à le dire. */
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
   }
-  .af-colonne-cote::-webkit-scrollbar { width: 6px; }
-  .af-colonne-cote::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 999px; }
-  .af-colonne-cote::-webkit-scrollbar-track { background: transparent; }
   .af-colonne-cote > * { order: initial; }
 }
 
