@@ -7588,6 +7588,26 @@ function App() {
     }, 150);
   };
 
+  /* V645.4k — RÉSERVER UNE OCCURRENCE : un seul chemin.
+     Extrait du `onReserve` de SessionsModal pour être partagé avec le panneau
+     « Découvrir Afroboost » du viewer de publications. Les deux entrées mènent
+     donc exactement au même parcours, sans nouveau tunnel.
+     L'agenda dit DEJA quelles offres ouvrent cette seance : on prend la
+     premiere plutot que de refaire la correspondance a l'envers. La recherche
+     par `linked_course_ids` reste en second rideau, pour le cas ou l'agenda
+     serveur n'aurait pas repondu et ou le calendrier tourne sur son repli
+     local. */
+  const v645kReserverOccurrence = (occ) => {
+    const liste = Array.isArray(offers) ? offers : [];
+    const idOffre = occ && occ.offres && occ.offres[0] && occ.offres[0].id;
+    const liee = (idOffre && liste.find((o) => o && o.id === idOffre))
+      || liste.find((o) => Array.isArray(o?.linked_course_ids)
+        && occ?.id && o.linked_course_ids.includes(occ.id));
+    if (liee) { handleSelectOffer(liee); return; }
+    const el = document.getElementById('offers-section');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const sendWhatsAppNotification = (reservation, isCoach) => {
     const phone = isCoach ? paymentLinks.coachWhatsapp : reservation.userWhatsapp;
     if (!phone?.trim()) return;
@@ -9026,21 +9046,7 @@ function App() {
         open={showSessionsModal}
         onClose={() => setShowSessionsModal(false)}
         courses={courses}
-        onReserve={(occ) => {
-          // L'agenda dit DEJA quelles offres ouvrent cette seance : on prend la
-          // premiere plutot que de refaire la correspondance a l'envers. La
-          // recherche par `linked_course_ids` reste en second rideau, pour le
-          // cas ou l'agenda serveur n'aurait pas repondu et ou le calendrier
-          // tourne sur son repli local.
-          const liste = Array.isArray(offers) ? offers : [];
-          const idOffre = occ && occ.offres && occ.offres[0] && occ.offres[0].id;
-          const liee = (idOffre && liste.find((o) => o && o.id === idOffre))
-            || liste.find((o) => Array.isArray(o?.linked_course_ids)
-              && occ?.id && o.linked_course_ids.includes(occ.id));
-          if (liee) { handleSelectOffer(liee); return; }
-          const el = document.getElementById('offers-section');
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }}
+        onReserve={v645kReserverOccurrence}
       />
       {showConfirmPayment && <ConfirmPaymentOverlay t={t} onConfirm={confirmPayment} onCancel={() => { setShowConfirmPayment(false); setPendingReservation(null); }} />}
       {/* v158.7: SuccessOverlay et PaymentSuccessPage désactivés.
@@ -9730,6 +9736,18 @@ function App() {
                      aucune liste, aucune carte de séance n'est créée. */
                   onReserve: uipubReserver,
                   onSessions: () => setShowSessionsModal(true),
+                  /* V645.4k — « Découvrir Afroboost » dans le panneau gauche du
+                     viewer (PC). Aucun nouveau tunnel : la séance passe par le
+                     MÊME `v645kReserverOccurrence` que la fenêtre des séances,
+                     et l'offre par le MÊME `handleSelectOffer` que la vitrine. */
+                  decouvrir: {
+                    API,
+                    offres: filteredServices,
+                    onSeance: v645kReserverOccurrence,
+                    onOffre: handleSelectOffer,
+                    onToutesLesOffres: () => setSignalToutesOffres((n) => n + 1),
+                    onProgramme: () => setShowSessionsModal(true),
+                  },
                 }}
                 publications={
                   searchQuery.trim()
@@ -10200,6 +10218,7 @@ function App() {
                 trimStart={concept.home_shop_banner_trim_start}
                 trimEnd={concept.home_shop_banner_trim_end}
                 thumbnail={concept.home_shop_banner_thumbnail}
+                crop={concept.home_shop_banner_crop}
               />
               <div className="af-boutique-banniere-overlay">
                 <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>

@@ -77,6 +77,8 @@ test('enregistrer une image → PUT /concept avec home_shop_banner_* UNIQUEMENT 
     home_shop_banner_trim_start: 0,
     home_shop_banner_trim_end: 0,
     home_shop_banner_thumbnail: '',
+    // V645.4k — cadrage toujours envoyé ; neutre tant qu'on n'a pas recadré.
+    home_shop_banner_crop: { x: 0.5, y: 0.5, zoom: 1 },
   });
   // INDÉPENDANCE : aucun champ d'offre ne part dans la requête bannière.
   const interdits = ['videoUrl', 'images', 'thumbnail', 'price', 'name', 'variants', 'isProduct'];
@@ -164,5 +166,6 @@ test('retirer la bannière → PUT /concept avec les deux champs vidés', async 
   expect(payload).toEqual({
     home_shop_banner_url: '', home_shop_banner_type: '',
     home_shop_banner_trim_start: 0, home_shop_banner_trim_end: 0, home_shop_banner_thumbnail: '',
+    home_shop_banner_crop: { x: 0.5, y: 0.5, zoom: 1 },
   });
 });

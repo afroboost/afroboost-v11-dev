@@ -2040,6 +2040,14 @@ body {
   .af-viewer-cadre .af-viewer-media { max-height: 90vh !important; }
   /* Le panneau auteur reprend 20 px au profit du média, sans rien tronquer. */
   [data-testid="lightbox-auteur"] { width: 300px !important; flex-basis: 300px !important; }
+  /* V645.4k — LE CADRE ÉPOUSE LA LARGEUR RÉELLE DU MÉDIA.
+     Le cadre gardait ses 760 px même pour une vidéo verticale rendue à ~400 px :
+     les actions et le bouton son, ancrés sur SON bord droit, flottaient loin
+     de l'image, dans le noir. En le laissant se réduire à son contenu, tout
+     revient se coller au média — sans toucher aux `object-fit`, donc sans
+     rien rogner. Les flèches de navigation restent, elles, sur le bord de
+     l'écran : on ne doit pas les confondre avec les actions. */
+  .af-viewer-cadre { width: -moz-fit-content !important; width: fit-content !important; }
 }
 
 /* ═══ V543 — LA COLONNE NE COMPRIME PLUS SES CARTES ══════════════════════

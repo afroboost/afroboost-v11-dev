@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
+import DecouvrirAfroboost from './accueil/DecouvrirAfroboost'; // V645.4k
 import SvgIcon from './SvgIcon'; // UI-PUB2 : icones des actions sur les cartes
 import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; // V342 : Boost payant / V343 : pouvoirs super-admin
 import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/BoostTribeLive'; // LIVE RAPIDE : porte unique
@@ -411,7 +412,9 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
       style={{
         position: 'absolute', right: ancre, top: '50%',
         transform: 'translateY(-50%)', zIndex: 5,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
+        // V645.4k : colonne resserrée — les actions se lisent comme un seul
+        // groupe collé au média, au lieu d'être éparpillées.
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0
       }}
     >
       <UiPub2Action
@@ -664,6 +667,15 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
       setTimeout(() => { if (actions.onReserve) actions.onReserve(); }, 60);
     },
   } : null;
+  /* V645.4k — « Découvrir Afroboost » ouvre des panneaux (fiche d'offre,
+     calendrier) dont le z-index est TRÈS inférieur à celui du viewer : ils
+     s'afficheraient derrière, donc invisibles. On ferme d'abord, on délègue
+     ensuite — même motif que `onReserve` ci-dessus. */
+  const depuisViewer = (fn) => (arg) => {
+    onClose();
+    setTimeout(() => { if (typeof fn === 'function') fn(arg); }, 60);
+  };
+  const dec = (actions && actions.decouvrir) || null;
   return (
     // V268d : z-index tres eleve pour passer AU-DESSUS de tout (menu inclus).
     // Combine au portal vers document.body (voir le rendu du carrousel), la
@@ -743,9 +755,25 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
           onClick={(e) => e.stopPropagation()}
           className="hidden lg:block"
           data-testid="lightbox-auteur"
-          style={{ width: 320, flex: '0 0 320px', alignSelf: 'flex-end', paddingBottom: '6vh', marginRight: 22 }}
+          /* V645.4k : colonne resserrée et rapprochée de la vidéo — l'ensemble
+             doit se lire comme un seul bloc. On ne pose PAS `display` en
+             inline : il écraserait `hidden lg:block` et ferait réapparaître la
+             colonne sur téléphone. */
+          style={{ width: 320, flex: '0 0 320px', alignSelf: 'flex-end', paddingBottom: '3vh', marginRight: 12, maxHeight: '90vh', overflowY: 'auto' }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 10 }}>
+          {/* V645.4k — le panneau servait surtout de vide : on y met d'abord de
+              quoi passer à l'action, l'auteur restant collé en bas. */}
+          {dec ? (
+            <DecouvrirAfroboost
+              API={dec.API}
+              offres={dec.offres}
+              onSeance={depuisViewer(dec.onSeance)}
+              onOffre={depuisViewer(dec.onOffre)}
+              onToutesLesOffres={depuisViewer(dec.onToutesLesOffres)}
+              onProgramme={depuisViewer(dec.onProgramme)}
+            />
+          ) : null}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7 }}>
             <img
               src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=8B5CF6`}
               alt=""
@@ -764,9 +792,9 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
               {pub.author_id && pub.coach_id && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase() ? 'COACH' : 'MEMBRE'}
             </span>
           </div>
-          <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', margin: '0 0 10px' }}>{v540Depuis(pub.created_at)}</p>
+          <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', margin: '0 0 6px' }}>{v540Depuis(pub.created_at)}</p>
           {pub.caption ? (
-            <p style={{ fontSize: 15, lineHeight: 1.55, color: 'rgba(255,255,255,0.8)', margin: 0, maxWidth: '40ch' }}>{pub.caption}</p>
+            <p style={{ fontSize: 14.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.8)', margin: 0, maxWidth: '40ch' }}>{pub.caption}</p>
           ) : null}
         </div>
       )}
