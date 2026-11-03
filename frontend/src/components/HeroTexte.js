@@ -280,11 +280,22 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
   const rendreTitre = (txt) => {
     const parts = String(txt || '').split('.').map((p) => p.trim()).filter(Boolean);
     if (parts.length <= 1) return txt;
-    return parts.map((p, i) => (
-      <span key={i} style={{ display: 'block', color: i === parts.length - 1 ? 'var(--primary-color, #D91CD2)' : undefined }}>
-        {p}.
-      </span>
-    ));
+    return parts.map((p, i) => {
+      const estDernier = i === parts.length - 1;
+      return (
+        <span key={i} style={{
+          display: 'block',
+          ...(estDernier ? {
+            background: 'linear-gradient(110deg, #D91CD2 0%, #A527D2 50%, #7021B8 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          } : {}),
+        }}>
+          {p}.
+        </span>
+      );
+    });
   };
 
   // ═══════════════════ MODE FLUX : le Hero historique ═══════════════════
