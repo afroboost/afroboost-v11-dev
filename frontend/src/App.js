@@ -2337,68 +2337,56 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
           </div>
         </div>
   );
+  // V645.4e — Galerie sport premium : grille adaptative selon nb d'images RÉELLES.
+  // 1 image → pleine largeur. 2 images → côte à côte. 3-4 → grille 2×2.
+  // Fond clair #F3F3F3, pas de bandes noires. Clic = zoom existant.
+  const nbImages = images.length;
+  const galerieGridClass = nbImages >= 3 ? 'af-fiche-grid-4' : nbImages === 2 ? 'af-fiche-grid-2' : 'af-fiche-grid-1';
+  const imagesToShow = images.slice(0, 4);
+
   const ficheCorps = (
-            <div className="flex flex-col md:flex-row overflow-y-auto">
-              {/* GALERIE */}
-              <div className="af-fiche-galerie md:w-[60%] md:flex-shrink-0 p-3 sm:p-4" style={{ background: '#0c0c0e' }}>
-                <div className="af-fiche-scene relative w-full rounded-xl overflow-hidden" style={{ aspectRatio: '4 / 5', background: '#0c0c0e' }}>
-                  {currentMedia && currentMedia.type === 'video' ? (
-                    <video src={currentImage} muted loop autoPlay playsInline className="w-full h-full" style={{ objectFit: 'contain' }} />
-                  ) : (
-                    <img
-                      src={currentImage}
-                      alt={offer.name}
-                      className="w-full h-full cursor-zoom-in"
-                      style={{ objectFit: 'contain' }}
-                      onClick={() => setShowZoom(true)}
-                    />
-                  )}
-                  {hasMultipleImages && (
-                    <>
-                      <button onClick={prevImage} aria-label="Précédent" className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 text-lg">‹</button>
-                      <button onClick={nextImage} aria-label="Suivant" className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 text-lg">›</button>
-                    </>
-                  )}
+            <div className="af-fiche-premium flex flex-col md:flex-row">
+              {/* GALERIE — grille 2×2 style sport, fond clair */}
+              <div className="af-fiche-galerie-premium md:flex-shrink-0">
+                <div className={galerieGridClass} data-testid={`product-gallery-${offer.id}`}>
+                  {imagesToShow.map((im, i) => {
+                    const estVideo = (parseMediaUrl(im) || {}).type === 'video';
+                    return (
+                      <div key={`${im}-${i}`} className="af-fiche-cell" onClick={() => { setCurrentImageIndex(i); setShowZoom(true); }}>
+                        {estVideo ? (
+                          <video src={im} muted loop autoPlay playsInline className="af-fiche-cell-media" />
+                        ) : (
+                          <img src={im} alt={i === 0 ? offer.name : ''} className="af-fiche-cell-media" />
+                        )}
+                        {i === 0 && (
+                          <button type="button" aria-label="Zoom" className="af-fiche-zoom-btn" onClick={e => { e.stopPropagation(); setCurrentImageIndex(0); setShowZoom(true); }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                {/* Bande de miniatures — autant que de médias RÉELS (jamais de faux). */}
-                {hasMultipleImages && (
-                  <div className="flex gap-2 mt-3 flex-wrap" data-testid={`product-detail-thumbs-${offer.id}`}>
-                    {images.map((im, i) => {
-                      const estVideo = (parseMediaUrl(im) || {}).type === 'video';
-                      return (
-                        <button
-                          key={`${im}-${i}`}
-                          type="button"
-                          onClick={() => setCurrentImageIndex(i)}
-                          aria-label={`Média ${i + 1}`}
-                          className="rounded-lg overflow-hidden"
-                          style={{ width: 54, height: 68, flexShrink: 0, background: '#0c0c0e', padding: 0, cursor: 'pointer', border: i === currentImageIndex ? '2px solid var(--primary-color, #D91CD2)' : '2px solid rgba(255,255,255,0.12)' }}
-                        >
-                          {estVideo ? (
-                            <span className="w-full h-full flex items-center justify-center text-white" style={{ fontSize: 14 }}>▶</span>
-                          ) : (
-                            <img src={im} alt="" className="w-full h-full" style={{ objectFit: 'cover' }} />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
-              {/* INFOS */}
-              <div className="md:w-[40%] p-4 sm:p-5 flex flex-col gap-3" style={{ color: '#fff' }}>
-                <h3 className="font-bold" style={{ fontSize: 20, lineHeight: 1.2 }}>{offer.name}</h3>
-                <div className="text-2xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
-                  CHF {v225FormatAmount(v223UnitPrice(offer))}.-
+              {/* INFOS — hiérarchie sport premium */}
+              <div className="af-fiche-infos-premium flex flex-col">
+                {/* Badge catégorie */}
+                <span className="af-fiche-badge">AFROBOOST COLLECTION</span>
+                {/* Titre grand bold */}
+                <h2 className="af-fiche-titre-premium">{offer.name}</h2>
+                {/* Prix violet grand */}
+                <div className="af-fiche-prix-premium">
+                  CHF {v225FormatAmount(v223UnitPrice(offer))}
                 </div>
+                {/* Description */}
                 {offer.description && (
-                  <p className="text-sm" style={{ color: 'rgba(255,255,255,0.7)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{offer.description}</p>
+                  <p className="af-fiche-desc-premium">{offer.description}</p>
                 )}
-                {/* Variantes RÉELLES de l'offre, mêmes puces/état que la carte. */}
+                {/* Variantes RÉELLES — sélecteurs améliorés */}
                 {v226VariantDims.map(dim => (
-                  <div key={dim.key} data-testid={`detail-variant-${dim.key}-${offer.id}`}>
-                    <div className="text-xs mb-1.5" style={{ color: 'rgba(255,255,255,0.55)' }}>{dim.label}</div>
-                    <div className="flex flex-wrap gap-1.5">
+                  <div key={dim.key} className="af-fiche-variante-bloc" data-testid={`detail-variant-${dim.key}-${offer.id}`}>
+                    <div className="af-fiche-variante-label">{dim.label}</div>
+                    <div className="af-fiche-variante-choix">
                       {dim.list.map(v => {
                         const val = String(v);
                         const sel = v226Variants[dim.key] === val;
@@ -2406,7 +2394,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                           <button
                             key={val}
                             type="button"
-                            className={`variant-chip${sel ? ' selected' : ''}`}
+                            className={`af-fiche-chip${sel ? ' af-fiche-chip--sel' : ''}`}
                             aria-pressed={sel}
                             onClick={() => setV226Variants(prev => ({ ...prev, [dim.key]: val }))}
                             data-testid={`detail-variant-${dim.key}-${offer.id}-${val}`}
@@ -2418,18 +2406,18 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     </div>
                   </div>
                 ))}
-                {/* Quantité — seulement en achat direct (seul cas où elle part au checkout). */}
+                {/* Quantité compacte */}
                 {v225IsDirectCheckout(offer) && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>Quantité</span>
-                    <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => setV225Qty(q => Math.max(1, q - 1))} aria-label="Moins" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.2)', color: '#fff', background: 'none', cursor: 'pointer' }}>−</button>
-                      <span data-testid={`detail-qty-${offer.id}`} style={{ minWidth: 20, textAlign: 'center' }}>{v225Qty}</span>
-                      <button type="button" onClick={() => setV225Qty(q => q + 1)} aria-label="Plus" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ border: '1px solid rgba(255,255,255,0.2)', color: '#fff', background: 'none', cursor: 'pointer' }}>+</button>
+                  <div className="af-fiche-qty-bloc">
+                    <span className="af-fiche-variante-label">Quantité</span>
+                    <div className="af-fiche-qty-ctrl">
+                      <button type="button" onClick={() => setV225Qty(q => Math.max(1, q - 1))} aria-label="Moins" className="af-fiche-qty-btn">−</button>
+                      <span data-testid={`detail-qty-${offer.id}`} className="af-fiche-qty-val">{v225Qty}</span>
+                      <button type="button" onClick={() => setV225Qty(q => q + 1)} aria-label="Plus" className="af-fiche-qty-btn">+</button>
                     </div>
                   </div>
                 )}
-                {/* CTA — EXACTEMENT le parcours d'achat existant (v226BuyDirect / onClick). */}
+                {/* CTA — gradient Afroboost, moins arrondi */}
                 <button
                   type="button"
                   disabled={checkoutBusy || v226BlockedByVariant}
@@ -2438,30 +2426,30 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     if (v225IsDirectCheckout(offer) && !lot3bChoixDateRequis(offer)) { v226BuyDirect(); }
                     else if (typeof onClick === 'function') { onClick(offer); }
                   }}
-                  className="w-full rounded-full font-bold"
-                  style={{ padding: '13px 16px', marginTop: 4, background: (checkoutBusy || v226BlockedByVariant) ? '#5a2a58' : 'var(--primary-color, #D91CD2)', color: '#fff', opacity: (checkoutBusy || v226BlockedByVariant) ? 0.75 : 1, cursor: checkoutBusy ? 'wait' : v226BlockedByVariant ? 'not-allowed' : 'pointer' }}
+                  className="af-fiche-cta"
+                  style={{ opacity: (checkoutBusy || v226BlockedByVariant) ? 0.65 : 1, cursor: checkoutBusy ? 'wait' : v226BlockedByVariant ? 'not-allowed' : 'pointer' }}
                 >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                   {checkoutBusy
                     ? 'Un instant…'
                     : v226BlockedByVariant
                       ? `Choisissez ${v226MissingDims.map(d => d.prompt).join(' et ')}`
                       : (v225IsDirectCheckout(offer) && v225Qty > 1
-                        ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}x)`
+                        ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}×)`
                         : 'Réserver')}
                 </button>
-                {/* Informations produit — dépliable, DONNÉES RÉELLES uniquement. */}
+                {/* Informations produit — dépliable */}
                 <button
                   type="button"
                   onClick={() => setDetailInfos(x => !x)}
-                  className="text-xs flex items-center justify-between w-full"
-                  style={{ color: 'rgba(255,255,255,0.6)', background: 'none', border: 'none', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 10, marginTop: 4, cursor: 'pointer' }}
+                  className="af-fiche-infos-toggle"
                   data-testid={`detail-infos-toggle-${offer.id}`}
                 >
                   <span>Informations produit</span>
                   <span>{detailInfos ? '−' : '+'}</span>
                 </button>
                 {detailInfos && (
-                  <div className="text-xs" style={{ color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
+                  <div className="af-fiche-infos-body">
                     {offer.isProduct && offer.shippingCost > 0 && <p>Frais de port : CHF {offer.shippingCost}</p>}
                     {offer.tva > 0 && <p>TVA {offer.tva}%</p>}
                     <p>Paiement sécurisé (Stripe / TWINT).</p>
