@@ -21,11 +21,22 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
   useEffect(() => {
     const v = videoRef.current;
     if (!v || type !== 'video' || !decoupe) return undefined;
+
     const caler = () => {
-      try { if (v.currentTime < ts || v.currentTime >= te) v.currentTime = ts; } catch (e) { /* ignore */ }
+      try {
+        const dur = (v.duration && isFinite(v.duration)) ? v.duration : Infinity;
+        // Ne pas recaler si ts hors plage (évite clampage en boucle).
+        if (ts < dur && (v.currentTime < ts || v.currentTime >= te)) v.currentTime = ts;
+      } catch (e) { /* ignore */ }
     };
+
+    // timeupdate — cas normal : trim_end ≤ durée réelle.
     const surTemps = () => {
-      if (v.currentTime >= te || v.currentTime < ts) {
+      const dur = (v.duration && isFinite(v.duration)) ? v.duration : Infinity;
+      // Si ts hors plage : segment invalide, on laisse surFin gérer au prochain ended.
+      if (ts >= dur) return;
+      const teFf = Math.min(te, dur);
+      if (v.currentTime >= teFf || v.currentTime < ts) {
         try {
           v.currentTime = ts;
           const p = v.play();
@@ -33,16 +44,31 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
         } catch (e) { /* ignore */ }
       }
     };
+
+    // ended — cas où trim_end > durée réelle : la vidéo atteint la fin naturelle
+    // avant que timeupdate(>=te) ne se déclenche. À ce moment currentTime ≃ duration,
+    // donc currentTime < te est faux et currentTime >= te est faux également.
+    // surTemps ne ferait rien → on utilise surFin dédié qui recale toujours.
+    // Fallback sûr si ts hors plage (ts >= duration) : on part de 0 pour éviter
+    // une boucle infinie.
+    const surFin = () => {
+      try {
+        const dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+        const debut = (dur > 0 && ts < dur) ? ts : 0;
+        v.currentTime = debut;
+        const p = v.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (e) { /* ignore */ }
+    };
+
     v.addEventListener('loadedmetadata', caler);
     v.addEventListener('timeupdate', surTemps);
-    // FIX 3 — si trim_end > durée réelle, ended se déclenche avant timeupdate(>=te).
-    // Même recalage : on revient à ts et on relance.
-    v.addEventListener('ended', surTemps);
+    v.addEventListener('ended', surFin);
     if (v.readyState >= 1) caler();
     return () => {
       v.removeEventListener('loadedmetadata', caler);
       v.removeEventListener('timeupdate', surTemps);
-      v.removeEventListener('ended', surTemps);
+      v.removeEventListener('ended', surFin);
     };
   }, [type, decoupe, ts, te, url]);
 
