@@ -2340,7 +2340,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   const ficheCorps = (
             <div className="flex flex-col md:flex-row overflow-y-auto">
               {/* GALERIE */}
-              <div className="md:w-[60%] md:flex-shrink-0 p-3 sm:p-4" style={{ background: '#0c0c0e' }}>
+              <div className="af-fiche-galerie md:w-[60%] md:flex-shrink-0 p-3 sm:p-4" style={{ background: '#0c0c0e' }}>
                 <div className="af-fiche-scene relative w-full rounded-xl overflow-hidden" style={{ aspectRatio: '4 / 5', background: '#0c0c0e' }}>
                   {currentMedia && currentMedia.type === 'video' ? (
                     <video src={currentImage} muted loop autoPlay playsInline className="w-full h-full" style={{ objectFit: 'contain' }} />

@@ -69,7 +69,7 @@ export const CarteLive = ({ enDirect, onOuvrir, occupe, titreHors, titreEnCours 
     data-testid="accueil-carte-live"
     data-live-en-cours={enDirect ? 'true' : 'false'}
   >
-    <div style={{ padding: 16 }}>
+    <div style={{ padding: 13 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
         {enDirect ? (
           <span className="af-live-barres" aria-hidden="true" style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 22, flex: '0 0 auto' }}>
@@ -128,11 +128,15 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
   return (
     <div style={CADRE} data-testid="accueil-offre-du-moment">
       {media ? (
-        <div style={{ aspectRatio: '16 / 9', background: '#0c0c0e' }}>
+        /* V645.4c — image en BANDEAU (hauteur fixe 130px) au lieu de 16/9
+           (~191px) : carte « offre du moment » plus compacte, pour réduire la
+           hauteur de la colonne droite et le vide sous les publications. Le
+           média garde `cover` (aucun étirement). */
+        <div style={{ height: 130, background: '#0c0c0e' }}>
           <img src={media} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
       ) : null}
-      <div style={{ padding: 16 }}>
+      <div style={{ padding: '13px 14px' }}>
         {badge ? (
           <span style={{
             display: 'inline-block', padding: '4px 9px', borderRadius: 999, marginBottom: 8,
@@ -145,17 +149,18 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
           }} className="af-badge-doux" data-testid="accueil-offre-badge">{badge}</span>
         ) : null}
         <h3 style={TITRE}>{(offre.name || '').trim()}</h3>
-        <p style={{ display: 'flex', alignItems: 'baseline', gap: 6, margin: '8px 0 0' }}>
-          <b style={{ fontSize: 26, fontWeight: 800, color: 'var(--primary-color, #D91CD2)', letterSpacing: '-0.02em' }}>{prix}</b>
+        <p style={{ display: 'flex', alignItems: 'baseline', gap: 6, margin: '5px 0 0' }}>
+          <b style={{ fontSize: 24, fontWeight: 800, color: 'var(--primary-color, #D91CD2)', letterSpacing: '-0.02em' }}>{prix}</b>
           {unite ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>{unite}</span> : null}
         </p>
-        {detail ? <p style={SOUS}>{detail}</p> : null}
+        {/* V645.4c — détail borné à 1 ligne (compacité colonne droite). */}
+        {detail ? <p style={{ ...SOUS, display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{detail}</p> : null}
         {Countdown ? <Countdown offer={offre} /> : null}
         <button
           type="button"
           onClick={() => onChoisir(offre)}
           data-testid="accueil-offre-cta"
-          style={BOUTON_PLEIN}
+          style={{ ...BOUTON_PLEIN, minHeight: 40, marginTop: 10 }}
         >
           Voir l’offre
         </button>
@@ -164,9 +169,9 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
           onClick={onToutesLesOffres}
           data-testid="accueil-toutes-offres"
           style={{
-            display: 'block', width: '100%', marginTop: 10, minHeight: 44,
+            display: 'block', width: '100%', marginTop: 7, minHeight: 36,
             background: 'none', border: 'none', cursor: 'pointer',
-            color: 'rgba(255,255,255,0.8)', fontSize: 13.5, fontWeight: 600,
+            color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: 600,
             textDecoration: 'underline', textUnderlineOffset: 3,
           }}
         >
@@ -187,7 +192,7 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
  */
 export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
   <div style={{ ...CADRE, background: 'rgba(255,255,255,0.02)' }} data-testid="accueil-carte-spordateur">
-    <div className="af-carte-spordateur" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div className="af-carte-spordateur" style={{ padding: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
       <span
         aria-hidden="true"
         style={{
@@ -277,7 +282,7 @@ export const CarteHoraires = ({ courses, lieu, onClick }) => {
   var aHoraires = !!dynamique.texte;
   return (
     <div style={CADRE} data-testid="accueil-carte-horaires" className="af-carte-horaires">
-      <div style={{ padding: 16 }}>
+      <div style={{ padding: 13 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, marginBottom: 13 }}>
           <span style={{ flex: '0 0 auto', marginTop: 2, color: 'rgba(255,255,255,0.5)' }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

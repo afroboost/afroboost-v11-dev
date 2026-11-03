@@ -1333,7 +1333,12 @@ body {
      conteneur perd sa hauteur bornée et son fond sombre : chaque carte porte le
      sien. Mobile (< 1024 px) garde le lecteur reel vertical intact. */
   .af-reels {
-    --reel-h: min(46vh, 360px);
+    /* V645.4c — reels plus hauts (360 → 480) pour rapprocher la hauteur des
+       deux zones et réduire le vide sous les publications, SANS étirer ni
+       recadrer excessivement : le média garde `cover`/`contain` (voir reelFit) ;
+       le sujet, centré, n'est que légèrement rogné sur les côtés. Rééquilibrage
+       complété par la compaction de la colonne droite. */
+    --reel-h: min(66vh, 520px);
     display: flex;
     flex-wrap: nowrap;
     gap: 12px;
@@ -1356,14 +1361,29 @@ body {
     border-radius: 14px;
     scroll-snap-align: start;
   }
-  /* V645.4 — Sur les cartes étroites (4 par rangée), la colonne d'actions est
-     resserrée et réduite pour rester lisible sans masquer le média. Toutes les
-     actions restent présentes et cliquables ; seul le gabarit change, et
-     uniquement dans cette grille desktop (mobile et lightbox intacts). */
+  /* V645.4c — ACTIONS ÉPURÉES SUR LES CARTES ÉTROITES (4 par rangée).
+     Sur ces cartes, les LIBELLÉS texte (« Partager », « Séances », « Offres »)
+     et la légende « de toute la page » encombraient le média. On n'affiche plus
+     que des ICÔNES cohérentes (plus le compteur de j'aime / avis), ce qui
+     dégage la vidéo. AUCUNE action n'est retirée ni cachée au survol :
+     chaque icône reste un bouton cliquable (tap/clavier), avec son `aria-label`
+     et son `title` (infobulle) — l'intitulé reste donc accessible. Mobile et
+     lightbox (hors `.af-reels`) gardent les libellés. */
   .af-reels .af-reel-carte [data-testid="uipub2-actions"] {
-    transform: translateY(-50%) scale(0.82) !important;
-    transform-origin: right center;
-    right: 2px !important;
+    right: 4px !important;
+    gap: 4px !important;
+  }
+  /* Masquer la légende d'ensemble et les libellés des 3 actions secondaires. */
+  .af-reels .af-reel-carte .af-uipub-legende,
+  .af-reels .af-reel-carte [data-testid="publication-partager"] > span,
+  .af-reels .af-reel-carte [data-testid="publication-sessions"] > span,
+  .af-reels .af-reel-carte [data-testid="publication-offres"] > span {
+    display: none !important;
+  }
+  /* Pastille discrète sous chaque icône pour une cible nette sur le média. */
+  .af-reels .af-reel-carte [data-testid="uipub2-actions"] > button {
+    width: 40px !important; height: 40px !important;
+    border-radius: 999px; background: rgba(0,0,0,0.32) !important;
   }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
@@ -1739,11 +1759,23 @@ body {
 .af-fiche-produit .af-fiche-galerie-media,
 .af-fiche-produit [data-testid^="product-detail-thumbs-"] { }
 @media (min-width: 768px) {
-  /* La galerie ne doit pas s'étirer au-delà d'une hauteur confortable : on
-     plafonne la SCÈNE (l'image reste en `contain`, aucun sujet rogné) pour
-     que la fiche ne devienne pas démesurément haute et que la colonne infos
-     reste alignée. */
-  .af-fiche-produit .af-fiche-scene { aspect-ratio: auto !important; height: clamp(360px, 42vw, 520px); }
+  /* V645.4c — GALERIE DESKTOP : miniatures VERTICALES à GAUCHE de la grande
+     image (quand la largeur le permet), image mise en valeur avec moins de
+     marges sombres. Sur mobile (< 768px), les miniatures restent EN BAS
+     (flux naturel du corps de fiche). L'image garde `contain` (aucun sujet
+     rogné, ratio respecté, aucun zoom artificiel imposé). */
+  .af-fiche-produit .af-fiche-galerie { display: flex; flex-direction: row-reverse; gap: 12px; align-items: stretch; }
+  .af-fiche-produit .af-fiche-galerie .af-fiche-scene {
+    flex: 1 1 auto; min-width: 0;
+    aspect-ratio: auto !important; height: clamp(380px, 44vw, 560px);
+  }
+  .af-fiche-produit .af-fiche-galerie [data-testid^="product-detail-thumbs-"] {
+    flex: 0 0 auto; flex-direction: column; flex-wrap: nowrap;
+    margin-top: 0 !important; width: 64px; overflow-y: auto; max-height: clamp(380px, 44vw, 560px);
+  }
+  .af-fiche-produit .af-fiche-galerie [data-testid^="product-detail-thumbs-"] > button {
+    width: 56px !important; height: 70px !important;
+  }
 }
 
 /* ─── V645 — TITRE DE SECTION (accueil) : Inter, MAJUSCULES, cohérent avec le Hero
