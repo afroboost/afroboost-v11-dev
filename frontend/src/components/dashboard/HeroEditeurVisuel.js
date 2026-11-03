@@ -345,7 +345,52 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
   const gTitre = c.heroGradientTitre || GRADIENT_DEFAUT;
   const lineGapActuel = c.heroTitreLineGap != null ? c.heroTitreLineGap : 0;
 
+  // V645.4k — typographie du titre. `null` = valeur par défaut du thème, de
+  // sorte qu'un concept existant rende exactement comme avant.
+  const letterSpacingActuel = c.heroTitreLetterSpacing != null ? c.heroTitreLetterSpacing : null;
+  const lineHeightActuel = c.heroTitreLineHeight != null ? c.heroTitreLineHeight : null;
+
+  /* V645.4k — ANNULER / RÉTABLIR.
+     L'historique ne garde que les réglages typographiques du Hero : il ne peut
+     donc pas réécrire par mégarde une autre partie du concept. On empile AVANT
+     la mutation, pendant le rendu, plutôt que dans l'updateur de setConcept —
+     un effet de bord dans un updateur serait rejoué en mode strict. */
+  const CLES_HERO = ['heroGradientTitre', 'heroTitreLineGap', 'heroTitreLetterSpacing', 'heroTitreLineHeight'];
+  const instantane = (o) => CLES_HERO.reduce((acc, k) => { acc[k] = o ? o[k] : undefined; return acc; }, {});
+  const histoRef = useRef({ passe: [], futur: [] });
+  const [histoLen, setHistoLen] = useState({ p: 0, f: 0 });
+  const majHistoLen = () => {
+    const h = histoRef.current;
+    setHistoLen((prev) => (prev.p === h.passe.length && prev.f === h.futur.length
+      ? prev
+      : { p: h.passe.length, f: h.futur.length }));
+  };
+  const pousserHistorique = () => {
+    const h = histoRef.current;
+    h.passe.push(instantane(c));
+    if (h.passe.length > 50) h.passe.shift();
+    h.futur = [];
+    majHistoLen();
+  };
+  const annuler = () => {
+    const h = histoRef.current;
+    if (!h.passe.length) return;
+    const avant = h.passe.pop();
+    h.futur.push(instantane(c));
+    majHistoLen();
+    setConcept((prev) => ({ ...(prev || {}), ...avant }));
+  };
+  const retablir = () => {
+    const h = histoRef.current;
+    if (!h.futur.length) return;
+    const apres = h.futur.pop();
+    h.passe.push(instantane(c));
+    majHistoLen();
+    setConcept((prev) => ({ ...(prev || {}), ...apres }));
+  };
+
   const majGradient = (update) => {
+    pousserHistorique();
     setConcept((prev) => {
       const p2 = prev || {};
       const next = { ...GRADIENT_DEFAUT, ...(p2.heroGradientTitre || {}), ...update };
@@ -353,6 +398,7 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
     });
   };
   const majLineGap = (delta) => {
+    pousserHistorique();
     setConcept((prev) => {
       const p2 = prev || {};
       const actuel = p2.heroTitreLineGap != null ? p2.heroTitreLineGap : 0;
@@ -361,10 +407,37 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
       return { ...p2, heroTitreLineGap: prochain };
     });
   };
-  const reinitGradient = () => {
+  const majLetterSpacing = (delta) => {
+    pousserHistorique();
     setConcept((prev) => {
       const p2 = prev || {};
-      return { ...p2, heroGradientTitre: GRADIENT_DEFAUT, heroTitreLineGap: 0 };
+      const actuel = p2.heroTitreLetterSpacing != null ? p2.heroTitreLetterSpacing : 0;
+      const prochain = Math.round(Math.max(-8, Math.min(16, actuel + delta)));
+      if (prochain === actuel) return prev;
+      return { ...p2, heroTitreLetterSpacing: prochain };
+    });
+  };
+  const majLineHeight = (delta) => {
+    pousserHistorique();
+    setConcept((prev) => {
+      const p2 = prev || {};
+      const actuel = p2.heroTitreLineHeight != null ? p2.heroTitreLineHeight : 1.25;
+      const prochain = Math.round(Math.max(0.8, Math.min(2, actuel + delta)) * 100) / 100;
+      if (prochain === actuel) return prev;
+      return { ...p2, heroTitreLineHeight: prochain };
+    });
+  };
+  const reinitGradient = () => {
+    pousserHistorique();
+    setConcept((prev) => {
+      const p2 = prev || {};
+      return {
+        ...p2,
+        heroGradientTitre: GRADIENT_DEFAUT,
+        heroTitreLineGap: 0,
+        heroTitreLetterSpacing: null,
+        heroTitreLineHeight: null,
+      };
     });
   };
 
@@ -704,6 +777,46 @@ export default function HeroEditeurVisuel({ concept, setConcept, conceptSaveStat
             <span style={{ minWidth: 40, textAlign: 'center', color: 'white', fontSize: 12, fontWeight: 600 }}>{lineGapActuel >= 0 ? `+${lineGapActuel}` : lineGapActuel}px</span>
             <button type="button" className="hero-editeur-btn" onClick={() => majLineGap(2)} style={styleBouton(false)} aria-label="Écarter les lignes" title="Écarter">
               <SvgIcon name="plus" size={14} />
+            </button>
+          </div>
+
+          {/* V645.4k — Espacement des lettres */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' }}>Espace des lettres</span>
+            <button type="button" className="hero-editeur-btn" data-testid="hero-letterspacing-moins" onClick={() => majLetterSpacing(-1)} style={styleBouton(false)} aria-label="Resserrer les lettres" title="Resserrer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <span data-testid="hero-letterspacing-valeur" style={{ minWidth: 40, textAlign: 'center', color: 'white', fontSize: 12, fontWeight: 600 }}>
+              {letterSpacingActuel == null ? 'Auto' : `${letterSpacingActuel > 0 ? '+' : ''}${letterSpacingActuel}px`}
+            </span>
+            <button type="button" className="hero-editeur-btn" data-testid="hero-letterspacing-plus" onClick={() => majLetterSpacing(1)} style={styleBouton(false)} aria-label="Écarter les lettres" title="Écarter">
+              <SvgIcon name="plus" size={14} />
+            </button>
+          </div>
+
+          {/* V645.4k — Interligne */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' }}>Interligne</span>
+            <button type="button" className="hero-editeur-btn" data-testid="hero-lineheight-moins" onClick={() => majLineHeight(-0.05)} style={styleBouton(false)} aria-label="Réduire l'interligne" title="Réduire">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <span data-testid="hero-lineheight-valeur" style={{ minWidth: 40, textAlign: 'center', color: 'white', fontSize: 12, fontWeight: 600 }}>
+              {lineHeightActuel == null ? 'Auto' : lineHeightActuel.toFixed(2)}
+            </span>
+            <button type="button" className="hero-editeur-btn" data-testid="hero-lineheight-plus" onClick={() => majLineHeight(0.05)} style={styleBouton(false)} aria-label="Augmenter l'interligne" title="Augmenter">
+              <SvgIcon name="plus" size={14} />
+            </button>
+          </div>
+
+          {/* V645.4k — Annuler / Rétablir (réglages typographiques du Hero) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <button type="button" className="hero-editeur-btn" data-testid="hero-annuler" onClick={annuler} disabled={histoLen.p === 0} style={{ ...styleBouton(false), opacity: histoLen.p === 0 ? 0.35 : 1, cursor: histoLen.p === 0 ? 'default' : 'pointer' }} aria-label="Annuler" title="Annuler">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6" /><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" /></svg>
+              <span style={{ marginLeft: 6, fontSize: 11 }}>Annuler</span>
+            </button>
+            <button type="button" className="hero-editeur-btn" data-testid="hero-retablir" onClick={retablir} disabled={histoLen.f === 0} style={{ ...styleBouton(false), opacity: histoLen.f === 0 ? 0.35 : 1, cursor: histoLen.f === 0 ? 'default' : 'pointer' }} aria-label="Rétablir" title="Rétablir">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6" /><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" /></svg>
+              <span style={{ marginLeft: 6, fontSize: 11 }}>Rétablir</span>
             </button>
           </div>
         </div>

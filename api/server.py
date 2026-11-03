@@ -1650,6 +1650,10 @@ class Concept(BaseModel):
     home_shop_banner_trim_start: float = 0.0
     home_shop_banner_trim_end: float = 0.0
     home_shop_banner_thumbnail: str = ""    # poster (chemin /api/files/… ou http[s])
+    # V645.4k : cadrage de la banniere — {x, y, zoom}. x/y = point d'ancrage
+    # (object-position) dans [0,1], zoom dans [1,3]. Absent = cadrage centre
+    # d'origine : une banniere existante rend exactement comme avant.
+    home_shop_banner_crop: Optional[dict] = None
     # Personnalisation des couleurs
     primaryColor: str = "#D91CD2"  # Couleur principale (glow)
     secondaryColor: str = "#8b5cf6"  # Couleur secondaire
@@ -1672,6 +1676,9 @@ class Concept(BaseModel):
     # rétrocompatibles — absents = le composant HeroEditeurVisuel utilise ses défauts.
     heroGradientTitre: Optional[dict] = None
     heroTitreLineGap: Optional[int] = None
+    # V645.4k : typographie du titre Hero. Absents = defauts du theme.
+    heroTitreLetterSpacing: Optional[int] = None
+    heroTitreLineHeight: Optional[float] = None
 
 class ConceptUpdate(BaseModel):
     appName: Optional[str] = None  # Nom de l'application
@@ -1708,6 +1715,8 @@ class ConceptUpdate(BaseModel):
     home_shop_banner_trim_start: Optional[float] = None
     home_shop_banner_trim_end: Optional[float] = None
     home_shop_banner_thumbnail: Optional[str] = None
+    # V645.4k : cadrage de la banniere — {x, y, zoom}.
+    home_shop_banner_crop: Optional[dict] = None
     # Personnalisation des couleurs
     primaryColor: Optional[str] = None
     secondaryColor: Optional[str] = None
@@ -1726,6 +1735,9 @@ class ConceptUpdate(BaseModel):
     # V645.4j : gradient du titre Hero + espacement inter-lignes.
     heroGradientTitre: Optional[dict] = None
     heroTitreLineGap: Optional[int] = None
+    # V645.4k : typographie du titre Hero.
+    heroTitreLetterSpacing: Optional[int] = None
+    heroTitreLineHeight: Optional[float] = None
 
 # V547 : bornes des textes du Hero. On TRONQUE cote serveur au lieu d'un
 # Field(max_length) : un 422 ferait echouer tout l'auto-save du ConceptEditor
@@ -21690,6 +21702,20 @@ def _v645j_normaliser_hero_gradient(updates: dict) -> None:
         except (TypeError, ValueError):
             updates["heroTitreLineGap"] = 0
 
+    # V645.4k : typographie du titre. Bornes identiques a celles de l'editeur.
+    if "heroTitreLetterSpacing" in updates:
+        try:
+            ls = int(float(updates.get("heroTitreLetterSpacing") or 0))
+            updates["heroTitreLetterSpacing"] = min(max(ls, -8), 16)
+        except (TypeError, ValueError):
+            updates["heroTitreLetterSpacing"] = 0
+    if "heroTitreLineHeight" in updates:
+        try:
+            lh = round(float(updates.get("heroTitreLineHeight") or 1.25), 2)
+            updates["heroTitreLineHeight"] = min(max(lh, 0.8), 2.0)
+        except (TypeError, ValueError):
+            updates["heroTitreLineHeight"] = 1.25
+
 
 def _v645c_normaliser_banniere(updates: dict) -> None:
     """V645.3c — normalise/valide EN PLACE les réglages de la bannière vidéo
@@ -21716,6 +21742,22 @@ def _v645c_normaliser_banniere(updates: dict) -> None:
         if updates["home_shop_banner_trim_end"] <= updates["home_shop_banner_trim_start"]:
             updates["home_shop_banner_trim_start"] = 0.0
             updates["home_shop_banner_trim_end"] = 0.0
+    # V645.4k : cadrage {x, y, zoom}. Whitelist stricte des trois cles ; toute
+    # valeur illisible retombe sur le cadrage centre. Un cadrage neutre
+    # (0.5 / 0.5 / 1) est conserve tel quel : c'est ainsi qu'on EFFACE un
+    # cadrage, puisque `None` serait filtre avant d'arriver ici.
+    if "home_shop_banner_crop" in updates:
+        _bc = updates.get("home_shop_banner_crop")
+        if not isinstance(_bc, dict):
+            updates.pop("home_shop_banner_crop", None)
+        else:
+            _propre = {}
+            for _k, _lo, _hi, _dft in (("x", 0.0, 1.0, 0.5), ("y", 0.0, 1.0, 0.5), ("zoom", 1.0, 3.0, 1.0)):
+                try:
+                    _propre[_k] = round(min(max(float(_bc.get(_k, _dft)), _lo), _hi), 4)
+                except (TypeError, ValueError):
+                    _propre[_k] = _dft
+            updates["home_shop_banner_crop"] = _propre
 
 
 @api_router.put("/concept")

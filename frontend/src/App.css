@@ -1348,18 +1348,27 @@ body {
     margin: 0;
     overflow-x: auto;
     overflow-y: visible;
-    scroll-snap-type: x mandatory;
+    /* V645.4k : `mandatory` interdisait de se reposer entre deux points de
+       snap — la dernière carte restait inatteignable. `proximity` laisse le
+       défilement libre et n'aimante que lorsqu'on s'approche d'une carte. */
+    scroll-snap-type: x proximity;
     border-radius: 0;
     background: transparent;
     padding-bottom: 4px;
   }
   .af-reels > .af-reel-carte {
     flex: 0 0 auto;
-    width: calc((100% - 36px) / 4);
+    /* V645.4k : 4 cartes à 1/4 occupaient EXACTEMENT la largeur du scroller
+       (scrollWidth === clientWidth) : aucun défilement n'était possible. À
+       1/3.35 on voit 3 cartes pleines plus l'amorce de la suivante, ce qui
+       rend le débordement — donc le défilement — visible et réel. */
+    width: calc((100% - 36px) / 3.35);
     min-width: 0;
     height: var(--reel-h);
     border-radius: 14px;
     scroll-snap-align: start;
+    /* `always` forçait un arrêt carte par carte et bloquait le glissement. */
+    scroll-snap-stop: normal;
   }
   /* V645.4j — CARTES MINIATURES : aucune action. Uniquement vidéo + auteur + son.
      Toutes les actions (J'aime, Avis, Partager, Séances, Offres) sont dans le
@@ -2031,6 +2040,14 @@ body {
   .af-viewer-cadre .af-viewer-media { max-height: 90vh !important; }
   /* Le panneau auteur reprend 20 px au profit du média, sans rien tronquer. */
   [data-testid="lightbox-auteur"] { width: 300px !important; flex-basis: 300px !important; }
+  /* V645.4k — LE CADRE ÉPOUSE LA LARGEUR RÉELLE DU MÉDIA.
+     Le cadre gardait ses 760 px même pour une vidéo verticale rendue à ~400 px :
+     les actions et le bouton son, ancrés sur SON bord droit, flottaient loin
+     de l'image, dans le noir. En le laissant se réduire à son contenu, tout
+     revient se coller au média — sans toucher aux `object-fit`, donc sans
+     rien rogner. Les flèches de navigation restent, elles, sur le bord de
+     l'écran : on ne doit pas les confondre avec les actions. */
+  .af-viewer-cadre { width: -moz-fit-content !important; width: fit-content !important; }
 }
 
 /* ═══ V543 — LA COLONNE NE COMPRIME PLUS SES CARTES ══════════════════════

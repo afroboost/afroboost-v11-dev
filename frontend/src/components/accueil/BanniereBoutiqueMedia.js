@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react';
+import { styleCadrage } from '../../utils/banniereCadrage';
 
 /**
  * V645.3c — MÉDIA DE LA BANNIÈRE BOUTIQUE (accueil).
@@ -12,8 +13,11 @@ import React, { useRef, useEffect } from 'react';
  *
  * Indépendant des médias de l'offre T-shirt (lit uniquement les champs concept).
  */
-export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, thumbnail }) {
+export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, thumbnail, crop }) {
   const videoRef = useRef(null);
+  // V645.4k — cadrage choisi par le coach. Absent = rendu d'origine
+  // (`object-fit: cover` du CSS), donc une bannière existante ne bouge pas.
+  const styleCrop = crop ? styleCadrage(crop) : undefined;
   const ts = Number(trimStart || 0);
   const te = Number(trimEnd || 0);
   const decoupe = te > ts; // extrait valide ?
@@ -92,8 +96,9 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
         muted
         playsInline
         preload="metadata"
+        style={styleCrop}
       />
     );
   }
-  return <img className="af-boutique-banniere-media" src={url} alt="Boutique Afroboost" loading="lazy" />;
+  return <img className="af-boutique-banniere-media" src={url} alt="Boutique Afroboost" loading="lazy" style={styleCrop} />;
 }

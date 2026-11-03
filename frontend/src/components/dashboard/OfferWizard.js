@@ -198,6 +198,7 @@ export default function OfferWizard({
   initialOffer,
   courses,
   isEditing,
+  offerId,
   onSave,
   onCancel,
   // V224: props optionnelles. Absentes, le filtre par coach est neutre et
@@ -3015,7 +3016,9 @@ export default function OfferWizard({
           produit ne l'affichera). Média totalement indépendant des photos/vidéos
           du produit : elle n'écrit que concept.home_shop_banner_*. Réutilise
           l'éditeur VideoTrimEditor, aucun nouvel éditeur. */}
-      {form.id === TSHIRT_OFFER_ID && <BanniereBoutiqueSection API={API} />}
+      {/* V645.4k : gate sur `offerId` (prop) et non `form.id`, absent du
+          formulaire — la rubrique etait inatteignable pour toute offre. */}
+      {offerId === TSHIRT_OFFER_ID && <BanniereBoutiqueSection API={API} />}
     </div>
   );
 

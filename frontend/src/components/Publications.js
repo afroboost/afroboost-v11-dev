@@ -5,10 +5,11 @@
 // App.js creerait une dependance circulaire — le genre de cycle qui rend un
 // composant `undefined` a l'execution selon l'ordre d'evaluation des modules.
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom'; // V268d
 import axios from 'axios';
 import Cropper from 'react-easy-crop'; // V268c (F1)
+import DecouvrirAfroboost from './accueil/DecouvrirAfroboost'; // V645.4k
 import SvgIcon from './SvgIcon'; // UI-PUB2 : icones des actions sur les cartes
 import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; // V342 : Boost payant / V343 : pouvoirs super-admin
 import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/BoostTribeLive'; // LIVE RAPIDE : porte unique
@@ -411,7 +412,9 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
       style={{
         position: 'absolute', right: ancre, top: '50%',
         transform: 'translateY(-50%)', zIndex: 5,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2
+        // V645.4k : colonne resserrée — les actions se lisent comme un seul
+        // groupe collé au média, au lieu d'être éparpillées.
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0
       }}
     >
       <UiPub2Action
@@ -664,6 +667,15 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
       setTimeout(() => { if (actions.onReserve) actions.onReserve(); }, 60);
     },
   } : null;
+  /* V645.4k — « Découvrir Afroboost » ouvre des panneaux (fiche d'offre,
+     calendrier) dont le z-index est TRÈS inférieur à celui du viewer : ils
+     s'afficheraient derrière, donc invisibles. On ferme d'abord, on délègue
+     ensuite — même motif que `onReserve` ci-dessus. */
+  const depuisViewer = (fn) => (arg) => {
+    onClose();
+    setTimeout(() => { if (typeof fn === 'function') fn(arg); }, 60);
+  };
+  const dec = (actions && actions.decouvrir) || null;
   return (
     // V268d : z-index tres eleve pour passer AU-DESSUS de tout (menu inclus).
     // Combine au portal vers document.body (voir le rendu du carrousel), la
@@ -743,9 +755,25 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
           onClick={(e) => e.stopPropagation()}
           className="hidden lg:block"
           data-testid="lightbox-auteur"
-          style={{ width: 320, flex: '0 0 320px', alignSelf: 'flex-end', paddingBottom: '6vh', marginRight: 22 }}
+          /* V645.4k : colonne resserrée et rapprochée de la vidéo — l'ensemble
+             doit se lire comme un seul bloc. On ne pose PAS `display` en
+             inline : il écraserait `hidden lg:block` et ferait réapparaître la
+             colonne sur téléphone. */
+          style={{ width: 320, flex: '0 0 320px', alignSelf: 'flex-end', paddingBottom: '3vh', marginRight: 12, maxHeight: '90vh', overflowY: 'auto' }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 10 }}>
+          {/* V645.4k — le panneau servait surtout de vide : on y met d'abord de
+              quoi passer à l'action, l'auteur restant collé en bas. */}
+          {dec ? (
+            <DecouvrirAfroboost
+              API={dec.API}
+              offres={dec.offres}
+              onSeance={depuisViewer(dec.onSeance)}
+              onOffre={depuisViewer(dec.onOffre)}
+              onToutesLesOffres={depuisViewer(dec.onToutesLesOffres)}
+              onProgramme={depuisViewer(dec.onProgramme)}
+            />
+          ) : null}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7 }}>
             <img
               src={pub.author_photo || pub.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(pub.display_name || pub.subscriber_name || 'A')}&backgroundColor=8B5CF6`}
               alt=""
@@ -764,9 +792,9 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
               {pub.author_id && pub.coach_id && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase() ? 'COACH' : 'MEMBRE'}
             </span>
           </div>
-          <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', margin: '0 0 10px' }}>{v540Depuis(pub.created_at)}</p>
+          <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', margin: '0 0 6px' }}>{v540Depuis(pub.created_at)}</p>
           {pub.caption ? (
-            <p style={{ fontSize: 15, lineHeight: 1.55, color: 'rgba(255,255,255,0.8)', margin: 0, maxWidth: '40ch' }}>{pub.caption}</p>
+            <p style={{ fontSize: 14.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.8)', margin: 0, maxWidth: '40ch' }}>{pub.caption}</p>
           ) : null}
         </div>
       )}
@@ -1338,7 +1366,38 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
   const reelsRef = useRef(null);
   const [scrollIdx, setScrollIdx] = useState(0);
   // V645.4i — drag souris (doit être au niveau du composant, pas dans un bloc if)
-  const dragRef = useRef({ active: false, startX: 0, startScroll: 0, moved: false });
+  const dragRef = useRef({ active: false, startX: 0, startScroll: 0, moved: false, pointerId: null });
+
+  /* V645.4k — LES FLÈCHES SUIVENT LE DÉBORDEMENT RÉEL.
+     Elles dépendaient de `publications.length > 4`. Or 4 cartes occupaient
+     exactement la largeur disponible : rien ne débordait, rien ne défilait,
+     et aucune flèche n'était rendue. On mesure donc le scroller lui-même. */
+  const [bords, setBords] = useState({ deborde: false, debut: true, fin: false });
+  const mesurerBords = useCallback(() => {
+    const el = reelsRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const suivant = {
+      deborde: max > 4,
+      debut: el.scrollLeft <= 1,
+      fin: el.scrollLeft >= max - 1,
+    };
+    // Objet NEUF seulement si une valeur change (cf. règle anti-boucle).
+    setBords((prev) => (
+      prev.deborde === suivant.deborde && prev.debut === suivant.debut && prev.fin === suivant.fin
+        ? prev
+        : suivant
+    ));
+  }, []);
+  useEffect(() => {
+    if (disposition !== 'fil') return undefined;
+    mesurerBords();
+    const el = reelsRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(mesurerBords);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [disposition, publications, mesurerBords]);
 
   /* V542 — LE LIEN PARTAGÉ OUVRE LA BONNE PUBLICATION.
      `?publication=<id>` est lu ICI, là où la liste est déjà chargée et où le
@@ -1388,7 +1447,10 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
     const getCardWidth = () => {
       if (!reelsRef.current) return 0;
       const card = reelsRef.current.querySelector('.af-reel-carte');
-      return card ? card.offsetWidth + 12 : 0; // 12 = gap CSS
+      if (!card) return 0;
+      // Gap lu dans le CSS plutôt que recopié : les deux ne peuvent plus diverger.
+      const gap = parseFloat(getComputedStyle(reelsRef.current).columnGap) || 12;
+      return card.offsetWidth + gap;
     };
     const scrollPrev = () => {
       const cw = getCardWidth();
@@ -1402,7 +1464,9 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
       if (!reelsRef.current) return;
       const cw = getCardWidth() || 1;
       const idx = Math.round(reelsRef.current.scrollLeft / cw);
-      setScrollIdx(Math.max(0, Math.min(idx, publications.length - 1)));
+      const borne = Math.max(0, Math.min(idx, publications.length - 1));
+      setScrollIdx((prev) => (prev === borne ? prev : borne));
+      mesurerBords();
     };
     const allerAPage = (i) => {
       const cw = getCardWidth();
@@ -1410,31 +1474,48 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
       if (reelsRef.current && cw > 0) reelsRef.current.scrollTo({ left: carteIdx * cw, behavior: 'smooth' });
       setScrollIdx(Math.max(0, Math.min(carteIdx, publications.length - 1)));
     };
-    const aFlechesPrev = publications.length > NB_PAR_PAGE;
-    const aFlechesNext = publications.length > NB_PAR_PAGE;
-    // Drag souris : ne pas ouvrir Reel ni déclencher J'aime après un glissement
+    const aFlechesPrev = bords.deborde;
+    const aFlechesNext = bords.deborde;
+    /* V645.4k — LE CLIC SIMPLE DOIT OUVRIR LE VIEWER.
+       `setPointerCapture` était posé dès le pointerdown, donc même pour un clic
+       sans mouvement. Tant que la capture est active, le navigateur retargette
+       les événements souris de compatibilité vers l'élément captureur : la
+       cible du `click` devenait `.af-reels`, et le `onClick` porté par la carte
+       n'était plus sur le chemin de propagation — le viewer ne s'ouvrait jamais.
+       On ne capture donc qu'une fois le glissement avéré (plus de 5 px). */
     const onPointerDown = (e) => {
       if (e.pointerType !== 'mouse' || e.button !== 0 || !reelsRef.current) return;
-      dragRef.current = { active: true, startX: e.clientX, startScroll: reelsRef.current.scrollLeft, moved: false };
-      try { reelsRef.current.setPointerCapture(e.pointerId); } catch (_) {}
+      dragRef.current = {
+        active: true, startX: e.clientX, startScroll: reelsRef.current.scrollLeft,
+        moved: false, pointerId: e.pointerId,
+      };
     };
     const onPointerMove = (e) => {
-      if (!dragRef.current.active) return;
-      const dx = e.clientX - dragRef.current.startX;
-      if (Math.abs(dx) > 5) dragRef.current.moved = true;
-      if (dragRef.current.moved && reelsRef.current) reelsRef.current.scrollLeft = dragRef.current.startScroll - dx;
-    };
-    const onPointerUp = () => {
-      if (!dragRef.current.active) return;
-      dragRef.current.active = false;
-      if (dragRef.current.moved && reelsRef.current) {
-        const cw = getCardWidth();
-        if (cw > 0) {
-          const idx = Math.round(reelsRef.current.scrollLeft / cw);
-          reelsRef.current.scrollTo({ left: idx * cw, behavior: 'smooth' });
-        }
+      const d = dragRef.current;
+      if (!d.active || !reelsRef.current) return;
+      const dx = e.clientX - d.startX;
+      if (!d.moved) {
+        if (Math.abs(dx) <= 5) return;
+        d.moved = true;
+        try { reelsRef.current.setPointerCapture(d.pointerId); } catch (_) {}
+        // Le snap « mandatory » réaligne le scrollport à chaque frame et
+        // annule le défilement impératif : il doit céder pendant le glissement.
+        reelsRef.current.style.scrollSnapType = 'none';
       }
+      reelsRef.current.scrollLeft = d.startScroll - dx;
     };
+    const terminerDrag = () => {
+      const d = dragRef.current;
+      if (!d.active) return;
+      d.active = false;
+      const el = reelsRef.current;
+      if (!el || !d.moved) return;
+      try { el.releasePointerCapture(d.pointerId); } catch (_) {}
+      el.style.scrollSnapType = '';
+      const cw = getCardWidth();
+      if (cw > 0) el.scrollTo({ left: Math.round(el.scrollLeft / cw) * cw, behavior: 'smooth' });
+    };
+    const onPointerUp = terminerDrag;
     const onClickCapture = (e) => {
       if (dragRef.current.moved) { e.stopPropagation(); dragRef.current.moved = false; }
     };
@@ -1455,7 +1536,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
               className="af-reels-nav af-reels-nav--prev"
               onClick={scrollPrev}
               aria-label="Publications précédentes"
-              disabled={scrollIdx <= 0}
+              disabled={bords.debut}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M15 18l-6-6 6-6" />
@@ -1464,7 +1545,8 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
           )}
           <div className="af-reels" data-testid="publications-reels" ref={reelsRef} onScroll={onScroll}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
+            onPointerUp={onPointerUp} onPointerLeave={terminerDrag}
+            onPointerCancel={terminerDrag}
             onClickCapture={onClickCapture}
           >
             {publications.map((pub, i) => (
@@ -1483,7 +1565,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
               className="af-reels-nav af-reels-nav--next"
               onClick={scrollNext}
               aria-label="Publications suivantes"
-              disabled={scrollIdx >= publications.length - 1}
+              disabled={bords.fin}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M9 18l6-6-6-6" />
