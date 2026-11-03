@@ -277,16 +277,33 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
   // V645 : le titre se rend en lignes — une par phrase (decoupe sur les points) —
   // la DERNIERE ligne en couleur primaire (accent de marque). Un titre sans point
   // (ex. vitrine partenaire « Bienvenue chez X ») reste inchange : aucune regression.
+  // V645.4j — gradient et espacement personnalisables via concept.heroGradientTitre
+  // et concept.heroTitreLineGap (coach peut modifier depuis l'éditeur hero).
   const rendreTitre = (txt) => {
     const parts = String(txt || '').split('.').map((p) => p.trim()).filter(Boolean);
     if (parts.length <= 1) return txt;
+    const g = c.heroGradientTitre;
+    let gradientCss;
+    if (g && g.actif === false) {
+      gradientCss = null;
+    } else {
+      const dir = (g && g.direction != null) ? g.direction : 110;
+      const debut = (g && g.debut) || '#D91CD2';
+      const fin = (g && g.fin) || '#7021B8';
+      const milieu = g && g.milieu;
+      gradientCss = milieu
+        ? `linear-gradient(${dir}deg, ${debut} 0%, ${milieu} 50%, ${fin} 100%)`
+        : `linear-gradient(${dir}deg, ${debut} 0%, ${fin} 100%)`;
+    }
+    const lineGap = (c.heroTitreLineGap != null) ? c.heroTitreLineGap : 0;
     return parts.map((p, i) => {
       const estDernier = i === parts.length - 1;
       return (
         <span key={i} style={{
           display: 'block',
-          ...(estDernier ? {
-            background: 'linear-gradient(110deg, #D91CD2 0%, #A527D2 50%, #7021B8 100%)',
+          ...(!estDernier && lineGap !== 0 ? { marginBottom: lineGap } : {}),
+          ...(estDernier && gradientCss ? {
+            background: gradientCss,
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',

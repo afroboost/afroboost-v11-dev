@@ -1416,7 +1416,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
     const onPointerDown = (e) => {
       if (e.pointerType !== 'mouse' || e.button !== 0 || !reelsRef.current) return;
       dragRef.current = { active: true, startX: e.clientX, startScroll: reelsRef.current.scrollLeft, moved: false };
-      reelsRef.current.setPointerCapture(e.pointerId);
+      try { reelsRef.current.setPointerCapture(e.pointerId); } catch (_) {}
     };
     const onPointerMove = (e) => {
       if (!dragRef.current.active) return;

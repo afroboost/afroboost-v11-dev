@@ -1361,26 +1361,11 @@ body {
     border-radius: 14px;
     scroll-snap-align: start;
   }
-  /* V645.4c — ACTIONS ÉPURÉES SUR LES CARTES ÉTROITES (4 par rangée).
-     Sur ces cartes, les LIBELLÉS texte (« Partager », « Séances », « Offres »)
-     et la légende « de toute la page » encombraient le média. On n'affiche plus
-     que des ICÔNES cohérentes (plus le compteur de j'aime / avis), ce qui
-     dégage la vidéo. AUCUNE action n'est retirée ni cachée au survol :
-     chaque icône reste un bouton cliquable (tap/clavier), avec son `aria-label`
-     et son `title` (infobulle) — l'intitulé reste donc accessible. Mobile et
-     lightbox (hors `.af-reels`) gardent les libellés. */
+  /* V645.4j — CARTES MINIATURES : aucune action. Uniquement vidéo + auteur + son.
+     Toutes les actions (J'aime, Avis, Partager, Séances, Offres) sont dans le
+     viewer (lightbox) uniquement — voir UiPub2Colonne dans V268Lightbox. */
   .af-reels .af-reel-carte [data-testid="uipub2-actions"] {
-    right: 4px !important;
-    gap: 4px !important;
-  }
-  /* V645.4i — masquer légende dans les cartes étroites (menu remplace les 3 actions). */
-  .af-reels .af-reel-carte .af-uipub-legende {
     display: none !important;
-  }
-  /* Pastille discrète sous chaque icône (J'aime, Avis, ⋮) sur le média. */
-  .af-reels .af-reel-carte [data-testid="uipub2-actions"] > button {
-    width: 40px !important; height: 40px !important;
-    border-radius: 999px; background: rgba(0,0,0,0.32) !important;
   }
   /* Curseur grab : indique que le carrousel est glissable */
   .af-reels { cursor: grab; }
