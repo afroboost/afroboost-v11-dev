@@ -1348,7 +1348,7 @@ body {
     margin: 0;
     overflow-x: auto;
     overflow-y: visible;
-    scroll-snap-type: x proximity;
+    scroll-snap-type: x mandatory;
     border-radius: 0;
     background: transparent;
     padding-bottom: 4px;
@@ -1373,18 +1373,19 @@ body {
     right: 4px !important;
     gap: 4px !important;
   }
-  /* Masquer la légende d'ensemble et les libellés des 3 actions secondaires. */
-  .af-reels .af-reel-carte .af-uipub-legende,
-  .af-reels .af-reel-carte [data-testid="publication-partager"] > span,
-  .af-reels .af-reel-carte [data-testid="publication-sessions"] > span,
-  .af-reels .af-reel-carte [data-testid="publication-offres"] > span {
+  /* V645.4i — masquer légende dans les cartes étroites (menu remplace les 3 actions). */
+  .af-reels .af-reel-carte .af-uipub-legende {
     display: none !important;
   }
-  /* Pastille discrète sous chaque icône pour une cible nette sur le média. */
+  /* Pastille discrète sous chaque icône (J'aime, Avis, ⋮) sur le média. */
   .af-reels .af-reel-carte [data-testid="uipub2-actions"] > button {
     width: 40px !important; height: 40px !important;
     border-radius: 999px; background: rgba(0,0,0,0.32) !important;
   }
+  /* Curseur grab : indique que le carrousel est glissable */
+  .af-reels { cursor: grab; }
+  .af-reels:active { cursor: grabbing; }
+  .af-reels { user-select: none; -webkit-user-select: none; }
 }
 /* Chaque publication REMPLIT le cadre, s'aimante en haut, une seule visible. */
 .af-reel-carte {
