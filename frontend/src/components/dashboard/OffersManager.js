@@ -627,6 +627,9 @@ const OffersManager = ({
         initialOffer={newOffer}
         courses={courses}
         isEditing={!!editingOfferId}
+        // V645.4k : `newOffer` est une liste blanche qui ne porte PAS `id` —
+        // le wizard ne peut pas identifier seul l'offre en cours d'edition.
+        offerId={editingOfferId}
         onSave={handleWizardSave}
         onCancel={() => { setWizardOpen(false); cancelEditOffer(); }}
         isSuperAdmin={isSuperAdmin}

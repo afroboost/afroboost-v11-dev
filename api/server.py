@@ -1672,6 +1672,9 @@ class Concept(BaseModel):
     # rétrocompatibles — absents = le composant HeroEditeurVisuel utilise ses défauts.
     heroGradientTitre: Optional[dict] = None
     heroTitreLineGap: Optional[int] = None
+    # V645.4k : typographie du titre Hero. Absents = defauts du theme.
+    heroTitreLetterSpacing: Optional[int] = None
+    heroTitreLineHeight: Optional[float] = None
 
 class ConceptUpdate(BaseModel):
     appName: Optional[str] = None  # Nom de l'application
@@ -1726,6 +1729,9 @@ class ConceptUpdate(BaseModel):
     # V645.4j : gradient du titre Hero + espacement inter-lignes.
     heroGradientTitre: Optional[dict] = None
     heroTitreLineGap: Optional[int] = None
+    # V645.4k : typographie du titre Hero.
+    heroTitreLetterSpacing: Optional[int] = None
+    heroTitreLineHeight: Optional[float] = None
 
 # V547 : bornes des textes du Hero. On TRONQUE cote serveur au lieu d'un
 # Field(max_length) : un 422 ferait echouer tout l'auto-save du ConceptEditor
@@ -21689,6 +21695,20 @@ def _v645j_normaliser_hero_gradient(updates: dict) -> None:
             updates["heroTitreLineGap"] = min(max(gap, -24), 32)
         except (TypeError, ValueError):
             updates["heroTitreLineGap"] = 0
+
+    # V645.4k : typographie du titre. Bornes identiques a celles de l'editeur.
+    if "heroTitreLetterSpacing" in updates:
+        try:
+            ls = int(float(updates.get("heroTitreLetterSpacing") or 0))
+            updates["heroTitreLetterSpacing"] = min(max(ls, -8), 16)
+        except (TypeError, ValueError):
+            updates["heroTitreLetterSpacing"] = 0
+    if "heroTitreLineHeight" in updates:
+        try:
+            lh = round(float(updates.get("heroTitreLineHeight") or 1.25), 2)
+            updates["heroTitreLineHeight"] = min(max(lh, 0.8), 2.0)
+        except (TypeError, ValueError):
+            updates["heroTitreLineHeight"] = 1.25
 
 
 def _v645c_normaliser_banniere(updates: dict) -> None:

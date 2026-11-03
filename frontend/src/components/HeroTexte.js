@@ -101,6 +101,13 @@ export function lirePositionsFlux(racine) {
  */
 export default function HeroTexte({ concept, appareil: appareilForce, modeEdition = false, selection = null, onSaisirElement, refsElements }) {
   const c = concept || {};
+  /* V645.4k — typographie réglable du titre. Absente (null), on ne pose rien :
+     le thème garde la main et un concept existant rend exactement comme avant.
+     En style inline, ces valeurs battent `.af-hero-titre` (App.css). */
+  const typoTitre = {
+    ...(c.heroTitreLetterSpacing != null ? { letterSpacing: `${c.heroTitreLetterSpacing}px` } : {}),
+    ...(c.heroTitreLineHeight != null ? { lineHeight: c.heroTitreLineHeight } : {}),
+  };
   const racineRef = useRef(null);
   const elRefs = useRef({ title: null, subtitle: null, offre: null, cta: null });
   const [boite, setBoite] = useState({ L: 0, H: 0 });
@@ -303,10 +310,16 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           display: 'block',
           ...(!estDernier && lineGap !== 0 ? { marginBottom: lineGap } : {}),
           ...(estDernier && gradientCss ? {
-            background: gradientCss,
+            // V645.4k : `backgroundImage` et NON le raccourci `background`, qui
+            // reinitialise background-clip — React ne reapplique que la cle
+            // changee, le clip etait perdu et le degrade peignait tout le bloc.
+            backgroundImage: gradientCss,
             WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            // Sans cela l'ombre heritee du h1 reste visible a travers les
+            // glyphes transparents : c'est le halo flou.
+            textShadow: 'none',
           } : {}),
         }}>
           {p}.
@@ -342,7 +355,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           data-hero-el="title"
           onPointerDown={peTitre.onPointerDown}
           className="text-white font-extrabold leading-tight af-hero-titre"
-          style={{ fontSize: `${polices.title}px`, textShadow: '0 2px 14px rgba(0,0,0,0.75)', ...peTitre.style }}
+          style={{ fontSize: `${polices.title}px`, textShadow: '0 2px 14px rgba(0,0,0,0.75)', ...typoTitre, ...peTitre.style }}
         >
           {rendreTitre(titre)}
         </h1>
@@ -451,6 +464,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           lineHeight: mobile ? 1.12 : 1.25,
           fontSize: `${polices.title * sT}px`,
           textShadow: '0 2px 14px rgba(0,0,0,0.75)',
+          ...typoTitre,
           ...peTitre.style,
         }}
       >
