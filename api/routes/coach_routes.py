@@ -365,14 +365,22 @@ async def cleanup_partner_data(email: str, request: Request):
 @coach_router.get("/coach/profile")
 async def get_coach_profile(request: Request):
     """Profil du coach connecté"""
-    caller_email = await _p1a_coach(request)  # P1A
+    # V646 : téléphone, crédits, identifiants Stripe : le jeton signé, jamais l'en-tête seul.
+    from api.routes.shared import coach_jwt_email
+    caller_email = coach_jwt_email(request) if os.environ.get("JWT_SECRET", "") else await _p1a_coach(request)
     if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+        raise HTTPException(status_code=401, detail="Authentification requise — reconnectez-vous", headers={"X-Auth-Reason": "jwt-required"})
     if is_super_admin(caller_email):
         return {"id": "super_admin", "email": SUPER_ADMIN_EMAIL, "name": "Super Admin", "role": ROLE_SUPER_ADMIN, "credits": -1, "is_super_admin": True}
     coach = await db.coaches.find_one({"email": caller_email.lower()}, {"_id": 0})
     if not coach:
         raise HTTPException(status_code=404, detail="Coach non trouvé")
+    # V646 : le segment de SA vitrine. Son nom en slug s'il mène bien à lui, sinon son
+    # identifiant : un homonyme ne partage jamais par erreur le lien d'un autre coach.
+    _slug = re.sub(r"\s+", "-", (coach.get("name") or "").strip().lower())
+    _resolu = await v646_trouver_coach(_slug) if _slug else None
+    _a_lui = bool(_resolu) and (_resolu.get("email") or "").lower() == caller_email.lower()
+    coach["vitrine_segment"] = _slug if _a_lui else coach.get("id")
     return coach
 
 @coach_router.get("/coach/check-credits")
@@ -390,8 +398,21 @@ async def api_check_credits(request: Request):
     return {"has_credits": credits > 0, "credits": credits}
 
 @coach_router.post("/coach/register")
-async def register_coach(coach_data: CoachCreate):
-    """Inscription d'un nouveau coach"""
+async def register_coach(request: Request):
+    """Création directe d'un coach : super-admin seulement (V646).
+
+    Route anonyme jusque-là : elle créait un compte ACTIF, au nom et aux crédits choisis par
+    l'appelant. Aucun écran ne l'appelle ; les inscriptions passent par `/auth/register`
+    (en attente de validation) et `/cinetpay/register-free`. L'autorisation est vérifiée
+    AVANT de lire le corps.
+    """
+    from api.routes.shared import super_admin_signe
+    if not super_admin_signe(request):
+        raise HTTPException(status_code=403, detail="Super Admin requis")
+    try:
+        coach_data = CoachCreate(**(await request.json()))
+    except Exception:
+        raise HTTPException(status_code=422, detail="Données invalides")
     existing = await db.coaches.find_one({"email": coach_data.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
@@ -411,9 +432,11 @@ async def register_coach(coach_data: CoachCreate):
 async def update_coach_profile(request: Request):
     """Met à jour le profil du coach (platform_name, bio, etc.) - v9.1.4"""
     body = await request.json()
-    caller_email = await _p1a_coach(request)  # P1A : le profil modifié est TOUJOURS celui de l'appelant
+    # V646 : le jeton signé, sans le repli de `_p1a_coach` tant que REQUIRE_COACH_JWT est éteint.
+    from api.routes.shared import coach_jwt_email
+    caller_email = coach_jwt_email(request) if os.environ.get("JWT_SECRET", "") else await _p1a_coach(request)
     if not caller_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+        raise HTTPException(status_code=401, detail="Authentification requise — reconnectez-vous", headers={"X-Auth-Reason": "jwt-required"})
     if is_super_admin(caller_email):
         return {"success": True, "message": "Super Admin - profil non modifiable"}
     coach = await db.coaches.find_one({"email": caller_email})
@@ -636,40 +659,109 @@ def v646_banniere_vitrine(concept_partenaire: Optional[dict], concept_plateforme
     return {**sienne, "home_shop_banner_repli": plateforme if plateforme["home_shop_banner_url"] else None}
 
 
-def v646_choisir_coach(candidats: List[dict], username: str) -> Optional[dict]:
-    """Le partenaire désigné par une URL de vitrine, ou None. Pur, sans E/S.
+# Date de mise en service de cette règle. Un compte créé APRÈS ne peut ni récupérer ni
+# bloquer une URL déjà portée par un compte plus ancien.
+_V646_BASCULE = datetime(2026, 11, 4, tzinfo=timezone.utc)
 
-    Du plus précis au moins précis : e-mail exact, identifiant, nom (ou son slug), puis
-    début d'e-mail. Le premier niveau qui trouve décide. S'il trouve DEUX partenaires,
-    l'URL est ambiguë : on ne montre personne, plutôt que le mauvais au hasard.
-    Une URL contenant « @ » désigne un e-mail précis : jamais de repli sur son préfixe.
-    """
-    u = (username or "").strip().lower()
-    comme_nom = u.replace("-", " ")
-    def _email(c): return (c.get("email") or "").lower()
-    niveaux = [
-        lambda c: _email(c) == u,
-        lambda c: str(c.get("id") or "").lower() == u,
-        lambda c: (c.get("name") or "").lower() in (u, comme_nom),
-    ]
-    if "@" not in u:
-        motifs = _v646_motifs_prefixe(u)
-        niveaux.append(lambda c: any(re.match(m, _email(c)) for m in motifs))
-    for niveau in niveaux:
-        trouves = [c for c in candidats if niveau(c)]
-        if len(trouves) == 1:
-            return trouves[0]
-        if trouves:
-            logger.warning("[V646] URL de vitrine ambiguë : %d partenaires, aucun affiché", len(trouves))
-            return None
-    return None
+
+def _v646_date(coach: dict) -> Optional[datetime]:
+    brut = (coach or {}).get("created_at")
+    try:
+        d = brut if isinstance(brut, datetime) else datetime.fromisoformat(str(brut).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _v646_est_nouveau(coach: dict) -> bool:
+    d = _v646_date(coach)
+    return bool(d and d >= _V646_BASCULE)
 
 
 def _v646_motifs_prefixe(username: str) -> List[str]:
-    """Motifs du début d'e-mail, sans injection possible. Le slug « jean-dupont » continue
-    de trouver jean.dupont@ et jean_dupont@ : un seul caractère entre deux mots, comme avant."""
-    mots = username.replace("-", " ").split(" ")
-    return [f"^{re.escape(username)}@", "^" + ".".join(re.escape(m) for m in mots) + "@"]
+    """Début d'e-mail, sans caractère générique : la partie locale exacte, ou les mêmes mots
+    séparés par UN « . », « _ » ou « - ». Un segment vide (`a-`, `--`) ne vaut que littéralement."""
+    motifs = [f"^{re.escape(username)}@"]
+    mots = re.split(r"[- ]", username)
+    if len(mots) > 1 and all(mots):
+        motifs.append("^" + "[._-]".join(re.escape(m) for m in mots) + "@")
+    return motifs
+
+
+def _v646_un_seul(coachs: List[dict]) -> Optional[dict]:
+    """Le coach si un seul e-mail correspond (une fiche en double reste la même personne)."""
+    return coachs[0] if len({(c.get("email") or "").lower() for c in coachs}) == 1 else None
+
+
+def v646_choisir_coach(candidats: List[dict], username: str) -> Optional[dict]:
+    """Le coach désigné par une URL de vitrine, ou None. Pur, sans E/S.
+
+    1. E-mail exact, puis identifiant : personne d'autre ne peut les porter.
+    2. Nom, puis début d'e-mail, entre comptes anciens : un seul actif, sinon refus. Un
+       ancien compte désactivé garde son URL : elle n'est jamais réattribuée.
+    3. Sinon, entre comptes récents : le premier inscrit garde l'URL, un homonyme arrivé
+       après passe par son identifiant (`vitrine_segment`).
+    Un nouveau compte ne peut donc ni usurper ni rendre inaccessible une URL existante, et
+    un compte non validé n'a aucun effet. Une URL contenant « @ » n'a jamais de repli.
+    """
+    u = (username or "").strip().lower()
+    if not u:
+        return None
+    actifs = lambda liste: [c for c in liste if c.get("is_active") is True]  # noqa: E731
+    for exact in (lambda c: (c.get("email") or "").lower() == u, lambda c: str(c.get("id") or "").lower() == u):
+        trouves = [c for c in candidats if exact(c)]
+        if trouves:
+            return _v646_un_seul(actifs(trouves))
+    comme_nom = " ".join(re.split(r"[- ]", u))
+    noms = [c for c in candidats if (c.get("name") or "").strip().lower() in (u, comme_nom)]
+    prefixes = []
+    if "@" not in u:
+        motifs = _v646_motifs_prefixe(u)
+        prefixes = [c for c in candidats if any(re.match(m, (c.get("email") or "").lower()) for m in motifs)]
+    for niveau in (noms, prefixes):
+        anciens = [c for c in niveau if not _v646_est_nouveau(c)]
+        if actifs(anciens):
+            choisi = _v646_un_seul(actifs(anciens))
+            if not choisi:
+                logger.warning("[V646] URL de vitrine ambiguë : aucun partenaire affiché")
+            return choisi
+        if any(c.get("is_active") is False for c in anciens):
+            return None
+    for niveau in (noms, prefixes):
+        recents = sorted(actifs([c for c in niveau if _v646_est_nouveau(c)]), key=lambda c: (_v646_date(c), str(c.get("id"))))
+        if recents:
+            return recents[0]
+    return None
+
+
+_V646_CHAMPS_COACH = {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1, "is_active": 1, "created_at": 1}
+
+
+async def v646_trouver_coach(username: str) -> Optional[dict]:
+    """Charge les candidats d'une URL, puis applique `v646_choisir_coach`.
+
+    Deux lectures triées du plus ancien au plus récent : une foule de comptes récents ou
+    non validés ne peut donc pas faire sortir de la liste le compte qui décide.
+    """
+    u = (username or "").strip().lower()
+    comme_nom = " ".join(re.split(r"[- ]", u))
+    clauses = [
+        {"email": u},
+        {"id": username},
+        {"name": {"$regex": f"^\\s*{re.escape(u)}\\s*$", "$options": "i"}},
+        {"name": {"$regex": f"^\\s*{re.escape(comme_nom)}\\s*$", "$options": "i"}},
+    ]
+    if "@" not in u:
+        clauses += [{"email": {"$regex": m, "$options": "i"}} for m in _v646_motifs_prefixe(u)]
+    vus, candidats = set(), []
+    for statut in ({"$in": [True, False]}, True):
+        curseur = db.coaches.find({"$or": clauses, "is_active": statut}, _V646_CHAMPS_COACH).sort("created_at", 1).limit(50)
+        for c in await curseur.to_list(50):
+            cle = (c.get("email"), c.get("id"))
+            if cle not in vus:
+                vus.add(cle)
+                candidats.append(c)
+    return v646_choisir_coach(candidats, username)
 
 
 @coach_router.get("/coach/vitrine/{username}")
@@ -702,22 +794,7 @@ async def get_coach_vitrine(username: str):
     else:
         # V160.2: Support slug matching - le frontend convertit "Coach Test" → "coach-test"
         # donc on accepte aussi le slug en remplacant les tirets par des espaces
-        username_as_name = username.replace("-", " ")
-        # V646 : tous les candidats, puis un choix explicite (v646_choisir_coach). Avant,
-        # find_one rendait le premier trouvé, et le préfixe d'e-mail n'était pas échappé.
-        _clauses = [
-            {"name": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
-            {"name": {"$regex": f"^{re.escape(username_as_name)}$", "$options": "i"}},
-            {"email": username.lower()},
-            {"id": username},
-        ]
-        if "@" not in username:
-            _clauses += [{"email": {"$regex": m, "$options": "i"}} for m in _v646_motifs_prefixe(username.lower())]
-        _candidats = await db.coaches.find(
-            {"$or": _clauses, "is_active": True},
-            {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1},
-        ).to_list(20)
-        coach = v646_choisir_coach(_candidats, username)
+        coach = await v646_trouver_coach(username)  # V646 : choix explicite, jamais le premier trouvé
         if not coach:
             raise HTTPException(status_code=404, detail="Partenaire non trouvé")
         coach_email = coach.get("email", "").lower()

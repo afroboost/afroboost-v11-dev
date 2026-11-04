@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SvgIcon from '../SvgIcon';
 import CloudinaryUploadButton from '../CloudinaryUploadButton';
+import { enTetesCoach } from '../../utils/enTetesCoach'; // V646 : le jeton joint à l'enregistrement
 
 const BrandingManager = ({ API, coachEmail, t }) => {
   const [accentColor, setAccentColor] = useState('var(--primary-color, #D91CD2)');
@@ -30,7 +31,7 @@ const BrandingManager = ({ API, coachEmail, t }) => {
     try {
       const res = await fetch(`${API}/coach/update-branding`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+        headers: enTetesCoach({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail }),
         body: JSON.stringify({ accent_color: color, logo_url: logo })
       });
       if (res.ok) {

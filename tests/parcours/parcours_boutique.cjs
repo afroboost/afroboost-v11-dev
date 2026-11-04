@@ -472,6 +472,14 @@ print("true")`);
       await p.click('[data-testid="banniere-boutique-titre"]');
     };
     await ouvrir();
+    // Règle V310c : les écritures passent désormais par le seul jeton signé. Une vraie session
+    // de coach doit continuer d'enregistrer depuis les vrais écrans.
+    const [envoiOffre] = await Promise.all([
+      p.waitForResponse((r) => r.request().method() === 'PUT' && /\/api\/offers\/produit-coach-a-banc$/.test(r.url()), { timeout: 15000 }),
+      p.getByRole('button', { name: 'Enregistrer', exact: true }).click(),
+    ]);
+    v('T0 session coach réelle : le Wizard enregistre son offre', envoiOffre.status() === 200, envoiOffre.status());
+    await ouvrir();
     v('T2 un seul éditeur : pas de rubrique Page Boutique pour un partenaire', (await p.locator('details[data-testid$="-section"]').count()) === 1);
     const racine = p.locator('[data-testid="banniere-boutique-section"]');
     await racine.locator('input[type="file"]').setInputFiles(path.join(FICHIERS, 'banniere-b.png'));
@@ -502,6 +510,17 @@ print("true")`);
     await pret(p, '[data-testid="banniere-boutique-apercu-img"]');
     v('T8 rechargement de l\'éditeur : restituée', (await p.getAttribute('[data-testid="banniere-boutique-apercu-img"]', 'src')) === urlA);
 
+    // L'image de marque part par `fetch`, qui ne reçoit pas le jeton de l'intercepteur axios.
+    await p.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    await pret(p, 'button:has-text("Ma Vitrine")');
+    await p.locator('button:has-text("Ma Vitrine")').first().click();
+    const boutonMarque = p.locator('button:has-text("Sauvegarder le bran")').first();
+    await boutonMarque.scrollIntoViewIfNeeded();
+    const [envoiMarque] = await Promise.all([
+      p.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith('/api/coach/update-branding'), { timeout: 15000 }),
+      boutonMarque.click(),
+    ]);
+    v('T0b session coach réelle : BrandingManager enregistre', envoiMarque.status() === 200, envoiMarque.status());
     await vitrine('coach-b-banc');
     await pret(pub, `${SEL} img`);
     v('T9 vitrine B, sans bannière : toujours celle de la plateforme', (await pub.getAttribute(`${SEL} img`, 'src')) === urlPlateforme);

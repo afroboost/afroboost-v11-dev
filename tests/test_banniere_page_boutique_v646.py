@@ -137,14 +137,22 @@ def test_repli_fourni_seulement_quand_le_partenaire_a_sa_banniere():
 # -------------------------------------------- QUEL PARTENAIRE POUR QUELLE URL
 from api.routes.coach_routes import v646_choisir_coach as choisir, _v646_motifs_prefixe as motifs  # noqa: E402
 
-JEAN_A = {"id": "c1", "name": "Jean Martin", "email": "jean@a.com"}
-JEAN_B = {"id": "c2", "name": "Jean Durand", "email": "jean@b.com"}
-JEANNE = {"id": "c3", "name": "Jeanne", "email": "jeanne@a.com"}
-DOUBLE = {"id": "c4", "name": "Marie Dupont", "email": "marie.dupont@a.com"}
+VIEUX = "2026-01-01T00:00:00+00:00"
+NEUF = "2026-11-10T00:00:00+00:00"
+
+
+def c(ident, name, email, actif=True, cree=VIEUX):
+    return {"id": ident, "name": name, "email": email, "is_active": actif, "created_at": cree}
+
+
+JEAN_A = c("c1", "Jean Martin", "jean@a.com")
+JEAN_B = c("c2", "Jean Durand", "jean@b.com")
+JEANNE = c("c3", "Jeanne", "jeanne@a.com")
+DOUBLE = c("c4", "Marie Dupont", "marie.dupont@a.com")
 TOUS = [JEAN_A, JEAN_B, JEANNE, DOUBLE]
 
 
-def test_les_url_qui_designent_un_seul_partenaire_ne_changent_pas():
+def test_les_url_qui_designent_un_seul_coach_ne_changent_pas():
     assert choisir(TOUS, "jean@a.com") is JEAN_A
     assert choisir(TOUS, "JEAN@B.COM") is JEAN_B
     assert choisir(TOUS, "c2") is JEAN_B
@@ -155,31 +163,26 @@ def test_les_url_qui_designent_un_seul_partenaire_ne_changent_pas():
     assert choisir(TOUS, "marie-dupont") is DOUBLE
 
 
-def test_le_slug_trouve_encore_un_email_a_separateur():
-    tiret_bas = {"id": "c5", "name": "X", "email": "paul_dupont@a.com"}
-    assert choisir([tiret_bas], "paul-dupont") is tiret_bas
+def test_separateurs_autorises_et_rien_d_autre():
+    for email in ("paul.dupont@a.com", "paul_dupont@a.com", "paul-dupont@a.com"):
+        coach = c("x", "X", email)
+        assert choisir([coach], "paul-dupont") is coach, email
+    for email in ("paulxdupont@a.com", "paul dupont@a.com", "paul+dupont@a.com", "paul..dupont@a.com"):
+        assert choisir([c("x", "X", email)], "paul-dupont") is None, email
 
 
-def test_prefixe_ambigu_personne_plutot_que_le_mauvais():
-    assert choisir(TOUS, "jean") is None
+def test_url_approximatives_refusees():
+    jb = c("x", "X", "jean.banc@a.com")
+    court = c("y", "Y", "ab@a.com")
+    for u in ("jean-b-nc", "j-an-banc", "je-n.banc", "jean", "jean-", "-banc", "jean--banc"):
+        assert choisir([jb], u) is None, u
+    for u in ("a-", "-b", "--", "-", "a", "ab-"):
+        assert choisir([court], u) is None, u
 
 
-def test_un_niveau_precis_l_emporte_sur_un_prefixe_ambigu():
-    nomme = {"id": "c6", "name": "jean", "email": "x@a.com"}
-    assert choisir(TOUS + [nomme], "jean") is nomme
-
-
-def test_meme_nom_deux_partenaires_personne():
-    assert choisir([JEAN_A, {**JEAN_B, "name": "Jean Martin"}], "jean-martin") is None
-
-
-def test_email_inconnu_ne_retombe_jamais_sur_son_prefixe():
-    assert choisir(TOUS, "jean@z.com") is None
-    assert choisir([JEANNE], "jeanne@z.com") is None
-
-
-def test_jean_ne_trouve_pas_jeanne():
-    assert choisir([JEANNE], "jean") is None
+def test_segment_vide_jamais_de_motif_souple():
+    assert motifs("a-") == ["^a\\-@"]
+    assert motifs("--") == ["^\\-\\-@"]
 
 
 def test_injection_de_motif_neutralisee():
@@ -187,6 +190,60 @@ def test_injection_de_motif_neutralisee():
         assert choisir(TOUS, u) is None, u
     for m in motifs(".*") + motifs("(a+)+$"):
         assert re.match(m, "jean@a.com") is None
+
+
+def test_ambiguite_entre_comptes_existants():
+    assert choisir(TOUS, "jean") is None
+    assert choisir([JEAN_A, {**JEAN_B, "name": "Jean Martin"}], "jean-martin") is None
+
+
+def test_fiche_en_double_du_meme_coach_n_est_pas_une_ambiguite():
+    assert choisir([JEAN_A, dict(JEAN_A)], "jean-martin") is JEAN_A
+
+
+def test_email_inconnu_ne_retombe_jamais_sur_son_prefixe():
+    assert choisir(TOUS, "jean@z.com") is None
+    assert choisir([JEANNE], "jeanne@z.com") is None
+
+
+def test_nouveau_compte_ne_recupere_ni_ne_bloque():
+    victime = c("v", "Victime Banc", "victime@a.com")
+    assert choisir([victime, c("p", "Victime Banc", "p@x.org", cree=NEUF)], "victime-banc") is victime
+    assert choisir([victime, c("p", "victime", "p@x.org", cree=NEUF)], "victime") is victime
+    assert choisir([victime, c("p", "P", "victime@x.org", cree=NEUF)], "victime") is victime
+    assert choisir([victime, c("p", "v", "p@x.org", cree=NEUF)], "v") is victime
+    assert choisir([victime, c("p", "victime@a.com", "p@x.org", cree=NEUF)], "victime@a.com") is victime
+
+
+def test_compte_non_valide_sans_effet():
+    victime = c("v", "Victime Banc", "victime@a.com")
+    attente = c("p", "Victime Banc", "p@x.org", actif=False, cree=NEUF)
+    assert choisir([victime, attente], "victime-banc") is victime
+    assert choisir([attente], "victime-banc") is None
+
+
+def test_url_d_un_compte_desactive_jamais_reattribuee():
+    ancien = c("v", "Victime Banc", "victime@a.com", actif=False)
+    assert choisir([ancien, c("p", "Victime Banc", "p@x.org", cree=NEUF)], "victime-banc") is None
+
+
+def test_deux_comptes_recents_premier_arrive():
+    premier = c("a", "Nom Neuf", "a@x.org", cree="2026-11-10T00:00:00+00:00")
+    second = c("b", "Nom Neuf", "b@x.org", cree="2026-11-11T00:00:00+00:00")
+    assert choisir([second, premier], "nom-neuf") is premier
+    assert choisir([second, premier], "b") is second
+
+
+def test_plus_de_20_correspondances():
+    victime = c("v", "Foule", "foule@a.com")
+    foule = [c(f"n{i}", "Foule", f"n{i}@x.org", cree=NEUF) for i in range(60)]
+    assert choisir([victime] + foule, "foule") is victime
+    assert choisir(foule + [victime], "foule") is victime
+    assert choisir([c(f"o{i}", "Foule", f"o{i}@x.org") for i in range(25)], "foule") is None
+
+
+def test_date_illisible_compte_ancien():
+    assert choisir([c("v", "Nom", "v@a.com", cree="pas une date"), c("p", "Nom", "p@x.org", cree=NEUF)], "nom")["id"] == "v"
 
 
 def test_inconnu():

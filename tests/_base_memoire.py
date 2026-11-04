@@ -140,6 +140,12 @@ class _Requete:
     """Le strict minimum d'un `fastapi.Request` pour ces routes."""
     def __init__(self, email=None):
         self.headers = {} if email is None else {"X-User-Email": email}
+        # V646 : les écritures de vitrine n'acceptent plus l'en-tête seul. Comme la vraie
+        # application, ce faux navigateur présente aussi un jeton signé, s'il y a un secret.
+        secret = os.environ.get("JWT_SECRET", "")
+        if email is not None and secret:
+            import jwt
+            self.headers["Authorization"] = "Bearer " + jwt.encode({"email": email, "type": "coach"}, secret, algorithm="HS256")
         self.headers = _Entetes(self.headers)
 
 

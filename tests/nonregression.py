@@ -3153,7 +3153,7 @@ def t157_v646_ecriture_banniere_sans_auth():
 
 def t158_v646_vitrine_url_inconnue_ou_injection():
     essais = ["v646-partenaire-inexistant-zzz", "v646-inexistant-zzz@example.invalid",
-              ".*", "%5E", "(a%2B)%2B%24", "a.*%40example.com"]
+              ".*", "%5E", "(a%2B)%2B%24", "a.*%40example.com", "a-", "-b", "--", "zz-zz-zz-"]
     statuts = {e: requests.get(_url("/api/coach/vitrine/" + e), timeout=TIMEOUT).status_code for e in essais}
     record(158, "V646 vitrine : URL inconnue, e-mail inconnu et motif injecté = 404",
            all(s == 404 for s in statuts.values()), str(statuts))
@@ -3200,6 +3200,34 @@ def t160_v646_vitrines_actives_bannieres_publiques():
                 illisibles += 1
     record(160, "V646 vitrines actives : champs prévus, aucune donnée privée", not defauts,
            f"{len(idents)} vitrine(s), {illisibles} média(s) illisible(s) (repli actif) {defauts[:3]}")
+
+
+def _v646_deploye():
+    """Ces contrôles envoient une écriture qui DOIT être refusée : sur une version antérieure,
+    elle réussirait. Ils ne partent donc qu'une fois la V646 prouvée en ligne."""
+    r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
+    m = re.search(r"CACHE_NAME = 'afroboost-v(\d+)", r.text or "")
+    return bool(m) and int(m.group(1)) >= 646
+
+
+def t161_v646_coach_register_ferme():
+    # Corps vide : même sur une version antérieure, aucun compte ne peut être créé (422).
+    r = requests.post(_url("/api/coach/register"), json={}, timeout=TIMEOUT)
+    record(161, "V646 /coach/register anonyme refusé avant même de lire le corps", r.status_code == 403, f"statut={r.status_code}")
+
+
+def t162_v646_entete_seul_refuse():
+    if not _v646_deploye():
+        skip(162, "V646 en-tête seul refusé", "V646 pas encore en ligne : écriture non envoyée")
+        return
+    essais = [("put", "/api/payment-links"), ("put", "/api/concept"), ("post", "/api/coach/update-branding"),
+              ("post", "/api/coach/update-seo"), ("put", "/api/coach/update-profile")]
+    statuts = {}
+    for meth, chemin in essais:
+        for nom, entetes in (("anonyme", {}), ("en-tête", {"X-User-Email": ADMIN})):
+            statuts[f"{chemin} {nom}"] = getattr(requests, meth)(_url(chemin), json={}, headers=entetes, timeout=TIMEOUT).status_code
+    record(162, "V646 écritures de vitrine : anonyme et en-tête seul refusés",
+           all(s in (401, 403) for s in statuts.values()), str({k: v for k, v in statuts.items() if v not in (401, 403)}))
 
 
 def main():
@@ -3273,6 +3301,7 @@ def main():
                    t156_v646_boutique_et_concept_public, t157_v646_ecriture_banniere_sans_auth,
                    t158_v646_vitrine_url_inconnue_ou_injection, t159_v646_media_absent,
                    t160_v646_vitrines_actives_bannieres_publiques,
+                   t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

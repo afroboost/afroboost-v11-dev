@@ -1418,7 +1418,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           });
           setCoachCredits(res.data?.credits ?? 0);
           // v8.9.9: Récupérer username pour vitrine
-          const username = res.data?.name?.toLowerCase().replace(/\s+/g, '-') || res.data?.id || safeCoachUser.email.split('@')[0];
+          // V646 : `vitrine_segment` mène toujours à SA vitrine, même s'il a un homonyme.
+          const username = res.data?.vitrine_segment || res.data?.name?.toLowerCase().replace(/\s+/g, '-') || res.data?.id || safeCoachUser.email.split('@')[0];
           setCoachUsername(isSuperAdmin ? 'bassi' : username);
           // v9.1.3: Récupérer platform_name pour marque blanche
           setCoachPlatformName(res.data?.platform_name || null);

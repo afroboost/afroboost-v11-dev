@@ -213,6 +213,37 @@ def require_auth(request: Request) -> str:
     )
 
 
+def v646_coach_signe(request: Request) -> str:
+    """V646 — identité d'une écriture sur une vitrine : le jeton signé, et lui seul.
+
+    Le repli V265 de `require_auth` laisse passer `X-User-Email`, qu'un `curl` écrit à
+    volonté : le logo, les offres, les cours, les liens de paiement et les bannières d'un
+    coach, ou de la plateforme avec l'en-tête du super-admin, s'y modifiaient sans preuve.
+    Le 401 porte `X-Auth-Reason` : le tableau de bord propose alors de se reconnecter.
+    Sans JWT_SECRET (poste de développement), comportement inchangé.
+    """
+    if not os.environ.get("JWT_SECRET", ""):
+        return require_auth(request)
+    from api.routes.shared import coach_jwt_email
+    email = coach_jwt_email(request)
+    if email:
+        return email
+    raise HTTPException(
+        status_code=401,
+        detail="Authentification requise — reconnectez-vous",
+        headers={"X-Auth-Reason": "jwt-required"},
+    )
+
+
+def v646_exiger_proprietaire(email: str, document: dict, message: str) -> None:
+    """V646 — le super-admin, ou le propriétaire. Un document SANS propriétaire appartient
+    à la plateforme : un coach ne peut plus le modifier (le T-shirt en faisait partie)."""
+    if is_super_admin(email):
+        return
+    if ((document or {}).get("coach_id") or "").lower() != email:
+        raise HTTPException(status_code=403, detail=message)
+
+
 def _email_from_jwt(request: Request) -> str:
     """V252b — repli d'identification par JWT.
 
@@ -2452,9 +2483,8 @@ async def n456_occurrences_publiques(coach: str = "", days: int = 14,
 @api_router.post("/courses", response_model=Course)
 async def create_course(course: CourseCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
-    # v19: Auto-set coach_id depuis le header d'authentification
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = v646_coach_signe(request)
     course_data = course.model_dump()
     # M1-GEO1 : une region mal orthographiee n'entre JAMAIS en base en silence.
     _reg, _reg_st = m1geo1_region_normalisee(course_data.get("region"))
@@ -2472,12 +2502,13 @@ async def create_course(course: CourseCreate, request: Request):
 @api_router.put("/courses/{course_id}")
 async def update_course(course_id: str, course_update: dict, request: Request):
     """Update a course - supports partial updates including playlist and audio_tracks"""
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé + propriétaire. Tout coach pouvait réécrire n'importe quel cours.
+    _v646_email = v646_coach_signe(request)
     # Récupérer le cours existant
     existing = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Cours non trouvé")
+    v646_exiger_proprietaire(_v646_email, existing, "Vous ne pouvez modifier que vos propres cours")
     
     # Fusionner les données (mise à jour partielle)
     update_data = {k: v for k, v in course_update.items() if v is not None}
@@ -2505,8 +2536,11 @@ async def update_course(course_id: str, course_update: dict, request: Request):
 @api_router.put("/courses/{course_id}/archive")
 async def archive_course(course_id: str, request: Request):
     """Archive a course instead of deleting it"""
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé + propriétaire.
+    _v646_email = v646_coach_signe(request)
+    _v646_cours = await db.courses.find_one({"id": course_id}, {"_id": 0, "coach_id": 1})
+    if _v646_cours:
+        v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez archiver que vos propres cours")
     await db.courses.update_one({"id": course_id}, {"$set": {"archived": True}})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     return {"success": True, "course": updated}
@@ -2517,8 +2551,11 @@ async def delete_course(course_id: str, request: Request):
     HARD DELETE - Supprime PHYSIQUEMENT un cours de toutes les tables.
     Aucune trace ne doit rester dans la base de données.
     """
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé + propriétaire (cette route efface aussi les réservations).
+    _v646_email = v646_coach_signe(request)
+    _v646_cours = await db.courses.find_one({"id": course_id}, {"_id": 0, "coach_id": 1})
+    if _v646_cours:
+        v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez supprimer que vos propres cours")
     deleted_counts = {
         "course": 0,
         "reservations": 0,
@@ -2558,17 +2595,21 @@ async def purge_archived_courses(request: Request):
     PURGE TOTAL - Supprime tous les cours archivés et leurs données liées.
     Utilisé pour nettoyer la base de données des cours obsolètes.
     """
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé. Un coach ne purge que SES archives ; tout purger reste réservé
+    # au super-admin (n'importe quel coach effaçait les archives et réservations des autres).
+    _v646_email = v646_coach_signe(request)
+    _v646_filtre = {"archived": True}
+    if not is_super_admin(_v646_email):
+        _v646_filtre["coach_id"] = _v646_email
     # Trouver tous les cours archivés
-    archived_courses = await db.courses.find({"archived": True}, {"id": 1}).to_list(1000)
+    archived_courses = await db.courses.find(_v646_filtre, {"id": 1}).to_list(1000)
     archived_ids = [c["id"] for c in archived_courses]
     
     if not archived_ids:
         return {"success": True, "message": "Aucun cours archivé à purger", "purged": 0}
     
     # Supprimer les cours archivés
-    deleted_courses = await db.courses.delete_many({"archived": True})
+    deleted_courses = await db.courses.delete_many({"id": {"$in": archived_ids}})
     
     # Supprimer les réservations liées
     deleted_reservations = await db.reservations.delete_many({"courseId": {"$in": archived_ids}})
@@ -3122,8 +3163,8 @@ def _v256_normalize_external_link(data: dict) -> None:
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = v646_coach_signe(request)
     offer_data = offer.model_dump()
     # U1a : meme normalisation qu'a la mise a jour — une seule regle, deux portes.
     offer_data["audience"] = u1a_audience(offer_data.get("audience"))
@@ -3215,8 +3256,8 @@ async def create_offer(offer: OfferCreate, request: Request):
 
 @api_router.put("/offers/{offer_id}", response_model=Offer)
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = v646_coach_signe(request)
     update_data = offer.model_dump()
     # ============ R2c — MODIFIER SON OFFRE, PAS CELLE DES AUTRES ============
     #
@@ -3226,18 +3267,13 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     # `DELETE /offers/{id}` applique dix lignes plus bas depuis la v20 — on ne
     # durcit pas plus que le voisin, on rattrape l'oubli :
     #   * super-admin : tout ;
-    #   * sinon : uniquement une offre dont il est le proprietaire, OU une
-    #     offre SANS proprietaire (les 9 offres historiques restent donc
-    #     modifiables exactement comme avant ce lot).
+    #   * sinon : uniquement une offre dont il est le proprietaire. V646 : une offre
+    #     SANS proprietaire appartient a la plateforme. Tout coach pouvait reecrire
+    #     le T-shirt ; aucun ne la voit de toute facon dans son tableau de bord (V237).
     _offre_avant = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     if not _offre_avant:
         raise HTTPException(status_code=404, detail="Offre non trouvée")
-    if not is_super_admin(user_email):
-        _proprio = (_offre_avant.get("coach_id") or "").lower()
-        if _proprio and _proprio != user_email:
-            raise HTTPException(
-                status_code=403,
-                detail="Vous ne pouvez modifier que vos propres offres")
+    v646_exiger_proprietaire(user_email, _offre_avant, "Vous ne pouvez modifier que vos propres offres")
     # Le proprietaire ne change PAS par une sauvegarde d'offre. Il est recopie
     # tel quel depuis la base : ni le navigateur ni ce formulaire n'ont voix au
     # chapitre. Le changer se fait par la porte prevue pour cela, reservee a
@@ -3356,8 +3392,8 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
 @api_router.delete("/offers/{offer_id}")
 async def delete_offer(offer_id: str, request: Request):
     """v20: Supprime une offre avec vérification d'ownership + nettoyage codes promo"""
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = v646_coach_signe(request)
 
     # v20: Vérifier que l'offre existe
     offer = await db.offers.find_one({"id": offer_id})
@@ -3365,10 +3401,7 @@ async def delete_offer(offer_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Offre non trouvée")
 
     # v20: Vérifier l'ownership — Super Admin peut tout supprimer, sinon uniquement ses propres offres
-    if not is_super_admin(user_email):
-        offer_owner = (offer.get("coach_id") or "").lower()
-        if offer_owner and offer_owner != user_email:
-            raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres offres")
+    v646_exiger_proprietaire(user_email, offer, "Vous ne pouvez supprimer que vos propres offres")
 
     # 1. Supprimer l'offre
     result = await db.offers.delete_one({"id": offer_id})
@@ -3482,7 +3515,7 @@ async def r2c_classifier(offer_id: str, corps: R2CClassification, request: Reque
     modifie pas l'offre. C'est aussi pour cela qu'elle est separee de
     `PUT /offers` plutot qu'un drapeau de plus dedans.
     """
-    email = require_auth(request)
+    email = v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1, "name": 1})
@@ -3539,7 +3572,7 @@ async def r3a_enregistrer_localisation(offer_id: str, corps: R3ALocalisation,
     N'ECRIT QUE LES QUATRE CHAMPS DE LIEU. `location` (le texte libre
     historique), le prix, la visibilite et les cours lies ne sont pas touches.
     """
-    email = require_auth(request)
+    email = v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1})
@@ -7919,7 +7952,9 @@ async def get_payment_links(request: Request):
 
 @api_router.put("/payment-links")
 async def update_payment_links(links: PaymentLinksUpdate, request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    # V646 : aucune vérification ici. Un anonyme écrivait, et l'en-tête du super-admin
+    # remplaçait les liens de paiement de la plateforme.
+    user_email = v646_coach_signe(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # ID de lien selon le coach
@@ -21785,7 +21820,9 @@ def _v645c_normaliser_banniere(updates: dict) -> None:
 async def update_concept(concept: ConceptUpdate, request: Request):
     # V262: ecriture -> identite verifiee. Auparavant un en-tete vide creait un
     # concept « concept_ » fantome, et un en-tete falsifie ecrivait chez autrui.
-    user_email = require_auth(request)
+    # V646 : jeton signé. Avec le repli V265, l'en-tête du super-admin suffisait à réécrire
+    # le concept de la plateforme, bannières officielles comprises.
+    user_email = v646_coach_signe(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # Super Admin: concept global, Coach: concept personnel
@@ -21845,10 +21882,8 @@ async def update_concept(concept: ConceptUpdate, request: Request):
 @api_router.post("/coach/update-branding")
 async def update_coach_branding(request: Request):
     """Met à jour accent_color et logo_url du coach"""
+    email = v646_coach_signe(request)  # V646 : jamais le seul en-tête
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     updates = {}
     if "accent_color" in body:
@@ -21876,10 +21911,8 @@ async def get_coach_branding(coach_email: str):
 @api_router.post("/coach/update-seo")
 async def update_coach_seo(request: Request):
     """Met à jour meta_title, meta_description, keywords du coach"""
+    email = v646_coach_signe(request)  # V646 : jamais le seul en-tête
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     updates = {}
     for field in ["meta_title", "meta_description", "seo_keywords"]:

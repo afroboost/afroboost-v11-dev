@@ -32,7 +32,7 @@ const SEOManager = ({ API, coachEmail, coachUsername, t }) => {
     try {
       const res = await fetch(`${API}/coach/update-seo`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+        headers: enTetesCoach({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail }),
         body: JSON.stringify({ meta_title: metaTitle, meta_description: metaDescription, seo_keywords: seoKeywords })
       });
       if (res.ok) {
