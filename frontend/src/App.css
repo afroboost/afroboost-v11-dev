@@ -2641,5 +2641,13 @@ body {
     left: auto !important;
     right: 12px !important;
     bottom: 60px !important;
+    /* Le bouton d'achat, pleine largeur, croise forcément la bulle en défilant :
+       il passe au-dessus d'elle (15 positions sur 40 mesurées). Les deux restent
+       sous la barre de navigation (40) et sous la bande d'installation (50). */
+    z-index: 30 !important;
+  }
+  body[data-af-fiche-produit] .af-fiche-cta {
+    position: relative;
+    z-index: 31;
   }
 }

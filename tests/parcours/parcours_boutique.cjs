@@ -339,6 +339,8 @@ async function parcoursVisiteur(browser, nom, opt) {
 
 /** Bulle de chat sur la fiche : mesurée à toutes les positions de défilement (méthode V543). */
 async function verifierBulle(p, nom) {
+  // `transition-all` anime aussi le z-index (250 ms mesurées) : il doit atteindre sa valeur finale.
+  await p.waitForFunction(() => getComputedStyle(document.querySelector('[data-testid="chat-widget-button"]')).zIndex === '30', null, { timeout: 5000 });
   const m = await p.evaluate(async () => {
     const zone = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
     const touche = (a, b) => a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
@@ -365,8 +367,12 @@ async function verifierBulle(p, nom) {
       const c = zone('.af-fiche-cta');
       if (touche(b, c)) r.cta += 1;
       if (c && c.top >= 0 && c.bottom <= innerHeight) {
-        const e = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);
-        if (!e || !e.closest('.af-fiche-cta')) r.ctaBloque += 1;
+        // Toute la surface du bouton, pas seulement son centre : la bulle mordait son bord droit.
+        const bulle = document.querySelector('[data-testid="chat-widget-button"]');
+        for (const fx of [0.01, 0.25, 0.5, 0.75, 0.99]) for (const fy of [0.08, 0.5, 0.92]) {
+          const e = document.elementFromPoint(c.left + c.width * fx, c.top + c.height * fy);
+          if (e && (bulle === e || bulle.contains(e))) { r.ctaBloque += 1; break; }
+        }
       }
     }
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -375,7 +381,7 @@ async function verifierBulle(p, nom) {
   v(`${nom} S1 bulle présente, à droite, entièrement visible`, m.bulle.droite <= m.bulle.vue && m.bulle.gauche > m.bulle.vue / 2, JSON.stringify(m.bulle));
   v(`${nom} S2 prix jamais recouvert`, m.positions > 3 && m.prix === 0, `${m.positions} positions, ${m.prix} chevauchement`);
   v(`${nom} S3 titre, tailles, couleurs et quantité jamais recouverts`, m.titre === 0 && m.puces === 0, `titre ${m.titre}, sélecteurs ${m.puces}`);
-  v(`${nom} S4 bouton d'achat toujours cliquable`, m.ctaBloque === 0, `${m.cta} frôlements, ${m.ctaBloque} blocage`);
+  v(`${nom} S4 bouton d'achat jamais recouvert par la bulle, sur toute sa surface`, m.ctaBloque === 0, `${m.cta} croisements, ${m.ctaBloque} recouvrement`);
 }
 
 /** Petit écran, comme V543, et hors de la fiche : la bulle garde sa place. */
