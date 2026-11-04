@@ -55730,8 +55730,9 @@ async def v197b_get_quick_replies_all(request: Request):
 @api_router.put("/bot/quick-replies/{reply_id}")
 async def v197b_update_quick_reply(reply_id: str, request: Request):
     """V197b: Modifier un quick reply (coach uniquement)."""
-    # V646 : ces réponses s'affichent à tous les visiteurs du chat.
-    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
+    # V646 : ces réponses s'affichent à tous les visiteurs du chat, quel que soit le coach :
+    # seul le super-admin, prouvé par un jeton signé, les modifie.
+    user_email = await _p0b_exiger_super_admin(request)
 
     body = await request.json()
     allowed = {"label", "emoji", "response", "order", "active"}

@@ -3250,6 +3250,20 @@ def t163_v646_donnees_partenaire_entete_seul_refuse():
            str({k: v for k, v in statuts.items() if v not in (401, 403)}) + f" raw={brut}")
 
 
+def t164_v646_bot_reserve_super_admin():
+    """Identifiant FICTIF : même si un refus manquait, aucune vraie réponse du bot ne changerait."""
+    if not _v646_deploye():
+        skip(164, "V646 réponses du bot", "V646 pas encore en ligne : écriture non envoyée")
+        return
+    url = _url("/api/bot/quick-replies/nonregression-v646-inexistante")
+    statuts = {nom: requests.put(url, json={"label": "x"}, headers=h, timeout=TIMEOUT).status_code
+               for nom, h in (("anonyme", {}), ("en-tête admin", {"X-User-Email": ADMIN}),
+                              ("en-tête coach", {"X-User-Email": "nonregression-v646@example.invalid"}))}
+    public = requests.get(_url("/api/bot/quick-replies"), timeout=TIMEOUT).status_code
+    record(164, "V646 réponses du bot : modification refusée sans jeton super-admin, lecture publique préservée",
+           all(s in (401, 403) for s in statuts.values()) and public == 200, f"{statuts} public={public}")
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3322,6 +3336,7 @@ def main():
                    t158_v646_vitrine_url_inconnue_ou_injection, t159_v646_media_absent,
                    t160_v646_vitrines_actives_bannieres_publiques,
                    t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
+                   t164_v646_bot_reserve_super_admin,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

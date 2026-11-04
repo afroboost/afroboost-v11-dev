@@ -10053,6 +10053,8 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                         // Filtre repris a l'identique de l'ancienne rangee.
                         if (isStaffMode && tab.key === 'conversations') return false;
                         if (isStaffMode && tab.key === 'bot') return false;
+                        // V646 : ces reponses sont communes a la plateforme ; le serveur refuse tout autre compte.
+                        if (tab.key === 'bot' && String(getCoachEmail() || '').toLowerCase() !== 'contact.artboost@gmail.com') return false;
                         return true;
                       });
                       var v263Current = v263Tabs.filter(function(t) { return t.key === coachDashTab; })[0] || v263Tabs[0];

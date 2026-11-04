@@ -363,7 +363,6 @@ ROUTES_ENTETE = [
     ("POST /stripe/connect/account-link", "post", "/api/stripe/connect/account-link", {}),
     ("GET /stripe/connect/status", "get", "/api/stripe/connect/status", None),
     ("PUT /audio-tracks/reorder", "put", "/api/audio-tracks/reorder", {"track_ids": []}),
-    ("PUT /bot/quick-replies/{id}", "put", "/api/bot/quick-replies/reponse-banc", {"response": "PIRATE"}),
     ("POST /credits/deduct", "post", "/api/credits/deduct", {"action": "banc"}),
     ("POST /stripe/create-credit-checkout", "post", "/api/stripe/create-credit-checkout", {"pack_id": "banc"}),
     ("GET /social-proofs", "get", "/api/social-proofs", None),
@@ -417,9 +416,6 @@ def tester_routes_entete():
     entetes = {**porteur(jeton_session(B)), "X-User-Email": A}
     echecs = []
     for nom, meth, url, corps in ROUTES_ENTETE:
-        # Ces réponses sont communes à la plateforme, pas à A : mesurées à part juste après.
-        if nom.startswith("PUT /bot/quick-replies"):
-            continue
         avant = etat_partenaire()
         r = appel(meth, url, corps, entetes)
         if etat_partenaire() != avant or any(s in r.text for s in FUITES):
@@ -428,12 +424,6 @@ def tester_routes_entete():
     v("jeton de B + en-tête de A : les données de A restent intactes et illisibles", not echecs, " ".join(echecs)[:220])
     d = db.partner_payment_config.find_one({"coach_email": B}) or {}
     v("la configuration écrite est bien celle de B", d.get("stripe_publishable_key") == "pk_pirate", d.get("stripe_publishable_key"))
-    # Décision produit en attente : l'onglet « Bot visiteurs » est offert à tous les coachs.
-    # Ni vert ni rouge : le constat reste affiché à chaque passage, sans être masqué.
-    r = appel("put", "/api/bot/quick-replies/reponse-banc", {"response": "PIRATE"}, porteur(jeton_session(B)))
-    d = db.bot_quick_replies.find_one({"id": "reponse-banc"}) or {}
-    print(f"RISQUE OUVERT  un coach modifie les réponses du bot communes à la plateforme — {r.status_code} {d.get('response')}")
-    semer_partenaire()
     print("\n── La route qui promettait les clés en clair")
     r = appel("get", f"/api/payment-config/raw/{A}", None, {})
     v("anonyme : /payment-config/raw refusé, aucune clé", r.status_code == 403 and "sk_test_origine" not in r.text, r.status_code)
@@ -460,6 +450,40 @@ def tester_routes_entete():
     db.social_proofs.delete_many({"id": "preuve-a-banc"})
     db.coach_profiles.delete_many({"email": {"$regex": r"@example[0-9]*\."}})
     nettoyer_et_resemer()
+
+
+def tester_reponses_bot():
+    print("\n── Réponses du bot : communes à la plateforme, le super-admin seul les modifie")
+    URL = "/api/bot/quick-replies/reponse-banc"
+    db.bot_quick_replies.delete_many({"id": {"$in": ["reponse-banc", "autre-banc"]}})
+    db.bot_quick_replies.insert_many([
+        {"id": "reponse-banc", "label": "Origine", "response": "Origine", "active": True, "order": 90},
+        {"id": "autre-banc", "label": "Autre", "response": "Autre", "active": True, "order": 91},
+    ])
+    espace = jwt.encode({"type": "subscriber_space", "email": ADMIN, "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    for nom, entetes in (
+        ("visiteur non connecté", {}),
+        ("en-tête seul du super-admin", {"X-User-Email": ADMIN}),
+        ("en-tête seul d'un coach", {"X-User-Email": A}),
+        ("jeton d'un coach partenaire", porteur(jeton_session(A))),
+        ("jeton de coach + en-tête du super-admin", {**porteur(jeton_session(A)), "X-User-Email": ADMIN}),
+        ("jeton abonné à l'adresse du super-admin", porteur(espace)),
+    ):
+        r = appel("put", URL, {"response": "PIRATE"}, entetes)
+        d = db.bot_quick_replies.find_one({"id": "reponse-banc"}) or {}
+        v(f"{nom} : refus, réponse intacte", r.status_code in (401, 403) and d.get("response") == "Origine", (r.status_code, d.get("response")))
+    r = appel("put", URL, {"response": "Texte du super-admin"}, porteur(jeton_session(ADMIN, "super_admin")))
+    d = db.bot_quick_replies.find_one({"id": "reponse-banc"}) or {}
+    v("super-admin : modification enregistrée", r.status_code == 200 and d.get("response") == "Texte du super-admin", (r.status_code, d.get("response")))
+    autre = db.bot_quick_replies.find_one({"id": "autre-banc"}) or {}
+    v("les autres réponses sont conservées", autre.get("response") == "Autre" and autre.get("label") == "Autre", autre.get("response"))
+    r = appel("get", "/api/bot/quick-replies", None, {})
+    ids = [x.get("id") for x in r.json()] if r.status_code == 200 else []
+    v("lecture publique des visiteurs préservée", "reponse-banc" in ids and "autre-banc" in ids, r.status_code)
+    # Comme l'écran : l'intercepteur axios joint le jeton et l'adresse.
+    r = appel("get", "/api/bot/quick-replies/all", None, {**porteur(jeton_session(ADMIN, "super_admin")), "X-User-Email": ADMIN})
+    v("lecture de l'éditeur par le super-admin préservée", r.status_code == 200, r.status_code)
+    db.bot_quick_replies.delete_many({"id": {"$in": ["reponse-banc", "autre-banc"]}})
 
 
 def tester_effacer_date_cours():
@@ -635,6 +659,7 @@ def main():
         tester_routes_entete()
         tester_apercu_partage()
         tester_effacer_date_cours()
+        tester_reponses_bot()
         nettoyer()
         tester_resolution()
     finally:
