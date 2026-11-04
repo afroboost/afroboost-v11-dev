@@ -628,9 +628,48 @@ def v646_banniere_vitrine(concept_partenaire: Optional[dict], concept_plateforme
     """Bannière du partenaire s'il en a configuré une, sinon celle de la plateforme.
     C'est le serveur qui décide : sur une vitrine, le navigateur ne charge pas toujours
     le concept général, et il ne peut donc pas assurer ce repli lui-même. Pur, sans E/S."""
-    source = concept_partenaire if (concept_partenaire or {}).get("home_shop_banner_url") else concept_plateforme
-    source = source or {}
-    return {k: source.get(k, defaut) for k, defaut in _V646_BANNIERE_DEFAUTS.items()}
+    plateforme = {k: (concept_plateforme or {}).get(k, defaut) for k, defaut in _V646_BANNIERE_DEFAUTS.items()}
+    if not (concept_partenaire or {}).get("home_shop_banner_url"):
+        return {**plateforme, "home_shop_banner_repli": None}
+    sienne = {k: concept_partenaire.get(k, defaut) for k, defaut in _V646_BANNIERE_DEFAUTS.items()}
+    # Si SON média ne se charge pas, le navigateur a besoin de savoir quoi montrer.
+    return {**sienne, "home_shop_banner_repli": plateforme if plateforme["home_shop_banner_url"] else None}
+
+
+def v646_choisir_coach(candidats: List[dict], username: str) -> Optional[dict]:
+    """Le partenaire désigné par une URL de vitrine, ou None. Pur, sans E/S.
+
+    Du plus précis au moins précis : e-mail exact, identifiant, nom (ou son slug), puis
+    début d'e-mail. Le premier niveau qui trouve décide. S'il trouve DEUX partenaires,
+    l'URL est ambiguë : on ne montre personne, plutôt que le mauvais au hasard.
+    Une URL contenant « @ » désigne un e-mail précis : jamais de repli sur son préfixe.
+    """
+    u = (username or "").strip().lower()
+    comme_nom = u.replace("-", " ")
+    def _email(c): return (c.get("email") or "").lower()
+    niveaux = [
+        lambda c: _email(c) == u,
+        lambda c: str(c.get("id") or "").lower() == u,
+        lambda c: (c.get("name") or "").lower() in (u, comme_nom),
+    ]
+    if "@" not in u:
+        motifs = _v646_motifs_prefixe(u)
+        niveaux.append(lambda c: any(re.match(m, _email(c)) for m in motifs))
+    for niveau in niveaux:
+        trouves = [c for c in candidats if niveau(c)]
+        if len(trouves) == 1:
+            return trouves[0]
+        if trouves:
+            logger.warning("[V646] URL de vitrine ambiguë : %d partenaires, aucun affiché", len(trouves))
+            return None
+    return None
+
+
+def _v646_motifs_prefixe(username: str) -> List[str]:
+    """Motifs du début d'e-mail, sans injection possible. Le slug « jean-dupont » continue
+    de trouver jean.dupont@ et jean_dupont@ : un seul caractère entre deux mots, comme avant."""
+    mots = username.replace("-", " ").split(" ")
+    return [f"^{re.escape(username)}@", "^" + ".".join(re.escape(m) for m in mots) + "@"]
 
 
 @coach_router.get("/coach/vitrine/{username}")
@@ -664,15 +703,21 @@ async def get_coach_vitrine(username: str):
         # V160.2: Support slug matching - le frontend convertit "Coach Test" → "coach-test"
         # donc on accepte aussi le slug en remplacant les tirets par des espaces
         username_as_name = username.replace("-", " ")
-        username_email_local = username.split("@")[0].lower()
-        coach = await db.coaches.find_one({"$or": [
+        # V646 : tous les candidats, puis un choix explicite (v646_choisir_coach). Avant,
+        # find_one rendait le premier trouvé, et le préfixe d'e-mail n'était pas échappé.
+        _clauses = [
             {"name": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
             {"name": {"$regex": f"^{re.escape(username_as_name)}$", "$options": "i"}},
             {"email": username.lower()},
-            {"email": {"$regex": f"^{username_email_local}@", "$options": "i"}},
-            {"email": {"$regex": f"^{username_as_name.replace(' ', '.')}@", "$options": "i"}},
-            {"id": username}
-        ], "is_active": True}, {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1})
+            {"id": username},
+        ]
+        if "@" not in username:
+            _clauses += [{"email": {"$regex": m, "$options": "i"}} for m in _v646_motifs_prefixe(username.lower())]
+        _candidats = await db.coaches.find(
+            {"$or": _clauses, "is_active": True},
+            {"_id": 0, "id": 1, "name": 1, "photo_url": 1, "bio": 1, "email": 1, "platform_name": 1, "logo_url": 1},
+        ).to_list(20)
+        coach = v646_choisir_coach(_candidats, username)
         if not coach:
             raise HTTPException(status_code=404, detail="Partenaire non trouvé")
         coach_email = coach.get("email", "").lower()
@@ -735,9 +780,7 @@ async def get_coach_vitrine(username: str):
     # {...prev, ...data.concept} et la vitrine heriterait de la disposition du super-admin.
     concept_data.setdefault("heroLayout", None)
     # V646 : le concept de la plateforme n'est relu que pour ces champs, déjà publics.
-    _v646_plateforme = None
-    if not (concept or {}).get("home_shop_banner_url"):
-        _v646_plateforme = await db.concept.find_one({"id": "concept"}, {"_id": 0, **{k: 1 for k in _V646_BANNIERE_DEFAUTS}})
+    _v646_plateforme = await db.concept.find_one({"id": "concept"}, {"_id": 0, **{k: 1 for k in _V646_BANNIERE_DEFAUTS}})
     concept_data.update(v646_banniere_vitrine(concept, _v646_plateforme))
     logger.info(f"[VITRINE-V29] {username} → concept_id={concept_id}, heroVideos={len(concept_data.get('heroVideos', []))}, offers={len(offers)}, courses={len(courses)}")
     # R2b — LA VITRINE EST UNE PAGE PUBLIQUE, ET ELLE LE RESTE.

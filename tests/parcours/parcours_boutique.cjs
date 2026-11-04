@@ -526,8 +526,10 @@ print("true")`);
     // Réponse publique : les seuls champs de bannière prévus, aucune donnée privée
     const ra = await apiVitrine('coach-a-banc');
     const cles = Object.keys(ra.concept).filter((k) => /banner/.test(k)).sort();
-    const attendues = ['crop', 'thumbnail', 'trim_end', 'trim_start', 'type', 'url'].map((k) => `home_shop_banner_${k}`).sort();
-    v('T13 réponse publique : les 6 champs prévus, rien sur /boutique', JSON.stringify(cles) === JSON.stringify(attendues), cles.length);
+    const six = ['crop', 'thumbnail', 'trim_end', 'trim_start', 'type', 'url'].map((k) => `home_shop_banner_${k}`).sort();
+    const attendues = [...six, 'home_shop_banner_repli'].sort();
+    const repli = Object.keys(ra.concept.home_shop_banner_repli || {}).sort();
+    v('T13 réponse publique : les 6 champs + le repli en liste blanche, rien sur /boutique', JSON.stringify(cles) === JSON.stringify(attendues) && JSON.stringify(repli) === JSON.stringify(six), cles.length);
     v('T14 réponse publique : aucun e-mail', !JSON.stringify(ra).includes('@example.com'));
 
     // Autorisations, sur la même route
@@ -561,6 +563,154 @@ print("true")`);
     await visiteur.close();
     mongo(`
 for e,i in (("${A}","coach-a-banc"),("${B}","coach-b-banc")):
+    db.coaches.delete_one({"email":e}); db.offers.delete_one({"id":"produit-"+i}); db.concept.delete_one({"id":"concept_"+e})
+print("true")`);
+  }
+}
+
+// ═══════════════ MÉDIAS EN ÉCHEC ET IDENTIFIANTS PROCHES (base locale) ═══════════════
+async function parcoursRepliEtIdentite(browser) {
+  reinitialiserBannieres();
+  const coach = (email, id, name) => `
+db.coaches.update_one({"email":"${email}"},{"$set":{"email":"${email}","id":"${id}","name":"${name}","is_active":True}},upsert=True)
+db.offers.update_one({"id":"produit-${id}"},{"$set":{"id":"produit-${id}","name":"Produit ${id}","price":10,"images":[],"isProduct":True,"offer_type":"product","visible":True,"coach_id":"${email}","description":"test"}},upsert=True)`;
+  const A = 'jean.banc@example.com'; const B = 'jean.banc@example.org'; const C = 'jeanne.banc@example.com';
+  mongo(`${coach(A, 'jb-a', 'Jean Banc Un')}${coach(B, 'jb-b', 'Jean Banc Deux')}${coach(C, 'jb-c', 'Jeanne Banc')}
+db.concept.update_one({"id":"concept_${C}"},{"$set":{"id":"concept_${C}","coach_id":"${C}","home_shop_banner_url":"/api/files/media-partenaire/sienne.png","home_shop_banner_type":"image","home_shop_banner_trim_start":0.0,"home_shop_banner_trim_end":0.0,"home_shop_banner_thumbnail":"","home_shop_banner_crop":{"x":0.5,"y":0.5,"zoom":1.4}}},upsert=True)
+print("true")`);
+  const statut = async (u) => (await fetch(`${BASE}/api/coach/vitrine/${u}`)).status;
+  const offre = async (u) => { const r = await fetch(`${BASE}/api/coach/vitrine/${u}`); return r.status === 200 ? ((await r.json()).offers || []).map((o) => o.id).join() : `statut ${r.status}`; };
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+  await verrouiller(ctx);
+  const SEL = '#products-section .af-boutique-banniere';
+  try {
+    // ── Identifiants proches : jean.banc@example.com et jean.banc@example.org
+    v('U1 URL ambiguë (même début d\'e-mail) : personne plutôt que le mauvais', (await statut('jean.banc')) === 404);
+    // Une URL refusée se comporte comme n'importe quelle URL inconnue : la page générale,
+    // jamais la vitrine (nom, bannière, concept) de l'un des deux.
+    const etatPage = async (chemin) => {
+      const pa = await ctx.newPage();
+      await pa.goto(BASE + chemin, { waitUntil: 'domcontentloaded' });
+      await pa.waitForTimeout(2500);
+      const e = await pa.evaluate(() => ({ texte: document.body.innerText, produits: [...document.querySelectorAll('[data-testid^="voir-produit-"]')].map((x) => x.dataset.testid).sort().join() }));
+      await pa.close();
+      return e;
+    };
+    const ambigue = await etatPage('/coach/jean.banc');
+    const inconnue = await etatPage('/coach/v646-inconnu-zzz');
+    // Strictement la même page qu'une URL inconnue (le carrousel public cite les partenaires sur les deux).
+    v('U2 navigateur, URL ambiguë : aucune vitrine, même page qu\'une URL inconnue', ambigue.texte === inconnue.texte && ambigue.produits === inconnue.produits, `${ambigue.texte.length} / ${inconnue.texte.length} caractères`);
+    v('U3 e-mail exact : chacun les siens', (await offre(A)) === 'produit-jb-a' && (await offre(B)) === 'produit-jb-b', `${await offre(A)} / ${await offre(B)}`);
+    v('U4 e-mail inconnu au même début : 404, jamais un voisin', (await statut('jean.banc@example.net')) === 404 && (await statut('jeanne.banc@example.org')) === 404);
+    v('U5 identifiant et nom : URL préservées', (await offre('jb-b')) === 'produit-jb-b' && (await offre('jean-banc-un')) === 'produit-jb-a' && (await offre('Jean%20Banc%20Deux')) === 'produit-jb-b');
+    v('U6 début d\'e-mail unique : URL préservées, y compris le slug', (await offre('jeanne.banc')) === 'produit-jb-c' && (await offre('jeanne-banc')) === 'produit-jb-c');
+    const injections = await Promise.all(['.*', '%5E', 'jean.b.nc', '(a%2B)%2B%24', 'jean%7Cjeanne'].map(statut));
+    v('U7 motifs injectés : 404', injections.every((s) => s === 404), injections.join());
+    const reponse = await (await fetch(`${BASE}/api/coach/vitrine/jb-c`)).text();
+    v('U8 réponse publique : aucun e-mail', !/@example\./.test(reponse));
+
+    // ── Médias en échec, sur la vitrine de Jeanne (bannière personnelle en base locale)
+    const urlPlateforme = mongo(`print(json.dumps(db.concept.find_one({"id":"concept"})["home_shop_banner_url"]))`);
+    const MEDIA = '**/api/files/media-partenaire/**';
+    const scenario = async (nom, reponse, attente) => {
+      const p = await ctx.newPage();
+      let demandes = 0;
+      await p.route(MEDIA, async (route) => { demandes += 1; await reponse(route); });
+      await p.goto(`${BASE}/partner/jb-c`, { waitUntil: 'domcontentloaded' });
+      await pret(p, SEL);
+      await p.locator(SEL).scrollIntoViewIfNeeded();
+      await p.waitForTimeout(1500);
+      const etat = await p.evaluate((s) => { const m = document.querySelector(`${s} img, ${s} video`); const f = document.querySelector(`${s} .af-boutique-banniere-media`); return { tag: m && m.tagName, src: m && m.getAttribute('src'), style: m ? m.getAttribute('style') || '' : '', naturel: m && m.naturalWidth, fond: f ? f.style.background : '' }; }, SEL);
+      await attente(etat, demandes, p);
+      await p.close();
+    };
+    const fichier = (f) => (route) => route.fulfill({ status: 200, path: path.join(FICHIERS, f) });
+    await scenario('valide', fichier('banniere-b.png'), (e) => {
+      v('V1 média valide : le sien, avec son cadrage', e.src === '/api/files/media-partenaire/sienne.png' && e.naturel > 0 && /scale\(1\.4\)/.test(e.style), e.style);
+    });
+    for (const [nom, rep] of [
+      ['absent (404)', (r) => r.fulfill({ status: 404, body: 'absent' })],
+      ['refusé (403)', (r) => r.fulfill({ status: 403, body: 'refus' })],
+      ['serveur en panne (500)', (r) => r.fulfill({ status: 500, body: 'panne' })],
+      ['réseau coupé', (r) => r.abort()],
+      ['fichier illisible', (r) => r.fulfill({ status: 200, contentType: 'image/png', body: 'pas une image' })],
+    ]) {
+      await scenario(nom, rep, (e, n) => {
+        v(`V2 média ${nom} : bannière de la plateforme, sans son cadrage à lui, sans boucle`, e.src === urlPlateforme && e.tag === 'IMG' && !/scale\(1\.4\)/.test(e.style) && n <= 2, `${e.src} ; ${n} demande(s)`);
+      });
+    }
+
+    // Vidéo : valide (segment + miniature conservés), servie par le vrai serveur local, qui
+    // gère les plages : un faux média sans « Accept-Ranges » ne se positionne jamais.
+    const jetonC = execFileSync('python3', ['-c', 'import jwt,sys,time;print(jwt.encode({"email":sys.argv[1],"type":"coach","iat":int(time.time()),"exp":int(time.time())+1800},"pw-local-secret",algorithm="HS256"))', C], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const envoyer = async (fichier, type, mime) => {
+      const fd = new FormData();
+      fd.append('file', new Blob([fs.readFileSync(path.join(FICHIERS, fichier))], { type: mime }), fichier);
+      fd.append('asset_type', type);
+      const r = await fetch(`${BASE}/api/coach/upload-asset`, { method: 'POST', headers: { authorization: `Bearer ${jetonC}`, 'x-user-email': C }, body: fd });
+      return (await r.json()).url;
+    };
+    const urlVideo = await envoyer('clip.webm', 'video', 'video/webm');
+    const urlMini = await envoyer('banniere-b.png', 'image', 'image/png');
+    const pose = await fetch(`${BASE}/api/concept`, { method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${jetonC}`, 'x-user-email': C }, body: JSON.stringify({ home_shop_banner_url: urlVideo, home_shop_banner_type: 'video', home_shop_banner_trim_start: 1, home_shop_banner_trim_end: 6, home_shop_banner_thumbnail: urlMini }) });
+    await scenario('vidéo valide', (route) => route.fallback(), async (e, n, p) => {
+      await p.waitForFunction((s) => { const x = document.querySelector(`${s} video`); return x && x.readyState >= 2; }, SEL, { timeout: 15000 });
+      await p.waitForTimeout(1200);
+      const t = await p.evaluate((s) => document.querySelector(`${s} video`).currentTime, SEL);
+      v('V3 vidéo valide : la sienne, miniature et découpe conservées', pose.status === 200 && e.tag === 'VIDEO' && e.src === urlVideo && (await p.getAttribute(`${SEL} video`, 'poster')) === urlMini && t >= 0.8 && t <= 6.4, `t=${t.toFixed(2)}`);
+    });
+    mongo(`db.concept.update_one({"id":"concept_${C}"},{"$set":{"home_shop_banner_url":"/api/files/media-partenaire/sienne.webm","home_shop_banner_thumbnail":"/api/files/media-partenaire/mini.png"}})
+print("true")`);
+    await scenario('vidéo illisible', (r) => r.fulfill({ status: 404, body: 'absent' }), (e, n) => {
+      v('V4 vidéo absente : bannière de la plateforme, sans boucle', e.tag === 'IMG' && e.src === urlPlateforme && n <= 3, `${n} demande(s)`);
+    });
+
+    // Les deux en échec : dégradé, jamais une bannière vide, nombre de demandes borné
+    {
+      const p = await ctx.newPage();
+      let toutes = 0;
+      await p.route('**/api/files/**', async (route) => { toutes += 1; if (/media-partenaire|807c0a791f82443d/.test(route.request().url())) return route.fulfill({ status: 404, body: 'absent' }); return route.fallback(); });
+      await p.goto(`${BASE}/partner/jb-c`, { waitUntil: 'domcontentloaded' });
+      await pret(p, SEL);
+      await p.locator(SEL).scrollIntoViewIfNeeded();
+      await p.waitForTimeout(2000);
+      const avant = toutes;
+      await p.waitForTimeout(2500);
+      const e = await p.evaluate((s) => ({ media: document.querySelectorAll(`${s} img, ${s} video`).length, fond: (document.querySelector(`${s} .af-boutique-banniere-media`) || { style: {} }).style.background || '' }), SEL);
+      v('V5 sa bannière ET la générale en échec : dégradé, jamais vide', e.media === 0 && /gradient/.test(e.fond));
+      v('V6 aucune boucle de chargement', toutes === avant, `${avant} puis ${toutes}`);
+      await p.close();
+    }
+
+    // Les bannières officielles, elles aussi
+    {
+      const p = await ctx.newPage();
+      await p.route('**/api/files/807c0a791f82443d/**', (route) => route.fulfill({ status: 404, body: 'absent' }));
+      await p.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+      await pret(p, SEL);
+      await p.locator(SEL).scrollIntoViewIfNeeded();
+      await p.waitForTimeout(1500);
+      const e = await p.evaluate((s) => ({ media: document.querySelectorAll(`${s} img, ${s} video`).length, fond: (document.querySelector(`${s} .af-boutique-banniere-media`) || { style: {} }).style.background || '' }), SEL);
+      v('V7 accueil officiel, média en échec : dégradé, jamais vide', e.media === 0 && /gradient/.test(e.fond));
+      await p.close();
+    }
+    mongo(`db.concept.update_one({"id":"concept"},{"$set":{"boutique_page_banner_url":"/api/files/media-partenaire/page.png","boutique_page_banner_type":"image"}})
+print("true")`);
+    {
+      const p = await ctx.newPage();
+      await p.route(MEDIA, (route) => route.fulfill({ status: 404, body: 'absent' }));
+      await p.goto(`${BASE}/boutique`, { waitUntil: 'domcontentloaded' });
+      await pret(p, '[data-testid="page-boutique-banniere"]');
+      await p.waitForTimeout(1500);
+      const e = await p.evaluate(() => { const s = '[data-testid="page-boutique-banniere"]'; return { media: document.querySelectorAll(`${s} img, ${s} video`).length, fond: (document.querySelector(`${s} .af-boutique-banniere-media`) || { style: {} }).style.background || '' }; });
+      v('V8 /boutique, média en échec : dégradé, jamais la bannière de l\'accueil', e.media === 0 && /gradient/.test(e.fond));
+      await p.close();
+    }
+  } finally {
+    await ctx.close();
+    reinitialiserBannieres();
+    mongo(`
+for e,i in (("${A}","jb-a"),("${B}","jb-b"),("${C}","jb-c")):
     db.coaches.delete_one({"email":e}); db.offers.delete_one({"id":"produit-"+i}); db.concept.delete_one({"id":"concept_"+e})
 print("true")`);
   }
@@ -813,6 +963,7 @@ async function parcoursBannieres(browser, jeton) {
   if (!seul || seul === 'mobile') await garde('mobile', () => parcoursVisiteur(browser, 'mobile', { ...devices['iPhone 13'] }));
   if (!seul || seul === 'mobile') await garde('mobile360', () => parcoursBulle(browser));
   if (!seul || seul === 'partenaires') await garde('partenaires', () => parcoursPartenaires(browser));
+  if (!seul || seul === 'repli') await garde('repli et identité', () => parcoursRepliEtIdentite(browser));
   if (!seul || seul === 'bannieres') await garde('bannières', () => parcoursBannieres(browser, jeton));
   await browser.close();
   console.log(`\nZ1 requêtes non locales coupées : ${coupes.length}`);

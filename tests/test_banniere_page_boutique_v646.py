@@ -8,6 +8,7 @@ La régression visée a déjà coûté cher (V645.4j) : `ConceptUpdate` ignore e
 silence un champ non déclaré, et le front croit avoir enregistré.
 """
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,8 +94,9 @@ PARTENAIRE = {
     "home_shop_banner_thumbnail": "/api/files/mini.jpg", "home_shop_banner_crop": {"x": 0.9, "y": 0.8, "zoom": 1.5},
     "coach_id": "lui@example.com", "boutique_page_banner_url": "/api/files/autre.jpg",
 }
-CLES = {"home_shop_banner_url", "home_shop_banner_type", "home_shop_banner_trim_start",
-        "home_shop_banner_trim_end", "home_shop_banner_thumbnail", "home_shop_banner_crop"}
+CLES_BANNIERE = {"home_shop_banner_url", "home_shop_banner_type", "home_shop_banner_trim_start",
+                 "home_shop_banner_trim_end", "home_shop_banner_thumbnail", "home_shop_banner_crop"}
+CLES = CLES_BANNIERE | {"home_shop_banner_repli"}
 
 
 def test_partenaire_configure_sa_banniere_complete():
@@ -122,3 +124,72 @@ def test_aucune_banniere_nulle_part():
     b = v646_banniere_vitrine(None, None)
     assert set(b) == CLES and b["home_shop_banner_url"] == "" and b["home_shop_banner_crop"] is None
 
+
+def test_repli_fourni_seulement_quand_le_partenaire_a_sa_banniere():
+    avec = v646_banniere_vitrine(PARTENAIRE, PLATEFORME)["home_shop_banner_repli"]
+    assert avec["home_shop_banner_url"] == "/api/files/plateforme.jpg"
+    assert avec["home_shop_banner_crop"] == {"x": 0.1, "y": 0.2, "zoom": 2}
+    assert set(avec) == CLES_BANNIERE, "liste blanche : rien d'autre du concept de la plateforme"
+    assert v646_banniere_vitrine(None, PLATEFORME)["home_shop_banner_repli"] is None
+    assert v646_banniere_vitrine(PARTENAIRE, {"home_shop_banner_url": ""})["home_shop_banner_repli"] is None
+
+
+# -------------------------------------------- QUEL PARTENAIRE POUR QUELLE URL
+from api.routes.coach_routes import v646_choisir_coach as choisir, _v646_motifs_prefixe as motifs  # noqa: E402
+
+JEAN_A = {"id": "c1", "name": "Jean Martin", "email": "jean@a.com"}
+JEAN_B = {"id": "c2", "name": "Jean Durand", "email": "jean@b.com"}
+JEANNE = {"id": "c3", "name": "Jeanne", "email": "jeanne@a.com"}
+DOUBLE = {"id": "c4", "name": "Marie Dupont", "email": "marie.dupont@a.com"}
+TOUS = [JEAN_A, JEAN_B, JEANNE, DOUBLE]
+
+
+def test_les_url_qui_designent_un_seul_partenaire_ne_changent_pas():
+    assert choisir(TOUS, "jean@a.com") is JEAN_A
+    assert choisir(TOUS, "JEAN@B.COM") is JEAN_B
+    assert choisir(TOUS, "c2") is JEAN_B
+    assert choisir(TOUS, "Jean Martin") is JEAN_A
+    assert choisir(TOUS, "jean-durand") is JEAN_B
+    assert choisir(TOUS, "jeanne") is JEANNE
+    assert choisir(TOUS, "marie.dupont") is DOUBLE
+    assert choisir(TOUS, "marie-dupont") is DOUBLE
+
+
+def test_le_slug_trouve_encore_un_email_a_separateur():
+    tiret_bas = {"id": "c5", "name": "X", "email": "paul_dupont@a.com"}
+    assert choisir([tiret_bas], "paul-dupont") is tiret_bas
+
+
+def test_prefixe_ambigu_personne_plutot_que_le_mauvais():
+    assert choisir(TOUS, "jean") is None
+
+
+def test_un_niveau_precis_l_emporte_sur_un_prefixe_ambigu():
+    nomme = {"id": "c6", "name": "jean", "email": "x@a.com"}
+    assert choisir(TOUS + [nomme], "jean") is nomme
+
+
+def test_meme_nom_deux_partenaires_personne():
+    assert choisir([JEAN_A, {**JEAN_B, "name": "Jean Martin"}], "jean-martin") is None
+
+
+def test_email_inconnu_ne_retombe_jamais_sur_son_prefixe():
+    assert choisir(TOUS, "jean@z.com") is None
+    assert choisir([JEANNE], "jeanne@z.com") is None
+
+
+def test_jean_ne_trouve_pas_jeanne():
+    assert choisir([JEANNE], "jean") is None
+
+
+def test_injection_de_motif_neutralisee():
+    for u in (".*", "^", ".*@a.com", "(a+)+$", "je.n", "[a-z]+", "jean|marie"):
+        assert choisir(TOUS, u) is None, u
+    for m in motifs(".*") + motifs("(a+)+$"):
+        assert re.match(m, "jean@a.com") is None
+
+
+def test_inconnu():
+    assert choisir(TOUS, "personne") is None
+    assert choisir([], "jean") is None
+    assert choisir(TOUS, "") is None

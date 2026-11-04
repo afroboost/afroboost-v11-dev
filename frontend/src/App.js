@@ -10386,6 +10386,7 @@ function App() {
                 trimEnd={concept.home_shop_banner_trim_end}
                 thumbnail={concept.home_shop_banner_thumbnail}
                 crop={concept.home_shop_banner_crop}
+                repli={concept.home_shop_banner_repli}
               />
               <div className="af-boutique-banniere-overlay">
                 <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
