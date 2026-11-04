@@ -115,6 +115,18 @@ def is_super_admin(email: str) -> bool:
     return email and email.lower().strip() in [e.lower() for e in SUPER_ADMIN_EMAILS]
 
 
+async def v646_identite_partenaire(request) -> str:
+    """V646 — identité d'un partenaire sur ses données sensibles : le jeton signé.
+
+    Si l'en-tête désigne la même adresse, son orthographe est conservée : des configurations
+    anciennes sont peut-être enregistrées avec une majuscule, et doivent rester retrouvées.
+    """
+    from api.server import v646_coach_signe
+    email = await v646_coach_signe(request)
+    entete = (request.headers.get("X-User-Email") or "").strip()
+    return entete if entete.lower() == (email or "").lower() else email
+
+
 async def v646_compte_coach_autorise(database, email: str) -> bool:
     """V646 — ce jeton signé correspond-il à un compte qui peut écrire AUJOURD'HUI ?
 

@@ -1434,7 +1434,7 @@ const ConceptEditor = ({
             try {
               const res = await fetch(`${API}/audio-tracks/${trackId}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+                headers: enTetesCoach({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail }), // V646
                 body: JSON.stringify({ visible: !currentVisible })
               });
               if (res.ok) {
@@ -1448,7 +1448,7 @@ const ConceptEditor = ({
             try {
               const res = await fetch(`${API}/audio-tracks/${trackId}`, {
                 method: 'DELETE',
-                headers: { 'X-User-Email': coachEmail }
+                headers: enTetesCoach({ 'X-User-Email': coachEmail }) // V646
               });
               if (res.ok) {
                 setMasterAudioTracks(prev => prev.filter(t => t.id !== trackId));

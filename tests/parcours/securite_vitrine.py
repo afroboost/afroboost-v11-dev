@@ -346,6 +346,150 @@ def tester_quatre_failles():
     nettoyer_et_resemer()
 
 
+# Routes qui lisaient SEULEMENT l'en-tête : le drapeau REQUIRE_COACH_JWT ne les protège pas.
+ROUTES_ENTETE = [
+    ("PUT /payment-config", "put", "/api/payment-config", {"stripe_publishable_key": "pk_pirate", "twint_direct_url": "https://pirate.example/t"}),
+    ("GET /payment-config", "get", "/api/payment-config", None),
+    ("POST /payment-config/test", "post", "/api/payment-config/test/stripe", {}),
+    ("GET /coach-profile", "get", "/api/coach-profile", None),
+    ("PUT /coach-profile", "put", "/api/coach-profile", {"name": "PIRATE"}),
+    ("POST /coach/faq", "post", "/api/coach/faq", {"question": "PIRATE", "answer": "PIRATE"}),
+    ("PUT /coach/faq/{A}", "put", "/api/coach/faq/faq-a-banc", {"question": "PIRATE", "answer": "PIRATE"}),
+    ("DELETE /coach/faq/{A}", "delete", "/api/coach/faq/faq-a-banc", None),
+    ("POST /audio-tracks", "post", "/api/audio-tracks", {"title": "PIRATE", "url": "https://example.test/x.mp3"}),
+    ("PUT /audio-tracks/{A}", "put", "/api/audio-tracks/piste-a-banc", {"title": "PIRATE"}),
+    ("DELETE /audio-tracks/{A}", "delete", "/api/audio-tracks/piste-a-banc", None),
+    ("POST /stripe/connect/create-account", "post", "/api/stripe/connect/create-account", {}),
+    ("POST /stripe/connect/account-link", "post", "/api/stripe/connect/account-link", {}),
+    ("GET /stripe/connect/status", "get", "/api/stripe/connect/status", None),
+    ("PUT /audio-tracks/reorder", "put", "/api/audio-tracks/reorder", {"track_ids": []}),
+    ("PUT /bot/quick-replies/{id}", "put", "/api/bot/quick-replies/reponse-banc", {"response": "PIRATE"}),
+    ("POST /credits/deduct", "post", "/api/credits/deduct", {"action": "banc"}),
+    ("POST /stripe/create-credit-checkout", "post", "/api/stripe/create-credit-checkout", {"pack_id": "banc"}),
+    ("GET /social-proofs", "get", "/api/social-proofs", None),
+    ("PUT /social-proofs/{A}/review", "put", "/api/social-proofs/preuve-a-banc/review", {"action": "reject"}),
+    ("DELETE /social-proofs/{A}", "delete", "/api/social-proofs/preuve-a-banc", None),
+]
+
+
+FUITES = ("pk_origine", "sk_test_origine", "1990-01-01", "demande.privee@example.org")
+
+
+def semer_partenaire():
+    db.partner_payment_config.update_one({"coach_email": A}, {"$set": {"coach_email": A, "stripe_publishable_key": "pk_origine", "twint_direct_url": "https://origine.example/t", "stripe_secret_key": "sk_test_origine_banc"}}, upsert=True)
+    db.coach_profiles.update_one({"email": A}, {"$set": {"email": A, "display_name": "Origine", "birthday": "1990-01-01"}}, upsert=True)
+    db.bot_quick_replies.update_one({"id": "reponse-banc"}, {"$set": {"id": "reponse-banc", "response": "Origine"}}, upsert=True)
+    db.social_proofs.update_one({"id": "preuve-a-banc"}, {"$set": {"id": "preuve-a-banc", "coach_id": A, "status": "pending", "email": "demande.privee@example.org"}}, upsert=True)
+    db.faqs.update_one({"id": "faq-a-banc"}, {"$set": {"id": "faq-a-banc", "coach_email": A, "question": "Origine", "answer": "Origine"}}, upsert=True)
+    db.audio_tracks.update_one({"id": "piste-a-banc"}, {"$set": {"id": "piste-a-banc", "coach_email": A, "title": "Origine", "url": "https://example.test/a.mp3"}}, upsert=True)
+
+
+def etat_partenaire():
+    return json.dumps({
+        "paiement": db.partner_payment_config.find_one({"coach_email": A}, {"_id": 0}),
+        "faq": db.faqs.find_one({"id": "faq-a-banc"}, {"_id": 0}),
+        "piste": db.audio_tracks.find_one({"id": "piste-a-banc"}, {"_id": 0}),
+        "coach": db.coaches.find_one({"email": A}, {"_id": 0}),
+        "profil": db.coach_profiles.find_one({"email": A}, {"_id": 0}),
+        "reponse": db.bot_quick_replies.find_one({"id": "reponse-banc"}, {"_id": 0}),
+        "preuve": db.social_proofs.find_one({"id": "preuve-a-banc"}, {"_id": 0}),
+        "pirates_faq": db.faqs.count_documents({"question": "PIRATE", "coach_email": A}),
+        "pirates_pistes": db.audio_tracks.count_documents({"title": "PIRATE", "coach_email": A}),
+    }, sort_keys=True, default=str)
+
+
+def tester_routes_entete():
+    print("\n── Routes partenaires qui ne lisaient que l'en-tête")
+    semer_partenaire()
+    espace = jwt.encode({"type": "subscriber_space", "email": A, "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    for acteur, entetes, attendu_statut in (("anonyme", {}, (401,)), ("en-tête seul au nom de A", {"X-User-Email": A}, (401,)), ("jeton abonné au nom de A", {**porteur(espace), "X-User-Email": A}, (401,))):
+        echecs = []
+        for nom, meth, url, corps in ROUTES_ENTETE:
+            avant = etat_partenaire()
+            r = appel(meth, url, corps, entetes)
+            # GET /coach-profile répond 200 sans jeton, mais VIDE : ce qui compte est qu'il ne livre rien.
+            refus = attendu_statut + ((200,) if nom == "GET /coach-profile" else ())
+            if r.status_code not in refus or etat_partenaire() != avant or any(s in r.text for s in FUITES):
+                echecs.append(f"{nom}={r.status_code}")
+                semer_partenaire()
+        v(f"{acteur} : refus sur les {len(ROUTES_ENTETE)} routes, rien d'écrit", not echecs, " ".join(echecs)[:220])
+    print("\n── Le jeton de B avec l'en-tête de A n'agit jamais au nom de A")
+    entetes = {**porteur(jeton_session(B)), "X-User-Email": A}
+    echecs = []
+    for nom, meth, url, corps in ROUTES_ENTETE:
+        # Ces réponses sont communes à la plateforme, pas à A : mesurées à part juste après.
+        if nom.startswith("PUT /bot/quick-replies"):
+            continue
+        avant = etat_partenaire()
+        r = appel(meth, url, corps, entetes)
+        if etat_partenaire() != avant or any(s in r.text for s in FUITES):
+            echecs.append(f"{nom}={r.status_code}")
+            semer_partenaire()
+    v("jeton de B + en-tête de A : les données de A restent intactes et illisibles", not echecs, " ".join(echecs)[:220])
+    d = db.partner_payment_config.find_one({"coach_email": B}) or {}
+    v("la configuration écrite est bien celle de B", d.get("stripe_publishable_key") == "pk_pirate", d.get("stripe_publishable_key"))
+    # Décision produit en attente : l'onglet « Bot visiteurs » est offert à tous les coachs.
+    # Ni vert ni rouge : le constat reste affiché à chaque passage, sans être masqué.
+    r = appel("put", "/api/bot/quick-replies/reponse-banc", {"response": "PIRATE"}, porteur(jeton_session(B)))
+    d = db.bot_quick_replies.find_one({"id": "reponse-banc"}) or {}
+    print(f"RISQUE OUVERT  un coach modifie les réponses du bot communes à la plateforme — {r.status_code} {d.get('response')}")
+    semer_partenaire()
+    print("\n── La route qui promettait les clés en clair")
+    r = appel("get", f"/api/payment-config/raw/{A}", None, {})
+    v("anonyme : /payment-config/raw refusé, aucune clé", r.status_code == 403 and "sk_test_origine" not in r.text, r.status_code)
+    r = appel("get", f"/api/payment-config/raw/{A}", None, porteur(jeton_session(A)))
+    v("même le propriétaire : aucune clé en clair", "sk_test_origine" not in r.text, r.status_code)
+    r = appel("get", f"/api/payment-config/raw/{A}", None, porteur(jeton_session(ADMIN, "super_admin")))
+    v("super-admin : aucune clé en clair non plus", "sk_test_origine" not in r.text, r.status_code)
+    print("\n── Accès légitime : le jeton seul suffit désormais (règle V310c)")
+    ja = porteur(jeton_session(A))
+    for nom, meth, url, corps in ROUTES_ENTETE:
+        semer_partenaire()
+        r = appel(meth, url, corps, ja)
+        v(f"jeton de A : {nom} n'est plus refusé", r.status_code not in (401, 403), r.status_code)
+    db.coaches.update_one({"email": A}, {"$set": {"is_active": False}})
+    r = appel("put", "/api/payment-config", {"stripe_public_key": "pk_pirate"}, ja)
+    v("coach désactivé : 403 sur sa configuration de paiement", r.status_code == 403, r.status_code)
+    r = appel("get", "/api/coach-profile", None, ja)
+    v("jeton de A : il lit son profil complet (règle V310c)", r.status_code == 200 and r.json().get("display_name"), r.text[:80])
+    db.coaches.update_one({"email": A}, {"$set": {"is_active": True}})
+    db.partner_payment_config.delete_many({"coach_email": {"$in": [A, B]}})
+    db.faqs.delete_many({"$or": [{"id": "faq-a-banc"}, {"question": "PIRATE"}]})
+    db.audio_tracks.delete_many({"$or": [{"id": "piste-a-banc"}, {"title": "PIRATE"}]})
+    db.bot_quick_replies.delete_many({"id": "reponse-banc"})
+    db.social_proofs.delete_many({"id": "preuve-a-banc"})
+    db.coach_profiles.delete_many({"email": {"$regex": r"@example[0-9]*\."}})
+    nettoyer_et_resemer()
+
+
+def tester_effacer_date_cours():
+    print("\n── Un cours : une date vide efface bien la date (cours récurrent)")
+    db.courses.update_one({"id": "cours-date-banc"}, {"$set": {"id": "cours-date-banc", "coach_id": A, "name": "Date Banc", "date": "2026-12-01"}}, upsert=True)
+    r = appel("put", "/api/courses/cours-date-banc", {"date": ""}, porteur(jeton_session(A)))
+    d = db.courses.find_one({"id": "cours-date-banc"}) or {}
+    v("PUT avec date vide : la date est effacée", r.status_code == 200 and d.get("date") == "", (r.status_code, d.get("date")))
+    r = appel("put", "/api/courses/cours-date-banc", {"name": "Renomme", "date": None}, porteur(jeton_session(A)))
+    d = db.courses.find_one({"id": "cours-date-banc"}) or {}
+    v("PUT avec date nulle : rien n'est effacé, le reste est écrit", r.status_code == 200 and d.get("date") == "" and d.get("name") == "Renomme", (r.status_code, d.get("name")))
+    db.courses.delete_many({"id": "cours-date-banc"})
+
+
+def tester_apercu_partage():
+    print("\n── Aperçu de partage : les champs d'un partenaire ne deviennent jamais du code")
+    charge = '"/></title><script>alert(1)</script><img src=x onerror=alert(2)>'
+    r = appel("post", "/api/coach/update-seo", {"meta_title": charge, "meta_description": charge}, porteur(jeton_session(A)))
+    v("jeton de A : il enregistre son référencement", r.status_code == 200, r.status_code)
+    db.coaches.update_one({"email": A}, {"$set": {"name": "Apercu Banc", "logo_url": charge, "platform_name": charge, "accent_color": charge}})
+    r = appel("get", "/api/og/Apercu%20Banc", None, {})
+    v("/api/og : la page répond", r.status_code == 200, r.status_code)
+    v("/api/og : aucune balise injectée", "<script>alert" not in r.text and "<img src=x" not in r.text, r.text[r.text.find("<title>"):][:90])
+    v("/api/og : le texte reste présent, échappé", "&lt;script&gt;" in r.text, "")
+    db.coaches.update_one({"email": A}, {"$set": {"is_active": False}})
+    r = appel("get", "/api/og/Apercu%20Banc", None, {})
+    v("/api/og : un coach désactivé n'a plus d'aperçu à son nom", "Apercu Banc" not in r.text and "&lt;script&gt;" not in r.text, r.text[:70])
+    db.coaches.update_one({"email": A}, {"$set": {"is_active": True, "name": "Coach A Banc", "meta_title": "", "meta_description": "", "logo_url": "", "platform_name": "", "accent_color": ""}})
+
+
 def nettoyer_et_resemer():
     nettoyer()
     semer()
@@ -488,6 +632,9 @@ def main():
         tester_refus()
         tester_acces_legitime()
         tester_quatre_failles()
+        tester_routes_entete()
+        tester_apercu_partage()
+        tester_effacer_date_cours()
         nettoyer()
         tester_resolution()
     finally:

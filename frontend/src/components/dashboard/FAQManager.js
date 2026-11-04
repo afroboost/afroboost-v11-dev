@@ -32,18 +32,25 @@ const FAQManager = ({ API, coachEmail, t }) => {
     if (!newQuestion.trim()) return;
     setSaving(true);
     try {
+      // V646 : `fetch` ne reçoit pas le jeton de l'intercepteur axios : il faut le joindre.
+      let res;
       if (editingId) {
-        await fetch(`${API}/coach/faq/${editingId}`, {
+        res = await fetch(`${API}/coach/faq/${editingId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+          headers: enTetesCoach({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail }),
           body: JSON.stringify({ question: newQuestion, answer: newAnswer })
         });
       } else {
-        await fetch(`${API}/coach/faq`, {
+        res = await fetch(`${API}/coach/faq`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+          headers: enTetesCoach({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail }),
           body: JSON.stringify({ question: newQuestion, answer: newAnswer, order: faqs.length })
         });
+      }
+      // Refusé : le texte saisi reste affiché, rien n'est perdu.
+      if (!res.ok) {
+        window.alert('Enregistrement impossible. Reconnectez-vous puis réessayez.');
+        return;
       }
       setNewQuestion('');
       setNewAnswer('');
@@ -59,10 +66,14 @@ const FAQManager = ({ API, coachEmail, t }) => {
   const handleDelete = async (faqId) => {
     if (!window.confirm('Supprimer cette FAQ ?')) return;
     try {
-      await fetch(`${API}/coach/faq/${faqId}`, {
+      const res = await fetch(`${API}/coach/faq/${faqId}`, {
         method: 'DELETE',
-        headers: { 'X-User-Email': coachEmail }
+        headers: enTetesCoach({ 'X-User-Email': coachEmail })
       });
+      if (!res.ok) {
+        window.alert('Suppression impossible. Reconnectez-vous puis réessayez.');
+        return;
+      }
       await loadFaqs();
     } catch (err) {
       console.error('[FAQ delete]', err);

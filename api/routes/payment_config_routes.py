@@ -80,9 +80,8 @@ def compute_is_configured(config: dict) -> bool:
 @router.get("")
 async def get_payment_config(request: Request):
     """Récupère la configuration de paiement du partenaire (clés masquées)"""
-    coach_email = request.headers.get("X-User-Email")
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    from api.routes.shared import v646_identite_partenaire
+    coach_email = await v646_identite_partenaire(request)  # V646 : jamais l'en-tête seul
 
     config = await db["partner_payment_config"].find_one({"coach_email": coach_email})
 
@@ -137,9 +136,10 @@ async def get_payment_config(request: Request):
 @router.put("")
 async def update_payment_config(request: Request, config: PaymentConfigUpdate):
     """Met à jour la configuration de paiement du partenaire"""
-    coach_email = request.headers.get("X-User-Email")
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    # V646 : avec l'en-tête seul, n'importe qui remplaçait la clé Stripe ou le lien TWINT d'un
+    # partenaire, et ses clients payaient alors un autre compte.
+    from api.routes.shared import v646_identite_partenaire
+    coach_email = await v646_identite_partenaire(request)
 
     # Charger la config existante pour gérer les clés masquées
     existing = await db["partner_payment_config"].find_one({"coach_email": coach_email})
@@ -251,20 +251,16 @@ async def get_payment_status(coach_email: str):
 async def get_raw_payment_config(request: Request, coach_email: str):
     """Récupère la config COMPLÈTE (clés non masquées) — usage interne checkout uniquement.
     Protégé : accessible uniquement par le système (pas d'endpoint public exposé au frontend)."""
-    # Vérification que c'est un appel interne (même serveur)
-    # En production, cet endpoint sera appelé uniquement par checkout_routes.py côté serveur
-    config = await db["partner_payment_config"].find_one({"coach_email": coach_email})
-    if not config:
-        return None
-    return config
+    # V646 : cette protection n'existait que dans le commentaire. Seul un plantage sur le `_id`
+    # empêchait la route, ouverte à tous, de renvoyer les clés en clair. Aucun code ne l'appelle.
+    raise HTTPException(status_code=403, detail="Route interne désactivée")
 
 
 @router.post("/test/{method}")
 async def test_payment_method(method: str, request: Request):
     """Teste la validité d'une clé API pour une méthode de paiement"""
-    coach_email = request.headers.get("X-User-Email")
-    if not coach_email:
-        raise HTTPException(status_code=401, detail="Authentification requise")
+    from api.routes.shared import v646_identite_partenaire
+    coach_email = await v646_identite_partenaire(request)  # V646 : jamais l'en-tête seul
 
     config = await db["partner_payment_config"].find_one({"coach_email": coach_email})
     if not config:

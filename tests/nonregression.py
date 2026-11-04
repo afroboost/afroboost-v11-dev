@@ -3230,6 +3230,26 @@ def t162_v646_entete_seul_refuse():
            all(s in (401, 403) for s in statuts.values()), str({k: v for k, v in statuts.items() if v not in (401, 403)}))
 
 
+def t163_v646_donnees_partenaire_entete_seul_refuse():
+    """Adresse FICTIVE, à dessein : même si un refus manquait, aucun vrai partenaire ne serait touché."""
+    if not _v646_deploye():
+        skip(163, "V646 données partenaire", "V646 pas encore en ligne : écriture non envoyée")
+        return
+    fictif = "nonregression-v646@example.invalid"
+    essais = [("put", "/api/payment-config"), ("post", "/api/payment-config/test/stripe"),
+              ("post", "/api/stripe/connect/create-account"), ("post", "/api/stripe/connect/account-link"),
+              ("put", "/api/coach-profile"), ("post", "/api/coach/faq"), ("post", "/api/audio-tracks"),
+              ("post", "/api/credits/deduct")]
+    statuts = {}
+    for meth, chemin in essais:
+        for nom, entetes in (("anonyme", {}), ("en-tête", {"X-User-Email": fictif})):
+            statuts[f"{chemin} {nom}"] = getattr(requests, meth)(_url(chemin), json={}, headers=entetes, timeout=TIMEOUT).status_code
+    brut = requests.get(_url(f"/api/payment-config/raw/{fictif}"), timeout=TIMEOUT).status_code
+    record(163, "V646 données partenaire : anonyme et en-tête seul refusés, /payment-config/raw fermée",
+           all(s in (401, 403) for s in statuts.values()) and brut == 403,
+           str({k: v for k, v in statuts.items() if v not in (401, 403)}) + f" raw={brut}")
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3301,7 +3321,7 @@ def main():
                    t156_v646_boutique_et_concept_public, t157_v646_ecriture_banniere_sans_auth,
                    t158_v646_vitrine_url_inconnue_ou_injection, t159_v646_media_absent,
                    t160_v646_vitrines_actives_bannieres_publiques,
-                   t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse,
+                   t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

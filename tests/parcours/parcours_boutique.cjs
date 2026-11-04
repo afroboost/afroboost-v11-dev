@@ -479,6 +479,21 @@ print("true")`);
       p.getByRole('button', { name: 'Enregistrer', exact: true }).click(),
     ]);
     v('T0 session coach réelle : le Wizard enregistre son offre', envoiOffre.status() === 200, envoiOffre.status());
+    // Audit final : la configuration de paiement, depuis le vrai écran, avec la vraie session.
+    await p.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    await pret(p, 'button:has-text("Offres & Cours")');
+    await p.locator('button:has-text("Offres & Cours")').first().click();
+    await p.locator('button', { hasText: 'Paiements' }).first().click();
+    await pret(p, '[data-testid="twint-url-input"]');
+    const lienTwint = 'https://pay.example.test/coach-a-banc';
+    const [envoiPaiement] = await Promise.all([
+      p.waitForResponse((r) => r.request().method() === 'PUT' && /\/api\/payment-config$/.test(r.url()), { timeout: 15000 }),
+      p.locator('[data-testid="twint-url-input"]').fill(lienTwint),
+    ]);
+    v('T0p1 session coach réelle : la configuration de paiement est enregistrée', envoiPaiement.status() === 200, envoiPaiement.status());
+    v('T0p2 cet envoi porte bien le jeton de session', /^Bearer /.test(envoiPaiement.request().headers().authorization || ''), '');
+    const relue = await (await fetch(BASE + '/api/payment-config', { headers: { Authorization: 'Bearer ' + jetonA } })).json();
+    v('T0p3 relue par le serveur, au nom de ce coach', relue.twint_direct_url === lienTwint && relue.coach_email === A, relue.coach_email);
     await ouvrir();
     v('T2 un seul éditeur : pas de rubrique Page Boutique pour un partenaire', (await p.locator('details[data-testid$="-section"]').count()) === 1);
     const racine = p.locator('[data-testid="banniere-boutique-section"]');

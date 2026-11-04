@@ -2523,8 +2523,10 @@ async def update_course(course_id: str, course_update: dict, request: Request):
     # Fusionner les données (mise à jour partielle)
     # V646 : id, _id, coach_id et owner_* ne changent jamais par cette route, quel que soit
     # l'appelant. Ils sont ignorés et non refusés : le tableau de bord renvoie le cours entier.
-    update_data = {k: v for k, v in course_update.items()
-                   if v is not None and k not in ("id", "_id", "coach_id") and not k.startswith("owner_")}
+    update_data = {k: v for k, v in course_update.items() if v is not None}
+    for _v646_cle in list(update_data):
+        if _v646_cle in ("id", "_id", "coach_id") or _v646_cle.startswith("owner_"):
+            del update_data[_v646_cle]
 
     # M1-GEO1 : meme garde qu'a la creation. « Non classe » se dit en envoyant
     # une chaine vide — elle efface la region au lieu d'en inventer une.
@@ -4329,7 +4331,7 @@ async def list_audio_tracks(request: Request):
 @api_router.post("/audio-tracks")
 async def create_audio_track(request: Request):
     """Crée une nouvelle piste audio"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
 
     track_id = f"track-{uuid.uuid4().hex[:12]}"
@@ -4364,7 +4366,7 @@ class ReorderRequest(BaseModel):
 @api_router.put("/audio-tracks/reorder")
 async def reorder_audio_tracks(request: Request):
     """v48: Réordonne les pistes audio — DOIT être AVANT {track_id} pour éviter conflit de route"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     try:
         body = await request.json()
         reorder_data = ReorderRequest(**body)
@@ -4388,7 +4390,7 @@ async def reorder_audio_tracks(request: Request):
 @api_router.put("/audio-tracks/{track_id}")
 async def update_audio_track(track_id: str, request: Request):
     """Met à jour une piste audio (titre, prix, visible, etc.)"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
 
     existing = await db.audio_tracks.find_one({"id": track_id, "coach_email": email})
@@ -4407,7 +4409,7 @@ async def update_audio_track(track_id: str, request: Request):
 @api_router.delete("/audio-tracks/{track_id}")
 async def delete_audio_track(track_id: str, request: Request):
     """Supprime une piste audio"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     result = await db.audio_tracks.delete_one({"id": track_id, "coach_email": email})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Piste non trouvée")
@@ -4808,10 +4810,7 @@ async def api_deduct_credit(request: Request):
     except:
         action = "action"
     
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
-    
-    if not user_email:
-        raise HTTPException(status_code=400, detail="Email non fourni")
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     
     result = await deduct_credit(user_email, action)
     
@@ -11195,7 +11194,7 @@ async def list_social_proofs(request: Request, status: str = ""):
     le Super Admin voit tout, comme partout ailleurs.
     """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     query = get_coach_filter(user_email)  # {} pour le Super Admin
     if status:
@@ -11218,7 +11217,7 @@ async def delete_social_proof(proof_id: str, request: Request):
     trace administrative ne doit pas retirer sans preavis un acces au client.
     """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     proof = await db.social_proofs.find_one({"id": proof_id}, {"_id": 0})
     if not proof:
@@ -11243,7 +11242,7 @@ async def review_social_proof(proof_id: str, request: Request):
     inutilisable.
     """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     body = await request.json()
     action = body.get("action")
@@ -21559,7 +21558,7 @@ async def create_credit_checkout(request: Request):
     try:
         body = await request.json()
         pack_id = body.get("pack_id")
-        caller_email = request.headers.get('X-User-Email', '').lower().strip()
+        caller_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
         
         if not pack_id:
             raise HTTPException(status_code=400, detail="pack_id requis")
@@ -21973,7 +21972,7 @@ async def get_og_meta(username: str, request: Request):
                 {"name": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
                 {"email": username.lower()},
                 {"id": username}
-            ]},
+            ], "is_active": {"$ne": False}},  # V646 : plus d'aperçu au nom d'un coach désactivé
             {"_id": 0}
         )
 
@@ -21985,6 +21984,12 @@ async def get_og_meta(username: str, request: Request):
     image = coach.get("logo_url") or "https://afroboost-v11-dev-pm7l.vercel.app/logo192.png"
     url = f"https://afroboost-v11-dev-pm7l.vercel.app/coach/{username}"
     accent = coach.get("accent_color", "#D91CD2")
+    # V646 : ces champs sont saisis par le partenaire. Non échappés, ils devenaient du code
+    # exécuté sur afroboost.com, le domaine où le navigateur garde le jeton de session.
+    from html import escape as _v646_echapper
+    title, description, image, url, accent = (
+        _v646_echapper(str(_v or ""), quote=True) for _v in (title, description, image, url, accent)
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -22608,10 +22613,8 @@ async def get_coach_faqs(coach_email: str):
 @api_router.post("/coach/faq")
 async def create_faq(request: Request):
     """Créer une FAQ"""
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     faq = {
         "id": f"faq_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{os.urandom(3).hex()}",
@@ -22634,10 +22637,8 @@ async def create_faq(request: Request):
 @api_router.put("/coach/faq/{faq_id}")
 async def update_faq(faq_id: str, request: Request):
     """Modifier une FAQ"""
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     updates = {}
     for field in ["question", "answer", "category", "order"]:
@@ -22658,9 +22659,7 @@ async def update_faq(faq_id: str, request: Request):
 @api_router.delete("/coach/faq/{faq_id}")
 async def delete_faq(faq_id: str, request: Request):
     """Supprimer une FAQ"""
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     result = await db.faqs.delete_one({"id": faq_id, "coach_email": email})
     if result.deleted_count == 0:
@@ -23409,8 +23408,10 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
     from fastapi.responses import HTMLResponse
     import httpx
 
+    # V646 : `error` vient de l'adresse. Non échappé, un simple lien exécutait du code sur le site.
+    from html import escape as _v646_echapper
     if error:
-        return HTMLResponse(f"<html><body><h2>Erreur: {error}</h2><script>window.close()</script></body></html>")
+        return HTMLResponse(f"<html><body><h2>Erreur: {_v646_echapper(error)}</h2><script>window.close()</script></body></html>")
 
     if not code or not state:
         return HTMLResponse("<html><body><h2>Code manquant</h2><script>window.close()</script></body></html>")
@@ -23443,7 +23444,7 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
             tokens = token_resp.json()
 
         if "error" in tokens:
-            return HTMLResponse(f"<html><body><h2>Erreur token: {tokens.get('error_description', tokens['error'])}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
+            return HTMLResponse(f"<html><body><h2>Erreur token: {_v646_echapper(str(tokens.get('error_description', tokens['error'])))}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
 
         # Store refresh token for the coach
         await db.google_tokens.update_one(
@@ -23471,7 +23472,7 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
 
     except Exception as e:
         logger.error(f"[GOOGLE-CONTACTS] Callback error: {e}")
-        return HTMLResponse(f"<html><body><h2>Erreur: {str(e)}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
+        return HTMLResponse(f"<html><body><h2>Erreur: {_v646_echapper(str(e))}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
 
 
 @api_router.get("/google-contacts/status")
@@ -54750,7 +54751,13 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
 @api_router.get("/coach-profile")
 async def get_coach_profile(request: Request):
     """Récupère le profil du coach (photo, date de naissance)"""
-    email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : la date de naissance d'un coach se lisait avec son adresse dans un en-tête.
+    # Sans jeton, le profil vide : aucune erreur pour un écran qui l'affiche au chargement.
+    if os.environ.get("JWT_SECRET", ""):
+        from api.routes.shared import coach_jwt_email
+        email = (coach_jwt_email(request) or "").lower().strip()
+    else:
+        email = request.headers.get("X-User-Email", "").lower().strip()
     if not email:
         return {"photo_url": "", "birthday": "", "display_name": ""}
     profile = await db.coach_profiles.find_one({"email": email}, {"_id": 0})
@@ -54761,9 +54768,7 @@ async def get_coach_profile(request: Request):
 @api_router.put("/coach-profile")
 async def update_coach_profile(request: Request):
     """Met à jour le profil du coach (photo_url, birthday, display_name)"""
-    email = request.headers.get("X-User-Email", "").lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     data = await request.json()
     update = {"email": email, "updated_at": datetime.now(timezone.utc).isoformat()}
     if "photo_url" in data:
@@ -55725,9 +55730,8 @@ async def v197b_get_quick_replies_all(request: Request):
 @api_router.put("/bot/quick-replies/{reply_id}")
 async def v197b_update_quick_reply(reply_id: str, request: Request):
     """V197b: Modifier un quick reply (coach uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    # V646 : ces réponses s'affichent à tous les visiteurs du chat.
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     body = await request.json()
     allowed = {"label", "emoji", "response", "order", "active"}
