@@ -63,6 +63,9 @@ const estAutreOrigine = (url) => {
 export default function VideoTrimEditor({
   videoUrl, trimStart, trimEnd, aspectRatio, thumbnail,
   onTrimChange, onThumbnailCapture, onMetadata, onAutoCapture,
+  // V646 : facultatif, prévient le parent dès le clic. La capture est asynchrone (déplacement
+  // dans la vidéo, image) : sans ce signal, il ne l'apprenait qu'une fois l'image prête.
+  onCaptureEnCours,
   hauteurMax = '320px', posterUrl = '', libelleCapture = 'Capturer cette image comme miniature',
   disposition = 'colonne', complement = null, sousApercu = null,
   // V596 : calque FACULTATIF posé sur l'aperçu (le cadre de recadrage de Prospection → Médias).
@@ -166,6 +169,7 @@ export default function VideoTrimEditor({
     const v = videoRef.current;
     if (!v || !onThumbnailCapture) return;
     setErreur(''); setCaptureEnCours(true);
+    if (onCaptureEnCours) onCaptureEnCours(true);
     try {
       // Jamais une frame hors de l'extrait : on rentre dedans d'abord.
       if (trim && (v.currentTime < debut - 0.05 || v.currentTime > fin)) {
@@ -176,7 +180,10 @@ export default function VideoTrimEditor({
       const blob = await capturerFrame(v);
       if (!blob) { setErreur('Capture impossible sur cette vidéo (hébergement externe sans autorisation).'); return; }
       onThumbnailCapture(blob, URL.createObjectURL(blob), v.currentTime);
-    } finally { setCaptureEnCours(false); }
+    } finally {
+      setCaptureEnCours(false);
+      if (onCaptureEnCours) onCaptureEnCours(false);
+    }
   };
 
   const pct = (t) => (duree > 0 ? Math.max(0, Math.min(100, (t / duree) * 100)) : 0);

@@ -1654,6 +1654,15 @@ class Concept(BaseModel):
     # (object-position) dans [0,1], zoom dans [1,3]. Absent = cadrage centre
     # d'origine : une banniere existante rend exactement comme avant.
     home_shop_banner_crop: Optional[dict] = None
+    # V646 : bannière de la page /boutique. Mêmes réglages que celle de l'accueil,
+    # données séparées : aucune des deux ne lit ni n'écrit les champs de l'autre.
+    # Défauts vides = aucune bannière (fond dégradé), rétrocompatible sans migration.
+    boutique_page_banner_url: str = ""
+    boutique_page_banner_type: str = ""
+    boutique_page_banner_trim_start: float = 0.0
+    boutique_page_banner_trim_end: float = 0.0
+    boutique_page_banner_thumbnail: str = ""
+    boutique_page_banner_crop: Optional[dict] = None
     # Personnalisation des couleurs
     primaryColor: str = "#D91CD2"  # Couleur principale (glow)
     secondaryColor: str = "#8b5cf6"  # Couleur secondaire
@@ -1717,6 +1726,13 @@ class ConceptUpdate(BaseModel):
     home_shop_banner_thumbnail: Optional[str] = None
     # V645.4k : cadrage de la banniere — {x, y, zoom}.
     home_shop_banner_crop: Optional[dict] = None
+    # V646 : bannière de la page /boutique (voir `Concept`).
+    boutique_page_banner_url: Optional[str] = None
+    boutique_page_banner_type: Optional[str] = None
+    boutique_page_banner_trim_start: Optional[float] = None
+    boutique_page_banner_trim_end: Optional[float] = None
+    boutique_page_banner_thumbnail: Optional[str] = None
+    boutique_page_banner_crop: Optional[dict] = None
     # Personnalisation des couleurs
     primaryColor: Optional[str] = None
     secondaryColor: Optional[str] = None
@@ -21717,6 +21733,9 @@ def _v645j_normaliser_hero_gradient(updates: dict) -> None:
             updates["heroTitreLineHeight"] = 1.25
 
 
+_V646_PREFIXES_BANNIERE = ("home_shop_banner", "boutique_page_banner")
+
+
 def _v645c_normaliser_banniere(updates: dict) -> None:
     """V645.3c — normalise/valide EN PLACE les réglages de la bannière vidéo
     Boutique dans `updates` (miniature + découpe début/fin). Facultatif et
@@ -21727,37 +21746,39 @@ def _v645c_normaliser_banniere(updates: dict) -> None:
       - fin <= début (aucun extrait) → remis à 0/0 = lecture entière (sert aussi
         à EFFACER la découpe). Pur (pas d'E/S) : testable sans base.
     """
-    if "home_shop_banner_thumbnail" in updates:
-        _bt = (updates.get("home_shop_banner_thumbnail") or "").strip()
-        _btok = _bt == "" or _bt.startswith("/api/files/") or _bt.startswith("http://") or _bt.startswith("https://")
-        updates["home_shop_banner_thumbnail"] = _bt if (_btok and len(_bt) <= 2048) else ""
-    for _bk in ("home_shop_banner_trim_start", "home_shop_banner_trim_end"):
-        if _bk in updates:
-            try:
-                _bv = float(updates.get(_bk) or 0)
-            except (TypeError, ValueError):
-                _bv = 0.0
-            updates[_bk] = min(max(_bv, 0.0), 86400.0)
-    if "home_shop_banner_trim_start" in updates and "home_shop_banner_trim_end" in updates:
-        if updates["home_shop_banner_trim_end"] <= updates["home_shop_banner_trim_start"]:
-            updates["home_shop_banner_trim_start"] = 0.0
-            updates["home_shop_banner_trim_end"] = 0.0
-    # V645.4k : cadrage {x, y, zoom}. Whitelist stricte des trois cles ; toute
-    # valeur illisible retombe sur le cadrage centre. Un cadrage neutre
-    # (0.5 / 0.5 / 1) est conserve tel quel : c'est ainsi qu'on EFFACE un
-    # cadrage, puisque `None` serait filtre avant d'arriver ici.
-    if "home_shop_banner_crop" in updates:
-        _bc = updates.get("home_shop_banner_crop")
-        if not isinstance(_bc, dict):
-            updates.pop("home_shop_banner_crop", None)
-        else:
-            _propre = {}
-            for _k, _lo, _hi, _dft in (("x", 0.0, 1.0, 0.5), ("y", 0.0, 1.0, 0.5), ("zoom", 1.0, 3.0, 1.0)):
+    # V646 : même validation pour les deux bannières, chacune sur ses champs.
+    for _p in _V646_PREFIXES_BANNIERE:
+        if _p + "_thumbnail" in updates:
+            _bt = (updates.get(_p + "_thumbnail") or "").strip()
+            _btok = _bt == "" or _bt.startswith("/api/files/") or _bt.startswith("http://") or _bt.startswith("https://")
+            updates[_p + "_thumbnail"] = _bt if (_btok and len(_bt) <= 2048) else ""
+        for _bk in (_p + "_trim_start", _p + "_trim_end"):
+            if _bk in updates:
                 try:
-                    _propre[_k] = round(min(max(float(_bc.get(_k, _dft)), _lo), _hi), 4)
+                    _bv = float(updates.get(_bk) or 0)
                 except (TypeError, ValueError):
-                    _propre[_k] = _dft
-            updates["home_shop_banner_crop"] = _propre
+                    _bv = 0.0
+                updates[_bk] = min(max(_bv, 0.0), 86400.0)
+        if _p + "_trim_start" in updates and _p + "_trim_end" in updates:
+            if updates[_p + "_trim_end"] <= updates[_p + "_trim_start"]:
+                updates[_p + "_trim_start"] = 0.0
+                updates[_p + "_trim_end"] = 0.0
+        # V645.4k : cadrage {x, y, zoom}. Whitelist stricte des trois cles ; toute
+        # valeur illisible retombe sur le cadrage centre. Un cadrage neutre
+        # (0.5 / 0.5 / 1) est conserve tel quel : c'est ainsi qu'on EFFACE un
+        # cadrage, puisque `None` serait filtre avant d'arriver ici.
+        if _p + "_crop" in updates:
+            _bc = updates.get(_p + "_crop")
+            if not isinstance(_bc, dict):
+                updates.pop(_p + "_crop", None)
+            else:
+                _propre = {}
+                for _k, _lo, _hi, _dft in (("x", 0.0, 1.0, 0.5), ("y", 0.0, 1.0, 0.5), ("zoom", 1.0, 3.0, 1.0)):
+                    try:
+                        _propre[_k] = round(min(max(float(_bc.get(_k, _dft)), _lo), _hi), 4)
+                    except (TypeError, ValueError):
+                        _propre[_k] = _dft
+                updates[_p + "_crop"] = _propre
 
 
 @api_router.put("/concept")
@@ -21800,13 +21821,14 @@ async def update_concept(concept: ConceptUpdate, request: Request):
         # Type : liste blanche stricte (vide = retrait de la bannière). URL :
         # chemin interne /api/files/… (stockage média existant) ou http(s). Une
         # valeur invalide est NEUTRALISEE (vidée), jamais stockée telle quelle.
-        if "home_shop_banner_type" in updates:
-            _t = (updates.get("home_shop_banner_type") or "").strip().lower()
-            updates["home_shop_banner_type"] = _t if _t in ("image", "video") else ""
-        if "home_shop_banner_url" in updates:
-            _u = (updates.get("home_shop_banner_url") or "").strip()
-            _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
-            updates["home_shop_banner_url"] = _u if (_ok and len(_u) <= 2048) else ""
+        for _pb in _V646_PREFIXES_BANNIERE:
+            if _pb + "_type" in updates:
+                _t = (updates.get(_pb + "_type") or "").strip().lower()
+                updates[_pb + "_type"] = _t if _t in ("image", "video") else ""
+            if _pb + "_url" in updates:
+                _u = (updates.get(_pb + "_url") or "").strip()
+                _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
+                updates[_pb + "_url"] = _u if (_ok and len(_u) <= 2048) else ""
         # V645.4j — gradient titre Hero + espacement inter-lignes.
         _v645j_normaliser_hero_gradient(updates)
         # V645.3c — découpe (début/fin) + miniature de la bannière vidéo.

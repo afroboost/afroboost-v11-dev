@@ -3018,7 +3018,13 @@ export default function OfferWizard({
           l'éditeur VideoTrimEditor, aucun nouvel éditeur. */}
       {/* V645.4k : gate sur `offerId` (prop) et non `form.id`, absent du
           formulaire — la rubrique etait inatteignable pour toute offre. */}
-      {offerId === TSHIRT_OFFER_ID && <BanniereBoutiqueSection API={API} />}
+      {/* V646 : l'éditeur officiel sert les deux bannières, données séparées.
+          - Accueil : aussi pour le produit d'un coach partenaire. Il modifiait sa
+            propre bannière par l'ancien éditeur de ConceptEditor, désormais retiré :
+            sans cela il aurait perdu cette fonction (écrit dans SON concept).
+          - Page /boutique : celle de la plateforme, super-admin et T-shirt seuls. */}
+      {(offerId === TSHIRT_OFFER_ID || (!isSuperAdmin && form.isProduct)) && <BanniereBoutiqueSection API={API} cible="accueil" />}
+      {offerId === TSHIRT_OFFER_ID && isSuperAdmin && <BanniereBoutiqueSection API={API} cible="boutique" />}
     </div>
   );
 

@@ -2321,9 +2321,13 @@ body {
   }
 }
 
-/* Galerie — fond clair, grille adaptative */
+/* V646 — FOND CLAIR. Origine mesurée, en deux couches : le gris ~#F3F3F3 est
+   DANS les photos du T-shirt (fichiers 1080×1920), et le CSS le prolongeait
+   (#F3F3F3 ici, #FFF sur le panneau d'infos). On corrige le CSS seul, jamais
+   les photos : cadre sombre, panneau sombre, et des cellules au format 9/16 des
+   photos, pour qu'aucune bande n'apparaisse et qu'aucune photo ne soit coupée. */
 .af-fiche-galerie-premium {
-  background: #F3F3F3;
+  background: #0c0c10;
   position: relative;
 }
 
@@ -2359,15 +2363,16 @@ body {
 .af-fiche-cell {
   position: relative;
   overflow: hidden;
-  background: #F3F3F3;
+  background: #0c0c10;
   cursor: zoom-in;
   aspect-ratio: 1 / 1;
 }
 @media (min-width: 768px) {
   .af-fiche-grid-1 .af-fiche-cell { aspect-ratio: 3 / 4; }
-  .af-fiche-grid-2 .af-fiche-cell { aspect-ratio: 2 / 3; }
   .af-fiche-grid-4 .af-fiche-cell { aspect-ratio: auto; min-height: 200px; }
 }
+
+.af-fiche-grid-2 .af-fiche-cell { aspect-ratio: 9 / 16; }
 
 .af-fiche-cell-media {
   width: 100%;
@@ -2415,11 +2420,11 @@ body {
   pointer-events: none;
 }
 
-/* Panneau infos — fond blanc style Adidas */
+/* Panneau infos — V646 : sombre, comme le reste de la vitrine */
 .af-fiche-infos-premium {
-  background: #FFFFFF;
+  background: #111014;
   padding: 28px 24px 24px;
-  color: #111111;
+  color: #ffffff;
   gap: 16px;
   overflow-y: auto;
 }
@@ -2451,7 +2456,7 @@ body {
   line-height: 1.05;
   letter-spacing: -0.01em;
   text-transform: uppercase;
-  color: #111111;
+  color: #ffffff;
   margin: 0;
 }
 
@@ -2468,7 +2473,7 @@ body {
 /* Description */
 .af-fiche-desc-premium {
   font-size: 13px;
-  color: #454545;
+  color: rgba(255, 255, 255, 0.76);
   line-height: 1.6;
   white-space: pre-wrap;
   margin: 0;
@@ -2481,11 +2486,11 @@ body {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #888;
+  color: rgba(255, 255, 255, 0.62);
 }
 .af-fiche-variante-choix { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* Chips de variantes — style sport épuré fond blanc */
+/* Chips de variantes — style sport épuré */
 .af-fiche-chip {
   min-width: 44px;
   height: 40px;
@@ -2493,9 +2498,9 @@ body {
   border-radius: 6px;
   font-size: 13px;
   font-weight: 600;
-  border: 1.5px solid rgba(0,0,0,0.18);
-  background: #fff;
-  color: #111111;
+  border: 1.5px solid rgba(255,255,255,0.24);
+  background: transparent;
+  color: #ffffff;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
   display: flex;
@@ -2503,13 +2508,13 @@ body {
   justify-content: center;
 }
 .af-fiche-chip:hover {
-  border-color: rgba(0,0,0,0.45);
-  color: #111111;
+  border-color: rgba(255,255,255,0.55);
+  color: #ffffff;
 }
 .af-fiche-chip--sel {
   border-color: var(--primary-color, #D91CD2);
-  background: rgba(var(--primary-rgb, 217, 28, 210), 0.08);
-  color: #111111;
+  background: rgba(var(--primary-rgb, 217, 28, 210), 0.22);
+  color: #ffffff;
 }
 
 /* Quantité */
@@ -2518,7 +2523,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0;
-  border: 1.5px solid rgba(0,0,0,0.18);
+  border: 1.5px solid rgba(255,255,255,0.24);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -2527,7 +2532,7 @@ body {
   height: 40px;
   background: transparent;
   border: none;
-  color: #111111;
+  color: #ffffff;
   font-size: 18px;
   cursor: pointer;
   display: flex;
@@ -2535,15 +2540,15 @@ body {
   justify-content: center;
   transition: background 0.15s;
 }
-.af-fiche-qty-btn:hover { background: rgba(0,0,0,0.06); }
+.af-fiche-qty-btn:hover { background: rgba(255,255,255,0.1); }
 .af-fiche-qty-val {
   min-width: 36px;
   text-align: center;
   font-size: 15px;
   font-weight: 600;
-  color: #111111;
-  border-left: 1px solid rgba(0,0,0,0.12);
-  border-right: 1px solid rgba(0,0,0,0.12);
+  color: #ffffff;
+  border-left: 1px solid rgba(255,255,255,0.16);
+  border-right: 1px solid rgba(255,255,255,0.16);
   padding: 0 6px;
   line-height: 38px;
 }
@@ -2582,20 +2587,20 @@ body {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  color: #888;
+  color: rgba(255, 255, 255, 0.62);
   background: none;
   border: none;
-  border-top: 1px solid rgba(0,0,0,0.1);
+  border-top: 1px solid rgba(255,255,255,0.14);
   padding-top: 12px;
   margin-top: 4px;
   cursor: pointer;
   text-align: left;
   letter-spacing: 0.03em;
 }
-.af-fiche-infos-toggle:hover { color: #333; }
+.af-fiche-infos-toggle:hover { color: #ffffff; }
 .af-fiche-infos-body {
   font-size: 12px;
-  color: #666;
+  color: rgba(255, 255, 255, 0.66);
   line-height: 1.7;
 }
 
@@ -2607,4 +2612,34 @@ body {
   .af-fiche-grid-2 { gap: 3px; }
   .af-fiche-cta { padding: 14px 16px; font-size: 14px; }
   .af-fiche-titre-premium { font-size: clamp(22px, 6vw, 30px); }
+}
+
+/* V646 — PAGE /boutique. Tout le reste réutilise .af-boutique et .af-fiche. */
+.af-boutique-page { padding-top: 20px; color: #ffffff; }
+.af-boutique-page-grille {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;
+  margin-top: 22px; scroll-margin-top: calc(var(--af-bandeau, 0px) + var(--af-nav, 49px) + 12px);
+}
+.af-boutique-page-retour {
+  display: inline-flex; align-items: center; gap: 7px; margin-bottom: 14px;
+  padding: 8px 14px 8px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5);
+  background: rgba(var(--primary-rgb, 217, 28, 210), 0.08);
+  color: #ffffff; font-size: 13px; font-weight: 600;
+}
+.af-boutique-page-retour:hover { background: rgba(var(--primary-rgb, 217, 28, 210), 0.2); }
+.af-boutique-page-retour:focus-visible { outline: 2px solid var(--primary-color, #D91CD2); outline-offset: 2px; }
+.af-boutique-page-message { width: 100%; padding: 40px 16px; text-align: center; color: rgba(255, 255, 255, 0.7); font-size: 14px; }
+
+/* V646 — FICHE PRODUIT, TÉLÉPHONE : LA BULLE NE RECOUVRE PLUS LE PRIX.
+   Le prix est aligné à gauche, là où V543 pose la bulle. V542 l'avait placée à
+   gauche à cause de la colonne d'actions des publications, absente de cette
+   page : elle reprend donc la droite ici, à la même hauteur. Une position choisie
+   au doigt reste prioritaire (bulleChat.js la pose en ligne). */
+@media (max-width: 1023px) {
+  body[data-af-fiche-produit] .chat-widget-button[data-testid="chat-widget-button"] {
+    left: auto !important;
+    right: 12px !important;
+    bottom: 60px !important;
+  }
 }
