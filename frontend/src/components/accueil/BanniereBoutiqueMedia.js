@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { styleCadrage } from '../../utils/banniereCadrage';
 
 /**
@@ -12,9 +12,24 @@ import { styleCadrage } from '../../utils/banniereCadrage';
  * Image : simple <img>. Aucun média : fond dégradé discret (fallback).
  *
  * Indépendant des médias de l'offre T-shirt (lit uniquement les champs concept).
+ *
+ * V646 : un média qui ne se charge pas (absent, refusé, illisible) laisse la place à
+ * `repli`, la bannière de la plateforme sur la vitrine d'un partenaire, sinon au fond
+ * dégradé. Deux sources au plus, chacune essayée une seule fois : jamais de boucle.
  */
-export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, thumbnail, crop }) {
+export default function BanniereBoutiqueMedia({ url: urlPrincipale, type: typePrincipal, trimStart: debutPrincipal, trimEnd: finPrincipale, thumbnail: miniPrincipale, crop: cropPrincipal, repli }) {
   const videoRef = useRef(null);
+  // Les URL en échec, pas un booléen : un nouveau média repart de zéro.
+  const [urlsEnEchec, setUrlsEnEchec] = useState([]);
+  const surRepli = !!urlPrincipale && urlsEnEchec.includes(urlPrincipale);
+  const url = surRepli ? ((repli && repli.home_shop_banner_url) || '') : urlPrincipale;
+  const type = surRepli ? (repli && repli.home_shop_banner_type) : typePrincipal;
+  const trimStart = surRepli ? (repli && repli.home_shop_banner_trim_start) : debutPrincipal;
+  const trimEnd = surRepli ? (repli && repli.home_shop_banner_trim_end) : finPrincipale;
+  const thumbnail = surRepli ? (repli && repli.home_shop_banner_thumbnail) : miniPrincipale;
+  const crop = surRepli ? (repli && repli.home_shop_banner_crop) : cropPrincipal;
+  const enEchec = !!url && urlsEnEchec.includes(url);
+  const signalerEchec = () => setUrlsEnEchec((liste) => (liste.includes(url) ? liste : [...liste, url]));
   // V645.4k — cadrage choisi par le coach. Absent = rendu d'origine
   // (`object-fit: cover` du CSS), donc une bannière existante ne bouge pas.
   const styleCrop = crop ? styleCadrage(crop) : undefined;
@@ -24,7 +39,7 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
 
   useEffect(() => {
     const v = videoRef.current;
-    if (!v || type !== 'video' || !decoupe) return undefined;
+    if (!v || enEchec || type !== 'video' || !decoupe) return undefined;
 
     const caler = () => {
       try {
@@ -74,9 +89,9 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
       v.removeEventListener('timeupdate', surTemps);
       v.removeEventListener('ended', surFin);
     };
-  }, [type, decoupe, ts, te, url]);
+  }, [enEchec, type, decoupe, ts, te, url]);
 
-  if (!url) {
+  if (!url || enEchec) {
     return (
       <div
         className="af-boutique-banniere-media"
@@ -87,7 +102,9 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
   if (type === 'video') {
     return (
       <video
+        key={url}
         ref={videoRef}
+        onError={signalerEchec}
         className="af-boutique-banniere-media"
         src={url}
         poster={thumbnail || undefined}
@@ -100,5 +117,5 @@ export default function BanniereBoutiqueMedia({ url, type, trimStart, trimEnd, t
       />
     );
   }
-  return <img className="af-boutique-banniere-media" src={url} alt="Boutique Afroboost" loading="lazy" style={styleCrop} />;
+  return <img key={url} className="af-boutique-banniere-media" src={url} alt="Boutique Afroboost" loading="lazy" style={styleCrop} onError={signalerEchec} />;
 }

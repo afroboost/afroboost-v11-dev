@@ -89,8 +89,11 @@ def coach_jwt_email(request) -> str:
             return ""
         import jwt as _pyjwt
         payload = _pyjwt.decode(tok, secret, algorithms=["HS256"])
-        if payload.get("type") == "subscriber":
-            return ""  # un jeton abonné n'est pas un coach
+        # V646 : liste blanche, plus une liste noire. Les sessions de `/auth/login` et
+        # `/auth/me` n'ont PAS de champ `type` (seulement email + role). `subscriber_space`,
+        # lui, passait pour un coach : ce jeton d'abonné porte aussi un e-mail.
+        if payload.get("type") not in (None, "", "coach"):
+            return ""
         return (payload.get("email") or "").strip().lower()
     except Exception:
         return ""
@@ -110,6 +113,40 @@ ROLE_USER = "user"
 def is_super_admin(email: str) -> bool:
     """Vérifie si l'email est celui d'un Super Admin"""
     return email and email.lower().strip() in [e.lower() for e in SUPER_ADMIN_EMAILS]
+
+
+async def v646_identite_partenaire(request) -> str:
+    """V646 — identité d'un partenaire sur ses données sensibles : le jeton signé.
+
+    Si l'en-tête désigne la même adresse, son orthographe est conservée : des configurations
+    anciennes sont peut-être enregistrées avec une majuscule, et doivent rester retrouvées.
+    """
+    from api.server import v646_coach_signe
+    email = await v646_coach_signe(request)
+    entete = (request.headers.get("X-User-Email") or "").strip()
+    return entete if entete.lower() == (email or "").lower() else email
+
+
+async def v646_compte_coach_autorise(database, email: str) -> bool:
+    """V646 — ce jeton signé correspond-il à un compte qui peut écrire AUJOURD'HUI ?
+
+    Un jeton vit 7 jours : un coach désactivé ou un compte supprimé ne doit pas continuer
+    d'écrire jusque-là. Super-admin, ou coach dont la fiche n'est pas désactivée (même règle
+    que `/admin/coaches/.../toggle` : absent = actif), ou compte d'authentification validé
+    sans fiche `coaches`. Une erreur de base remonte : elle n'ouvre jamais l'accès.
+    """
+    email = (email or "").lower().strip()
+    if not email:
+        return False
+    if is_super_admin(email):
+        return True
+    coach = await database.coaches.find_one({"email": email}, {"_id": 0, "is_active": 1})
+    if coach is not None:
+        return coach.get("is_active", True) is not False
+    compte = await database.users_auth.find_one({"email": email}, {"_id": 0, "is_coach": 1, "pending_validation": 1})
+    if compte is not None:
+        return compte.get("is_coach") is True and compte.get("pending_validation") is not True
+    return bool(await database.coach_auth.find_one({"email": email}, {"_id": 1}))
 
 
 # =====================================================================

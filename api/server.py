@@ -213,6 +213,40 @@ def require_auth(request: Request) -> str:
     )
 
 
+async def v646_coach_signe(request: Request) -> str:
+    """V646 — identité d'une écriture sur une vitrine : le jeton signé, et lui seul.
+
+    Le repli V265 de `require_auth` laisse passer `X-User-Email`, qu'un `curl` écrit à
+    volonté : le logo, les offres, les cours, les liens de paiement et les bannières d'un
+    coach, ou de la plateforme avec l'en-tête du super-admin, s'y modifiaient sans preuve.
+    Le 401 porte `X-Auth-Reason` : le tableau de bord propose alors de se reconnecter.
+    Sans JWT_SECRET (poste de développement), comportement inchangé.
+    """
+    if not os.environ.get("JWT_SECRET", ""):
+        return require_auth(request)
+    from api.routes.shared import coach_jwt_email, v646_compte_coach_autorise
+    email = coach_jwt_email(request)
+    if not email:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentification requise — reconnectez-vous",
+            headers={"X-Auth-Reason": "jwt-required"},
+        )
+    # 403 et non 401 : se reconnecter n'y changerait rien.
+    if not await v646_compte_coach_autorise(db, email):
+        raise HTTPException(status_code=403, detail="Ce compte n'est pas autorisé à modifier une vitrine")
+    return email
+
+
+def v646_exiger_proprietaire(email: str, document: dict, message: str) -> None:
+    """V646 — le super-admin, ou le propriétaire. Un document SANS propriétaire appartient
+    à la plateforme : un coach ne peut plus le modifier (le T-shirt en faisait partie)."""
+    if is_super_admin(email):
+        return
+    if ((document or {}).get("coach_id") or "").lower() != email:
+        raise HTTPException(status_code=403, detail=message)
+
+
 def _email_from_jwt(request: Request) -> str:
     """V252b — repli d'identification par JWT.
 
@@ -1654,6 +1688,15 @@ class Concept(BaseModel):
     # (object-position) dans [0,1], zoom dans [1,3]. Absent = cadrage centre
     # d'origine : une banniere existante rend exactement comme avant.
     home_shop_banner_crop: Optional[dict] = None
+    # V646 : bannière de la page /boutique. Mêmes réglages que celle de l'accueil,
+    # données séparées : aucune des deux ne lit ni n'écrit les champs de l'autre.
+    # Défauts vides = aucune bannière (fond dégradé), rétrocompatible sans migration.
+    boutique_page_banner_url: str = ""
+    boutique_page_banner_type: str = ""
+    boutique_page_banner_trim_start: float = 0.0
+    boutique_page_banner_trim_end: float = 0.0
+    boutique_page_banner_thumbnail: str = ""
+    boutique_page_banner_crop: Optional[dict] = None
     # Personnalisation des couleurs
     primaryColor: str = "#D91CD2"  # Couleur principale (glow)
     secondaryColor: str = "#8b5cf6"  # Couleur secondaire
@@ -1717,6 +1760,13 @@ class ConceptUpdate(BaseModel):
     home_shop_banner_thumbnail: Optional[str] = None
     # V645.4k : cadrage de la banniere — {x, y, zoom}.
     home_shop_banner_crop: Optional[dict] = None
+    # V646 : bannière de la page /boutique (voir `Concept`).
+    boutique_page_banner_url: Optional[str] = None
+    boutique_page_banner_type: Optional[str] = None
+    boutique_page_banner_trim_start: Optional[float] = None
+    boutique_page_banner_trim_end: Optional[float] = None
+    boutique_page_banner_thumbnail: Optional[str] = None
+    boutique_page_banner_crop: Optional[dict] = None
     # Personnalisation des couleurs
     primaryColor: Optional[str] = None
     secondaryColor: Optional[str] = None
@@ -2436,9 +2486,8 @@ async def n456_occurrences_publiques(coach: str = "", days: int = 14,
 @api_router.post("/courses", response_model=Course)
 async def create_course(course: CourseCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
-    # v19: Auto-set coach_id depuis le header d'authentification
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = await v646_coach_signe(request)
     course_data = course.model_dump()
     # M1-GEO1 : une region mal orthographiee n'entre JAMAIS en base en silence.
     _reg, _reg_st = m1geo1_region_normalisee(course_data.get("region"))
@@ -2447,7 +2496,14 @@ async def create_course(course: CourseCreate, request: Request):
                             detail="Région inconnue. Valeurs acceptées : %s."
                                    % ", ".join(M1GEO1_REGIONS))
     course_data["region"] = _reg or None
-    if user_email and not course_data.get("coach_id"):
+    # V646 : même règle que POST /offers. Le propriétaire est l'appelant ; seul le super-admin
+    # peut désigner un coach, et ce coach doit exister.
+    _cible = str(course_data.get("coach_id") or "").strip().lower()
+    if _cible and _cible != user_email and is_super_admin(user_email):
+        if not await db.coaches.find_one({"email": _cible}, {"_id": 1}):
+            raise HTTPException(status_code=400, detail="Ce coach n'existe pas")
+        course_data["coach_id"] = _cible
+    else:
         course_data["coach_id"] = user_email
     course_obj = Course(**course_data)
     await db.courses.insert_one(course_obj.model_dump())
@@ -2456,15 +2512,21 @@ async def create_course(course: CourseCreate, request: Request):
 @api_router.put("/courses/{course_id}")
 async def update_course(course_id: str, course_update: dict, request: Request):
     """Update a course - supports partial updates including playlist and audio_tracks"""
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé + propriétaire. Tout coach pouvait réécrire n'importe quel cours.
+    _v646_email = await v646_coach_signe(request)
     # Récupérer le cours existant
     existing = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Cours non trouvé")
+    v646_exiger_proprietaire(_v646_email, existing, "Vous ne pouvez modifier que vos propres cours")
     
     # Fusionner les données (mise à jour partielle)
+    # V646 : id, _id, coach_id et owner_* ne changent jamais par cette route, quel que soit
+    # l'appelant. Ils sont ignorés et non refusés : le tableau de bord renvoie le cours entier.
     update_data = {k: v for k, v in course_update.items() if v is not None}
+    for _v646_cle in list(update_data):
+        if _v646_cle in ("id", "_id", "coach_id") or _v646_cle.startswith("owner_"):
+            del update_data[_v646_cle]
 
     # M1-GEO1 : meme garde qu'a la creation. « Non classe » se dit en envoyant
     # une chaine vide — elle efface la region au lieu d'en inventer une.
@@ -2489,8 +2551,12 @@ async def update_course(course_id: str, course_update: dict, request: Request):
 @api_router.put("/courses/{course_id}/archive")
 async def archive_course(course_id: str, request: Request):
     """Archive a course instead of deleting it"""
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé + propriétaire.
+    _v646_email = await v646_coach_signe(request)
+    _v646_cours = await db.courses.find_one({"id": course_id}, {"_id": 0, "coach_id": 1})
+    if not _v646_cours:
+        raise HTTPException(status_code=404, detail="Cours non trouvé")
+    v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez archiver que vos propres cours")
     await db.courses.update_one({"id": course_id}, {"$set": {"archived": True}})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     return {"success": True, "course": updated}
@@ -2501,8 +2567,13 @@ async def delete_course(course_id: str, request: Request):
     HARD DELETE - Supprime PHYSIQUEMENT un cours de toutes les tables.
     Aucune trace ne doit rester dans la base de données.
     """
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé + propriétaire (cette route efface aussi les réservations).
+    _v646_email = await v646_coach_signe(request)
+    # Cours inexistant : rien n'est effacé, ni ses réservations ni ses conversations.
+    _v646_cours = await db.courses.find_one({"id": course_id}, {"_id": 0, "coach_id": 1})
+    if not _v646_cours:
+        raise HTTPException(status_code=404, detail="Cours non trouvé")
+    v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez supprimer que vos propres cours")
     deleted_counts = {
         "course": 0,
         "reservations": 0,
@@ -2542,17 +2613,21 @@ async def purge_archived_courses(request: Request):
     PURGE TOTAL - Supprime tous les cours archivés et leurs données liées.
     Utilisé pour nettoyer la base de données des cours obsolètes.
     """
-    # Sécurité : vérifier que l'utilisateur est authentifié
-    require_auth(request)
+    # V646 : jeton signé. Un coach ne purge que SES archives ; tout purger reste réservé
+    # au super-admin (n'importe quel coach effaçait les archives et réservations des autres).
+    _v646_email = await v646_coach_signe(request)
+    _v646_filtre = {"archived": True}
+    if not is_super_admin(_v646_email):
+        _v646_filtre["coach_id"] = _v646_email
     # Trouver tous les cours archivés
-    archived_courses = await db.courses.find({"archived": True}, {"id": 1}).to_list(1000)
+    archived_courses = await db.courses.find(_v646_filtre, {"id": 1}).to_list(1000)
     archived_ids = [c["id"] for c in archived_courses]
     
     if not archived_ids:
         return {"success": True, "message": "Aucun cours archivé à purger", "purged": 0}
     
     # Supprimer les cours archivés
-    deleted_courses = await db.courses.delete_many({"archived": True})
+    deleted_courses = await db.courses.delete_many({"id": {"$in": archived_ids}})
     
     # Supprimer les réservations liées
     deleted_reservations = await db.reservations.delete_many({"courseId": {"$in": archived_ids}})
@@ -3106,8 +3181,8 @@ def _v256_normalize_external_link(data: dict) -> None:
 
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = await v646_coach_signe(request)
     offer_data = offer.model_dump()
     # U1a : meme normalisation qu'a la mise a jour — une seule regle, deux portes.
     offer_data["audience"] = u1a_audience(offer_data.get("audience"))
@@ -3199,8 +3274,8 @@ async def create_offer(offer: OfferCreate, request: Request):
 
 @api_router.put("/offers/{offer_id}", response_model=Offer)
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = await v646_coach_signe(request)
     update_data = offer.model_dump()
     # ============ R2c — MODIFIER SON OFFRE, PAS CELLE DES AUTRES ============
     #
@@ -3210,18 +3285,13 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     # `DELETE /offers/{id}` applique dix lignes plus bas depuis la v20 — on ne
     # durcit pas plus que le voisin, on rattrape l'oubli :
     #   * super-admin : tout ;
-    #   * sinon : uniquement une offre dont il est le proprietaire, OU une
-    #     offre SANS proprietaire (les 9 offres historiques restent donc
-    #     modifiables exactement comme avant ce lot).
+    #   * sinon : uniquement une offre dont il est le proprietaire. V646 : une offre
+    #     SANS proprietaire appartient a la plateforme. Tout coach pouvait reecrire
+    #     le T-shirt ; aucun ne la voit de toute facon dans son tableau de bord (V237).
     _offre_avant = await db.offers.find_one({"id": offer_id}, {"_id": 0})
     if not _offre_avant:
         raise HTTPException(status_code=404, detail="Offre non trouvée")
-    if not is_super_admin(user_email):
-        _proprio = (_offre_avant.get("coach_id") or "").lower()
-        if _proprio and _proprio != user_email:
-            raise HTTPException(
-                status_code=403,
-                detail="Vous ne pouvez modifier que vos propres offres")
+    v646_exiger_proprietaire(user_email, _offre_avant, "Vous ne pouvez modifier que vos propres offres")
     # Le proprietaire ne change PAS par une sauvegarde d'offre. Il est recopie
     # tel quel depuis la base : ni le navigateur ni ce formulaire n'ont voix au
     # chapitre. Le changer se fait par la porte prevue pour cela, reservee a
@@ -3340,8 +3410,8 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
 @api_router.delete("/offers/{offer_id}")
 async def delete_offer(offer_id: str, request: Request):
     """v20: Supprime une offre avec vérification d'ownership + nettoyage codes promo"""
-    require_auth(request)
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
+    user_email = await v646_coach_signe(request)
 
     # v20: Vérifier que l'offre existe
     offer = await db.offers.find_one({"id": offer_id})
@@ -3349,10 +3419,7 @@ async def delete_offer(offer_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Offre non trouvée")
 
     # v20: Vérifier l'ownership — Super Admin peut tout supprimer, sinon uniquement ses propres offres
-    if not is_super_admin(user_email):
-        offer_owner = (offer.get("coach_id") or "").lower()
-        if offer_owner and offer_owner != user_email:
-            raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres offres")
+    v646_exiger_proprietaire(user_email, offer, "Vous ne pouvez supprimer que vos propres offres")
 
     # 1. Supprimer l'offre
     result = await db.offers.delete_one({"id": offer_id})
@@ -3466,7 +3533,7 @@ async def r2c_classifier(offer_id: str, corps: R2CClassification, request: Reque
     modifie pas l'offre. C'est aussi pour cela qu'elle est separee de
     `PUT /offers` plutot qu'un drapeau de plus dedans.
     """
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1, "name": 1})
@@ -3523,7 +3590,7 @@ async def r3a_enregistrer_localisation(offer_id: str, corps: R3ALocalisation,
     N'ECRIT QUE LES QUATRE CHAMPS DE LIEU. `location` (le texte libre
     historique), le prix, la visibilite et les cours lies ne sont pas touches.
     """
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1})
@@ -4264,7 +4331,7 @@ async def list_audio_tracks(request: Request):
 @api_router.post("/audio-tracks")
 async def create_audio_track(request: Request):
     """Crée une nouvelle piste audio"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
 
     track_id = f"track-{uuid.uuid4().hex[:12]}"
@@ -4299,7 +4366,7 @@ class ReorderRequest(BaseModel):
 @api_router.put("/audio-tracks/reorder")
 async def reorder_audio_tracks(request: Request):
     """v48: Réordonne les pistes audio — DOIT être AVANT {track_id} pour éviter conflit de route"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     try:
         body = await request.json()
         reorder_data = ReorderRequest(**body)
@@ -4323,7 +4390,7 @@ async def reorder_audio_tracks(request: Request):
 @api_router.put("/audio-tracks/{track_id}")
 async def update_audio_track(track_id: str, request: Request):
     """Met à jour une piste audio (titre, prix, visible, etc.)"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
 
     existing = await db.audio_tracks.find_one({"id": track_id, "coach_email": email})
@@ -4342,7 +4409,7 @@ async def update_audio_track(track_id: str, request: Request):
 @api_router.delete("/audio-tracks/{track_id}")
 async def delete_audio_track(track_id: str, request: Request):
     """Supprime une piste audio"""
-    email = require_auth(request)
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     result = await db.audio_tracks.delete_one({"id": track_id, "coach_email": email})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Piste non trouvée")
@@ -4743,10 +4810,7 @@ async def api_deduct_credit(request: Request):
     except:
         action = "action"
     
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
-    
-    if not user_email:
-        raise HTTPException(status_code=400, detail="Email non fourni")
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     
     result = await deduct_credit(user_email, action)
     
@@ -7903,7 +7967,9 @@ async def get_payment_links(request: Request):
 
 @api_router.put("/payment-links")
 async def update_payment_links(links: PaymentLinksUpdate, request: Request):
-    user_email = request.headers.get('X-User-Email', '').lower().strip()
+    # V646 : aucune vérification ici. Un anonyme écrivait, et l'en-tête du super-admin
+    # remplaçait les liens de paiement de la plateforme.
+    user_email = await v646_coach_signe(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # ID de lien selon le coach
@@ -11128,7 +11194,7 @@ async def list_social_proofs(request: Request, status: str = ""):
     le Super Admin voit tout, comme partout ailleurs.
     """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     query = get_coach_filter(user_email)  # {} pour le Super Admin
     if status:
@@ -11151,7 +11217,7 @@ async def delete_social_proof(proof_id: str, request: Request):
     trace administrative ne doit pas retirer sans preavis un acces au client.
     """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     proof = await db.social_proofs.find_one({"id": proof_id}, {"_id": 0})
     if not proof:
@@ -11176,7 +11242,7 @@ async def review_social_proof(proof_id: str, request: Request):
     inutilisable.
     """
     # V262: identification signee (JWT si JWT_SECRET est pose, repli en-tete sinon)
-    user_email = require_auth(request)
+    user_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     body = await request.json()
     action = body.get("action")
@@ -21492,7 +21558,7 @@ async def create_credit_checkout(request: Request):
     try:
         body = await request.json()
         pack_id = body.get("pack_id")
-        caller_email = request.headers.get('X-User-Email', '').lower().strip()
+        caller_email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
         
         if not pack_id:
             raise HTTPException(status_code=400, detail="pack_id requis")
@@ -21717,6 +21783,9 @@ def _v645j_normaliser_hero_gradient(updates: dict) -> None:
             updates["heroTitreLineHeight"] = 1.25
 
 
+_V646_PREFIXES_BANNIERE = ("home_shop_banner", "boutique_page_banner")
+
+
 def _v645c_normaliser_banniere(updates: dict) -> None:
     """V645.3c — normalise/valide EN PLACE les réglages de la bannière vidéo
     Boutique dans `updates` (miniature + découpe début/fin). Facultatif et
@@ -21727,44 +21796,48 @@ def _v645c_normaliser_banniere(updates: dict) -> None:
       - fin <= début (aucun extrait) → remis à 0/0 = lecture entière (sert aussi
         à EFFACER la découpe). Pur (pas d'E/S) : testable sans base.
     """
-    if "home_shop_banner_thumbnail" in updates:
-        _bt = (updates.get("home_shop_banner_thumbnail") or "").strip()
-        _btok = _bt == "" or _bt.startswith("/api/files/") or _bt.startswith("http://") or _bt.startswith("https://")
-        updates["home_shop_banner_thumbnail"] = _bt if (_btok and len(_bt) <= 2048) else ""
-    for _bk in ("home_shop_banner_trim_start", "home_shop_banner_trim_end"):
-        if _bk in updates:
-            try:
-                _bv = float(updates.get(_bk) or 0)
-            except (TypeError, ValueError):
-                _bv = 0.0
-            updates[_bk] = min(max(_bv, 0.0), 86400.0)
-    if "home_shop_banner_trim_start" in updates and "home_shop_banner_trim_end" in updates:
-        if updates["home_shop_banner_trim_end"] <= updates["home_shop_banner_trim_start"]:
-            updates["home_shop_banner_trim_start"] = 0.0
-            updates["home_shop_banner_trim_end"] = 0.0
-    # V645.4k : cadrage {x, y, zoom}. Whitelist stricte des trois cles ; toute
-    # valeur illisible retombe sur le cadrage centre. Un cadrage neutre
-    # (0.5 / 0.5 / 1) est conserve tel quel : c'est ainsi qu'on EFFACE un
-    # cadrage, puisque `None` serait filtre avant d'arriver ici.
-    if "home_shop_banner_crop" in updates:
-        _bc = updates.get("home_shop_banner_crop")
-        if not isinstance(_bc, dict):
-            updates.pop("home_shop_banner_crop", None)
-        else:
-            _propre = {}
-            for _k, _lo, _hi, _dft in (("x", 0.0, 1.0, 0.5), ("y", 0.0, 1.0, 0.5), ("zoom", 1.0, 3.0, 1.0)):
+    # V646 : même validation pour les deux bannières, chacune sur ses champs.
+    for _p in _V646_PREFIXES_BANNIERE:
+        if _p + "_thumbnail" in updates:
+            _bt = (updates.get(_p + "_thumbnail") or "").strip()
+            _btok = _bt == "" or _bt.startswith("/api/files/") or _bt.startswith("http://") or _bt.startswith("https://")
+            updates[_p + "_thumbnail"] = _bt if (_btok and len(_bt) <= 2048) else ""
+        for _bk in (_p + "_trim_start", _p + "_trim_end"):
+            if _bk in updates:
                 try:
-                    _propre[_k] = round(min(max(float(_bc.get(_k, _dft)), _lo), _hi), 4)
+                    _bv = float(updates.get(_bk) or 0)
                 except (TypeError, ValueError):
-                    _propre[_k] = _dft
-            updates["home_shop_banner_crop"] = _propre
+                    _bv = 0.0
+                updates[_bk] = min(max(_bv, 0.0), 86400.0)
+        if _p + "_trim_start" in updates and _p + "_trim_end" in updates:
+            if updates[_p + "_trim_end"] <= updates[_p + "_trim_start"]:
+                updates[_p + "_trim_start"] = 0.0
+                updates[_p + "_trim_end"] = 0.0
+        # V645.4k : cadrage {x, y, zoom}. Whitelist stricte des trois cles ; toute
+        # valeur illisible retombe sur le cadrage centre. Un cadrage neutre
+        # (0.5 / 0.5 / 1) est conserve tel quel : c'est ainsi qu'on EFFACE un
+        # cadrage, puisque `None` serait filtre avant d'arriver ici.
+        if _p + "_crop" in updates:
+            _bc = updates.get(_p + "_crop")
+            if not isinstance(_bc, dict):
+                updates.pop(_p + "_crop", None)
+            else:
+                _propre = {}
+                for _k, _lo, _hi, _dft in (("x", 0.0, 1.0, 0.5), ("y", 0.0, 1.0, 0.5), ("zoom", 1.0, 3.0, 1.0)):
+                    try:
+                        _propre[_k] = round(min(max(float(_bc.get(_k, _dft)), _lo), _hi), 4)
+                    except (TypeError, ValueError):
+                        _propre[_k] = _dft
+                updates[_p + "_crop"] = _propre
 
 
 @api_router.put("/concept")
 async def update_concept(concept: ConceptUpdate, request: Request):
     # V262: ecriture -> identite verifiee. Auparavant un en-tete vide creait un
     # concept « concept_ » fantome, et un en-tete falsifie ecrivait chez autrui.
-    user_email = require_auth(request)
+    # V646 : jeton signé. Avec le repli V265, l'en-tête du super-admin suffisait à réécrire
+    # le concept de la plateforme, bannières officielles comprises.
+    user_email = await v646_coach_signe(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # Super Admin: concept global, Coach: concept personnel
@@ -21800,13 +21873,14 @@ async def update_concept(concept: ConceptUpdate, request: Request):
         # Type : liste blanche stricte (vide = retrait de la bannière). URL :
         # chemin interne /api/files/… (stockage média existant) ou http(s). Une
         # valeur invalide est NEUTRALISEE (vidée), jamais stockée telle quelle.
-        if "home_shop_banner_type" in updates:
-            _t = (updates.get("home_shop_banner_type") or "").strip().lower()
-            updates["home_shop_banner_type"] = _t if _t in ("image", "video") else ""
-        if "home_shop_banner_url" in updates:
-            _u = (updates.get("home_shop_banner_url") or "").strip()
-            _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
-            updates["home_shop_banner_url"] = _u if (_ok and len(_u) <= 2048) else ""
+        for _pb in _V646_PREFIXES_BANNIERE:
+            if _pb + "_type" in updates:
+                _t = (updates.get(_pb + "_type") or "").strip().lower()
+                updates[_pb + "_type"] = _t if _t in ("image", "video") else ""
+            if _pb + "_url" in updates:
+                _u = (updates.get(_pb + "_url") or "").strip()
+                _ok = _u == "" or _u.startswith("/api/files/") or _u.startswith("http://") or _u.startswith("https://")
+                updates[_pb + "_url"] = _u if (_ok and len(_u) <= 2048) else ""
         # V645.4j — gradient titre Hero + espacement inter-lignes.
         _v645j_normaliser_hero_gradient(updates)
         # V645.3c — découpe (début/fin) + miniature de la bannière vidéo.
@@ -21823,10 +21897,8 @@ async def update_concept(concept: ConceptUpdate, request: Request):
 @api_router.post("/coach/update-branding")
 async def update_coach_branding(request: Request):
     """Met à jour accent_color et logo_url du coach"""
+    email = await v646_coach_signe(request)  # V646 : jamais le seul en-tête
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     updates = {}
     if "accent_color" in body:
@@ -21854,10 +21926,8 @@ async def get_coach_branding(coach_email: str):
 @api_router.post("/coach/update-seo")
 async def update_coach_seo(request: Request):
     """Met à jour meta_title, meta_description, keywords du coach"""
+    email = await v646_coach_signe(request)  # V646 : jamais le seul en-tête
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     updates = {}
     for field in ["meta_title", "meta_description", "seo_keywords"]:
@@ -21902,7 +21972,7 @@ async def get_og_meta(username: str, request: Request):
                 {"name": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
                 {"email": username.lower()},
                 {"id": username}
-            ]},
+            ], "is_active": {"$ne": False}},  # V646 : plus d'aperçu au nom d'un coach désactivé
             {"_id": 0}
         )
 
@@ -21914,6 +21984,12 @@ async def get_og_meta(username: str, request: Request):
     image = coach.get("logo_url") or "https://afroboost-v11-dev-pm7l.vercel.app/logo192.png"
     url = f"https://afroboost-v11-dev-pm7l.vercel.app/coach/{username}"
     accent = coach.get("accent_color", "#D91CD2")
+    # V646 : ces champs sont saisis par le partenaire. Non échappés, ils devenaient du code
+    # exécuté sur afroboost.com, le domaine où le navigateur garde le jeton de session.
+    from html import escape as _v646_echapper
+    title, description, image, url, accent = (
+        _v646_echapper(str(_v or ""), quote=True) for _v in (title, description, image, url, accent)
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -22537,10 +22613,8 @@ async def get_coach_faqs(coach_email: str):
 @api_router.post("/coach/faq")
 async def create_faq(request: Request):
     """Créer une FAQ"""
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     faq = {
         "id": f"faq_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{os.urandom(3).hex()}",
@@ -22563,10 +22637,8 @@ async def create_faq(request: Request):
 @api_router.put("/coach/faq/{faq_id}")
 async def update_faq(faq_id: str, request: Request):
     """Modifier une FAQ"""
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     body = await request.json()
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
 
     updates = {}
     for field in ["question", "answer", "category", "order"]:
@@ -22587,9 +22659,7 @@ async def update_faq(faq_id: str, request: Request):
 @api_router.delete("/coach/faq/{faq_id}")
 async def delete_faq(faq_id: str, request: Request):
     """Supprimer une FAQ"""
-    email = request.headers.get('X-User-Email', '').lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
 
     result = await db.faqs.delete_one({"id": faq_id, "coach_email": email})
     if result.deleted_count == 0:
@@ -23338,8 +23408,10 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
     from fastapi.responses import HTMLResponse
     import httpx
 
+    # V646 : `error` vient de l'adresse. Non échappé, un simple lien exécutait du code sur le site.
+    from html import escape as _v646_echapper
     if error:
-        return HTMLResponse(f"<html><body><h2>Erreur: {error}</h2><script>window.close()</script></body></html>")
+        return HTMLResponse(f"<html><body><h2>Erreur: {_v646_echapper(error)}</h2><script>window.close()</script></body></html>")
 
     if not code or not state:
         return HTMLResponse("<html><body><h2>Code manquant</h2><script>window.close()</script></body></html>")
@@ -23372,7 +23444,7 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
             tokens = token_resp.json()
 
         if "error" in tokens:
-            return HTMLResponse(f"<html><body><h2>Erreur token: {tokens.get('error_description', tokens['error'])}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
+            return HTMLResponse(f"<html><body><h2>Erreur token: {_v646_echapper(str(tokens.get('error_description', tokens['error'])))}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
 
         # Store refresh token for the coach
         await db.google_tokens.update_one(
@@ -23400,7 +23472,7 @@ async def google_contacts_callback(code: str = "", state: str = "", error: str =
 
     except Exception as e:
         logger.error(f"[GOOGLE-CONTACTS] Callback error: {e}")
-        return HTMLResponse(f"<html><body><h2>Erreur: {str(e)}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
+        return HTMLResponse(f"<html><body><h2>Erreur: {_v646_echapper(str(e))}</h2><script>setTimeout(()=>window.close(),3000)</script></body></html>")
 
 
 @api_router.get("/google-contacts/status")
@@ -54679,7 +54751,13 @@ async def get_all_transactions(request: Request, page: int = 1, limit: int = 50)
 @api_router.get("/coach-profile")
 async def get_coach_profile(request: Request):
     """Récupère le profil du coach (photo, date de naissance)"""
-    email = request.headers.get("X-User-Email", "").lower().strip()
+    # V646 : la date de naissance d'un coach se lisait avec son adresse dans un en-tête.
+    # Sans jeton, le profil vide : aucune erreur pour un écran qui l'affiche au chargement.
+    if os.environ.get("JWT_SECRET", ""):
+        from api.routes.shared import coach_jwt_email
+        email = (coach_jwt_email(request) or "").lower().strip()
+    else:
+        email = request.headers.get("X-User-Email", "").lower().strip()
     if not email:
         return {"photo_url": "", "birthday": "", "display_name": ""}
     profile = await db.coach_profiles.find_one({"email": email}, {"_id": 0})
@@ -54690,9 +54768,7 @@ async def get_coach_profile(request: Request):
 @api_router.put("/coach-profile")
 async def update_coach_profile(request: Request):
     """Met à jour le profil du coach (photo_url, birthday, display_name)"""
-    email = request.headers.get("X-User-Email", "").lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    email = await v646_coach_signe(request)  # V646 : jeton signé, jamais l'en-tête seul
     data = await request.json()
     update = {"email": email, "updated_at": datetime.now(timezone.utc).isoformat()}
     if "photo_url" in data:
@@ -55654,9 +55730,9 @@ async def v197b_get_quick_replies_all(request: Request):
 @api_router.put("/bot/quick-replies/{reply_id}")
 async def v197b_update_quick_reply(reply_id: str, request: Request):
     """V197b: Modifier un quick reply (coach uniquement)."""
-    user_email = request.headers.get("X-User-Email", "").lower().strip()
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Email requis")
+    # V646 : ces réponses s'affichent à tous les visiteurs du chat, quel que soit le coach :
+    # seul le super-admin, prouvé par un jeton signé, les modifie.
+    user_email = await _p0b_exiger_super_admin(request)
 
     body = await request.json()
     allowed = {"label", "emoji", "response", "order", "active"}

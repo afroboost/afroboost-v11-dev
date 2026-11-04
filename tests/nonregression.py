@@ -3121,6 +3121,149 @@ def t155_v634_ia_routes_acces_legitime():
         record(155, titre, False, str(e))
 
 
+# ═══ V646 — BOUTIQUE ET VITRINES. Lecture publique uniquement : rien n'est créé en
+# production. Les cas qui exigent des données (deux partenaires aux identifiants
+# proches, média refusé ou illisible) vivent dans tests/parcours/parcours_boutique.cjs
+# et tests/test_banniere_page_boutique_v646.py, sur base locale.
+_V646_BANNIERE = ("home_shop_banner_url", "home_shop_banner_type", "home_shop_banner_trim_start",
+                  "home_shop_banner_trim_end", "home_shop_banner_thumbnail", "home_shop_banner_crop")
+
+
+def t156_v646_boutique_et_concept_public():
+    r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
+    version = re.search(r"CACHE_NAME = 'afroboost-v(\d+)", r.text or "")
+    ok_sw = bool(version) and int(version.group(1)) >= 646
+    page = requests.get(_url("/boutique"), timeout=TIMEOUT)
+    produit = requests.get(_url("/boutique/t-shirt-1-cours-offert-84b7d8c6"), timeout=TIMEOUT)
+    c = requests.get(_url("/api/concept"), timeout=TIMEOUT)
+    corps = c.json() if c.status_code == 200 else {}
+    record(156, "V646 /boutique, URL produit, sw et champs de bannière publics",
+           ok_sw and page.status_code == 200 and produit.status_code == 200
+           and "boutique_page_banner_url" in corps and "home_shop_banner_url" in corps,
+           f"sw={version.group(1) if version else '?'} /boutique={page.status_code} produit={produit.status_code} concept={c.status_code}")
+
+
+def t157_v646_ecriture_banniere_sans_auth():
+    r = requests.put(_url("/api/concept"), json={"boutique_page_banner_url": "https://example.test/x.png"}, timeout=TIMEOUT)
+    apres = requests.get(_url("/api/concept"), timeout=TIMEOUT).json()
+    record(157, "V646 écriture d'une bannière sans authentification refusée",
+           r.status_code in (401, 403) and apres.get("boutique_page_banner_url") != "https://example.test/x.png",
+           f"statut={r.status_code}")
+
+
+def t158_v646_vitrine_url_inconnue_ou_injection():
+    essais = ["v646-partenaire-inexistant-zzz", "v646-inexistant-zzz@example.invalid",
+              ".*", "%5E", "(a%2B)%2B%24", "a.*%40example.com", "a-", "-b", "--", "zz-zz-zz-"]
+    statuts = {e: requests.get(_url("/api/coach/vitrine/" + e), timeout=TIMEOUT).status_code for e in essais}
+    record(158, "V646 vitrine : URL inconnue, e-mail inconnu et motif injecté = 404",
+           all(s == 404 for s in statuts.values()), str(statuts))
+
+
+def t159_v646_media_absent():
+    r = requests.get(_url("/api/files/v646absentzzzzzzz/absent.png"), timeout=TIMEOUT, allow_redirects=False)
+    record(159, "V646 média absent : 404, pas une page HTML",
+           r.status_code == 404 and "text/html" not in r.headers.get("content-type", ""),
+           f"statut={r.status_code} type={r.headers.get('content-type', '')[:30]}")
+
+
+def t160_v646_vitrines_actives_bannieres_publiques():
+    """Vitrines des partenaires publics. Un média illisible n'est pas un échec (le navigateur
+    affiche le repli) mais il est signalé : à regarder après le déploiement."""
+    r = requests.get(_url("/api/partners/active"), timeout=TIMEOUT)
+    partenaires = r.json() if r.status_code == 200 else []
+    partenaires = partenaires if isinstance(partenaires, list) else partenaires.get("partners", [])
+    # `bassi_main` est l'entrée de la plateforme dans le carrousel, pas la vitrine d'un partenaire.
+    idents = [p.get("id") for p in partenaires if isinstance(p, dict) and p.get("id") and p.get("id") != "bassi_main"][:20]
+    if not idents:
+        skip(160, "V646 vitrines actives", "aucun partenaire public")
+        return
+    defauts, illisibles = [], 0
+    for ident in idents:
+        v = requests.get(_url(f"/api/coach/vitrine/{ident}"), timeout=TIMEOUT)
+        if v.status_code != 200:
+            defauts.append(f"statut {v.status_code}")
+            continue
+        brut, c = v.text, v.json().get("concept") or {}
+        if "boutique_page_banner" in brut:
+            defauts.append("champ /boutique exposé")
+        if re.search(r"[\w.+-]+@[\w-]+\.[a-z]{2,}", json.dumps(c)):
+            defauts.append("e-mail dans le concept")
+        if not all(k in c for k in _V646_BANNIERE) or "home_shop_banner_repli" not in c:
+            defauts.append("champs de bannière manquants")
+        repli = c.get("home_shop_banner_repli")
+        if repli and set(repli) - set(_V646_BANNIERE):
+            defauts.append("repli hors liste blanche")
+        url = c.get("home_shop_banner_url") or ""
+        if url.startswith("/api/files/"):
+            m = requests.get(_url(url), headers={"Range": "bytes=0-0"}, timeout=TIMEOUT)
+            if m.status_code not in (200, 206):
+                illisibles += 1
+    record(160, "V646 vitrines actives : champs prévus, aucune donnée privée", not defauts,
+           f"{len(idents)} vitrine(s), {illisibles} média(s) illisible(s) (repli actif) {defauts[:3]}")
+
+
+def _v646_deploye():
+    """Ces contrôles envoient une écriture qui DOIT être refusée : sur une version antérieure,
+    elle réussirait. Ils ne partent donc qu'une fois la V646 prouvée en ligne."""
+    r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
+    m = re.search(r"CACHE_NAME = 'afroboost-v(\d+)", r.text or "")
+    return bool(m) and int(m.group(1)) >= 646
+
+
+def t161_v646_coach_register_ferme():
+    # Corps vide : même sur une version antérieure, aucun compte ne peut être créé (422).
+    r = requests.post(_url("/api/coach/register"), json={}, timeout=TIMEOUT)
+    record(161, "V646 /coach/register anonyme refusé avant même de lire le corps", r.status_code == 403, f"statut={r.status_code}")
+
+
+def t162_v646_entete_seul_refuse():
+    if not _v646_deploye():
+        skip(162, "V646 en-tête seul refusé", "V646 pas encore en ligne : écriture non envoyée")
+        return
+    essais = [("put", "/api/payment-links"), ("put", "/api/concept"), ("post", "/api/coach/update-branding"),
+              ("post", "/api/coach/update-seo"), ("put", "/api/coach/update-profile")]
+    statuts = {}
+    for meth, chemin in essais:
+        for nom, entetes in (("anonyme", {}), ("en-tête", {"X-User-Email": ADMIN})):
+            statuts[f"{chemin} {nom}"] = getattr(requests, meth)(_url(chemin), json={}, headers=entetes, timeout=TIMEOUT).status_code
+    record(162, "V646 écritures de vitrine : anonyme et en-tête seul refusés",
+           all(s in (401, 403) for s in statuts.values()), str({k: v for k, v in statuts.items() if v not in (401, 403)}))
+
+
+def t163_v646_donnees_partenaire_entete_seul_refuse():
+    """Adresse FICTIVE, à dessein : même si un refus manquait, aucun vrai partenaire ne serait touché."""
+    if not _v646_deploye():
+        skip(163, "V646 données partenaire", "V646 pas encore en ligne : écriture non envoyée")
+        return
+    fictif = "nonregression-v646@example.invalid"
+    essais = [("put", "/api/payment-config"), ("post", "/api/payment-config/test/stripe"),
+              ("post", "/api/stripe/connect/create-account"), ("post", "/api/stripe/connect/account-link"),
+              ("put", "/api/coach-profile"), ("post", "/api/coach/faq"), ("post", "/api/audio-tracks"),
+              ("post", "/api/credits/deduct")]
+    statuts = {}
+    for meth, chemin in essais:
+        for nom, entetes in (("anonyme", {}), ("en-tête", {"X-User-Email": fictif})):
+            statuts[f"{chemin} {nom}"] = getattr(requests, meth)(_url(chemin), json={}, headers=entetes, timeout=TIMEOUT).status_code
+    brut = requests.get(_url(f"/api/payment-config/raw/{fictif}"), timeout=TIMEOUT).status_code
+    record(163, "V646 données partenaire : anonyme et en-tête seul refusés, /payment-config/raw fermée",
+           all(s in (401, 403) for s in statuts.values()) and brut == 403,
+           str({k: v for k, v in statuts.items() if v not in (401, 403)}) + f" raw={brut}")
+
+
+def t164_v646_bot_reserve_super_admin():
+    """Identifiant FICTIF : même si un refus manquait, aucune vraie réponse du bot ne changerait."""
+    if not _v646_deploye():
+        skip(164, "V646 réponses du bot", "V646 pas encore en ligne : écriture non envoyée")
+        return
+    url = _url("/api/bot/quick-replies/nonregression-v646-inexistante")
+    statuts = {nom: requests.put(url, json={"label": "x"}, headers=h, timeout=TIMEOUT).status_code
+               for nom, h in (("anonyme", {}), ("en-tête admin", {"X-User-Email": ADMIN}),
+                              ("en-tête coach", {"X-User-Email": "nonregression-v646@example.invalid"}))}
+    public = requests.get(_url("/api/bot/quick-replies"), timeout=TIMEOUT).status_code
+    record(164, "V646 réponses du bot : modification refusée sans jeton super-admin, lecture publique préservée",
+           all(s in (401, 403) for s in statuts.values()) and public == 200, f"{statuts} public={public}")
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3189,6 +3332,11 @@ def main():
                    t133_co1_ai_config_lecture_publique, t134_co1_ia_acces_legitime,
                    t152_v633_ia_enhance_text_sans_auth, t153_v633_ia_enhance_text_acces_legitime,
                    t154_v634_ia_routes_sans_auth, t155_v634_ia_routes_acces_legitime,
+                   t156_v646_boutique_et_concept_public, t157_v646_ecriture_banniere_sans_auth,
+                   t158_v646_vitrine_url_inconnue_ou_injection, t159_v646_media_absent,
+                   t160_v646_vitrines_actives_bannieres_publiques,
+                   t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
+                   t164_v646_bot_reserve_super_admin,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

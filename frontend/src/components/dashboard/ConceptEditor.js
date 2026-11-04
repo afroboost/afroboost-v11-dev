@@ -193,8 +193,6 @@ const ConceptEditor = ({
 }) => {
   const [aiLegalLoading, setAiLegalLoading] = React.useState(false);
   const [uploadingVideo, setUploadingVideo] = React.useState(null); // slot index being uploaded
-  // V645 : mémorise le média de bannière précédent pour « Restaurer ».
-  const [bannerPrecedent, setBannerPrecedent] = React.useState(null);
 
   // V259: qui peut gerer l'affiche evenement.
   // Union VOLONTAIRE avec `isSuperAdmin` : la liste d'adresses ci-dessous ne
@@ -945,78 +943,12 @@ const ConceptEditor = ({
             )}
           </div>
 
-          {/* V645 — BANNIÈRE BOUTIQUE (page d'accueil). Réutilise l'outil média
-              existant (CloudinaryUploadButton → /api/coach/upload-asset). Accepte
-              une IMAGE ou une VIDÉO. Persistée sous concept.home_shop_banner_url /
-              _type (clé distincte du futur boutique_page_banner). */}
-          <div className="mb-2 pt-4 border-t border-purple-500/20" data-testid="banniere-boutique-editeur">
-            <label className="block mb-1 text-white text-xs opacity-70">Bannière Boutique (accueil) — image ou vidéo</label>
-            <p className="text-white/40 text-[11px] mb-2">Grande bannière en haut de la section Boutique. Laisse vide pour n'afficher aucune bannière.</p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <CloudinaryUploadButton
-                folder="boutique"
-                accept="image/*,video/*"
-                label="Choisir image ou vidéo"
-                maxSizeMB={25}
-                maxSizeMBVideo={100}
-                data-testid="banniere-boutique-upload"
-                onUpload={(url, meta) => {
-                  setBannerPrecedent({ url: concept.home_shop_banner_url || '', type: concept.home_shop_banner_type || '' });
-                  const type = (meta && meta.resourceType === 'video') ? 'video' : 'image';
-                  setConcept(prev => ({ ...prev, home_shop_banner_url: url, home_shop_banner_type: type }));
-                }}
-              />
-              {bannerPrecedent && (
-                <button
-                  type="button"
-                  data-testid="banniere-boutique-restaurer"
-                  onClick={() => {
-                    setConcept(prev => ({ ...prev, home_shop_banner_url: bannerPrecedent.url, home_shop_banner_type: bannerPrecedent.type }));
-                    setBannerPrecedent(null);
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-lg"
-                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.18)', color: '#fff' }}
-                >
-                  Restaurer le média précédent
-                </button>
-              )}
-              {concept.home_shop_banner_url && (
-                <button
-                  type="button"
-                  data-testid="banniere-boutique-retirer"
-                  onClick={() => {
-                    setBannerPrecedent({ url: concept.home_shop_banner_url || '', type: concept.home_shop_banner_type || '' });
-                    setConcept(prev => ({ ...prev, home_shop_banner_url: '', home_shop_banner_type: '' }));
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-lg"
-                  style={{ background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.34)', color: 'rgba(252,165,165,0.95)' }}
-                >
-                  Retirer
-                </button>
-              )}
-            </div>
-            {/* Aperçu avant publication */}
-            {concept.home_shop_banner_url && (
-              <div style={{ marginTop: 10, position: 'relative', width: '100%', maxWidth: 420, aspectRatio: '16 / 7', borderRadius: 12, overflow: 'hidden', border: '1px solid #333', background: 'rgba(0,0,0,0.2)' }}>
-                {concept.home_shop_banner_type === 'video' ? (
-                  <video key={concept.home_shop_banner_url} src={concept.home_shop_banner_url} autoPlay loop muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <img key={concept.home_shop_banner_url} src={concept.home_shop_banner_url} alt="Aperçu bannière" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
-                )}
-              </div>
-            )}
-            <div style={{ marginTop: 10 }}>
-              <button
-                type="button"
-                data-testid="banniere-boutique-enregistrer"
-                onClick={saveConcept}
-                className="text-xs px-4 py-2 rounded-lg font-semibold"
-                style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)', border: 'none', color: '#fff' }}
-              >
-                {conceptSaveStatus === 'saving' ? 'Enregistrement…' : 'Enregistrer la bannière'}
-              </button>
-            </div>
-          </div>
+          {/* V646 : l'ancien éditeur de bannière est retiré. Il écrivait les mêmes
+              champs que l'éditeur officiel (BanniereBoutiqueSection), sans découpe
+              ni cadrage. Les médias et réglages en base ne sont pas touchés. */}
+          <p data-testid="banniere-boutique-renvoi" className="pt-4 border-t border-purple-500/20 text-white/60 text-xs">
+            Les bannières de la Boutique se gèrent dans l'offre du produit, onglet Médias.
+          </p>
         </div>)}
 
         {/* v37.2: CGV & GOOGLE REVIEWS — section boutique */}
@@ -1502,7 +1434,7 @@ const ConceptEditor = ({
             try {
               const res = await fetch(`${API}/audio-tracks/${trackId}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail },
+                headers: enTetesCoach({ 'Content-Type': 'application/json', 'X-User-Email': coachEmail }), // V646
                 body: JSON.stringify({ visible: !currentVisible })
               });
               if (res.ok) {
@@ -1516,7 +1448,7 @@ const ConceptEditor = ({
             try {
               const res = await fetch(`${API}/audio-tracks/${trackId}`, {
                 method: 'DELETE',
-                headers: { 'X-User-Email': coachEmail }
+                headers: enTetesCoach({ 'X-User-Email': coachEmail }) // V646
               });
               if (res.ok) {
                 setMasterAudioTracks(prev => prev.filter(t => t.id !== trackId));

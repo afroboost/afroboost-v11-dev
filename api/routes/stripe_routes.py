@@ -230,17 +230,16 @@ async def create_credit_checkout_session(request: CreditCheckoutRequest):
 # === Stripe Connect Routes ===
 
 @router.post("/connect/create-account")
-async def create_stripe_connect_account(
-    x_user_email: str = Header(None, alias="X-User-Email")
-):
+async def create_stripe_connect_account(request: Request):
     """
     Crée un compte Stripe Connect pour un partenaire.
     """
+    # V646 : identité d'abord, et par le jeton : l'en-tête seul ouvrait le compte d'un autre.
+    from api.routes.shared import v646_identite_partenaire
+    x_user_email = await v646_identite_partenaire(request)
     if not stripe.api_key:
         raise HTTPException(status_code=500, detail="Stripe API key not configured")
     
-    if not x_user_email:
-        raise HTTPException(status_code=401, detail="Missing X-User-Email header")
     
     # Vérifier si le coach existe - ASYNC
     coach = await db.coaches.find_one({"email": x_user_email})
@@ -284,17 +283,16 @@ async def create_stripe_connect_account(
 
 
 @router.post("/connect/account-link")
-async def create_account_link(
-    x_user_email: str = Header(None, alias="X-User-Email")
-):
+async def create_account_link(request: Request):
     """
     Crée un lien d'onboarding Stripe Connect.
     """
+    # V646 : ce lien permet de saisir le compte bancaire : jamais sur la foi de l'en-tête seul.
+    from api.routes.shared import v646_identite_partenaire
+    x_user_email = await v646_identite_partenaire(request)
     if not stripe.api_key:
         raise HTTPException(status_code=500, detail="Stripe API key not configured")
     
-    if not x_user_email:
-        raise HTTPException(status_code=401, detail="Missing X-User-Email header")
     
     # ASYNC
     coach = await db.coaches.find_one({"email": x_user_email})
@@ -323,17 +321,16 @@ async def create_account_link(
 
 
 @router.get("/connect/status")
-async def get_stripe_connect_status(
-    x_user_email: str = Header(None, alias="X-User-Email")
-):
+async def get_stripe_connect_status(request: Request):
     """
     Vérifie le statut d'un compte Stripe Connect.
     """
+    # V646 : jamais l'en-tête seul.
+    from api.routes.shared import v646_identite_partenaire
+    x_user_email = await v646_identite_partenaire(request)
     if not stripe.api_key:
         return {"connected": False, "error": "Stripe not configured"}
     
-    if not x_user_email:
-        return {"connected": False, "error": "Missing email"}
     
     # ASYNC
     coach = await db.coaches.find_one({"email": x_user_email})

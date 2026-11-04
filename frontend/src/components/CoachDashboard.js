@@ -41,6 +41,7 @@ import SmartLinksSection from "./coach/SmartLinksSection"; // v98: Liens Intelli
 import { parseMediaUrl, getMediaThumbnail } from "../services/MediaParser"; // Media Parser
 import SuperAdminPanel from "./SuperAdminPanel"; // v8.9 Super Admin Panel
 // v13.5: Composants extraits pour alléger CoachDashboard
+import { conceptSansBannieres } from "../utils/banniereChamps";
 import { CreditsGate, CreditBoutique, StripeConnectTab, CoursesManager, OffersManager, ConceptEditor, PageVenteTab, PromoCodesTab, PaymentConfigTab, BrandingManager, SEOManager, FAQManager, ContactsManager, InvoiceGenerator, AdhesionsManager, OffersClassification } from "./dashboard";
 // V199: Accordéon paiements (5 sections pliables)
 import V199BoutiqueAccordion from "./dashboard/V199BoutiqueAccordion";
@@ -1417,7 +1418,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
           });
           setCoachCredits(res.data?.credits ?? 0);
           // v8.9.9: Récupérer username pour vitrine
-          const username = res.data?.name?.toLowerCase().replace(/\s+/g, '-') || res.data?.id || safeCoachUser.email.split('@')[0];
+          // V646 : `vitrine_segment` mène toujours à SA vitrine, même s'il a un homonyme.
+          const username = res.data?.vitrine_segment || res.data?.name?.toLowerCase().replace(/\s+/g, '-') || res.data?.id || safeCoachUser.email.split('@')[0];
           setCoachUsername(isSuperAdmin ? 'bassi' : username);
           // v9.1.3: Récupérer platform_name pour marque blanche
           setCoachPlatformName(res.data?.platform_name || null);
@@ -2148,7 +2150,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     conceptSaveTimeoutRef.current = setTimeout(async () => {
       try {
         setConceptSaveStatus('saving');
-        await axios.put(`${API}/concept`, concept, getCoachHeaders());
+        // V646 : jamais les bannières, gérées par leur éditeur officiel (voir conceptSansBannieres).
+        await axios.put(`${API}/concept`, conceptSansBannieres(concept), getCoachHeaders());
         setConceptSaveStatus('saved');
         console.log('[COACH] v9.3.7 Concept auto-sauvegardé');
         // Cacher le statut après 2 secondes
@@ -2625,7 +2628,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   const saveConcept = async () => {
     try {
       setConceptSaveStatus('saving');
-      await axios.put(`${API}/concept`, concept, getCoachHeaders());
+      // V646 : jamais les bannières, gérées par leur éditeur officiel.
+      await axios.put(`${API}/concept`, conceptSansBannieres(concept), getCoachHeaders());
       setConceptSaveStatus('saved');
       setTimeout(() => setConceptSaveStatus(null), 2000);
     } catch (err) {

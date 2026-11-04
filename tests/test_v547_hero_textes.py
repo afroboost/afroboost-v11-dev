@@ -71,6 +71,10 @@ class HTTPException(Exception):
 ADMIN = "admin@exemple.invalid"
 
 
+async def _v646_coach_signe_banc(req):
+    return req.email
+
+
 def charger():
     ns = {
         "BaseModel": BaseModel, "ConfigDict": ConfigDict, "Optional": Optional,
@@ -78,6 +82,11 @@ def charger():
         "logger": types.SimpleNamespace(error=lambda *a, **k: None),
         "is_super_admin": lambda e: e == ADMIN,
         "require_auth": lambda req: req.email,
+        # V645/V646 : gardes et normalisations ajoutées à `update_concept`, hors du sujet de ce banc.
+        "v646_coach_signe": _v646_coach_signe_banc,
+        "_V646_PREFIXES_BANNIERE": (),
+        "_v645c_normaliser_banniere": lambda updates: None,
+        "_v645j_normaliser_hero_gradient": lambda updates: None,
         "db": types.SimpleNamespace(concept=Coll()),
     }
     for nom in ("Concept", "ConceptUpdate", "V547_HERO_LIMITES",

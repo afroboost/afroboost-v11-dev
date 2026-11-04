@@ -173,6 +173,11 @@ class HTTPException(Exception):
         self.status_code, self.detail, self.headers = status_code, detail, headers or {}
 
 
+async def _v646_coach_signe_banc(r):
+    """V646 : la route lit l'identité par cette garde ; même identité que `require_auth` ici."""
+    return "coach@test.ch"
+
+
 def extraire(src, nom):
     m = re.search(r"^async def %s\(.*?(?=^(?:async def |def |@)|\Z)" % nom, src, re.S | re.M)
     if not m:
@@ -278,6 +283,7 @@ def construire(base):
            "logger": logging.getLogger("t"), "uuid": uuid,
            "DEFAULT_COACH_ID": "bassi_default", "Request": object,
            "require_auth": lambda r: "coach@test.ch",
+           "v646_coach_signe": _v646_coach_signe_banc,
            # V591b : pas de JWT signé dans ce banc -> chemin du repli X-User-Email (réponse neutre)
            "_v311_coach_email_from_jwt": lambda r: "",
            "is_super_admin": lambda e: True,

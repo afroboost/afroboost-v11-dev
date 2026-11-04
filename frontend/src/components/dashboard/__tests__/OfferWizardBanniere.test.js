@@ -41,7 +41,7 @@ const TSHIRT_SANS_ID = {
   videoUrl: '', offer_type: 'product', category: 'tshirt',
 };
 
-async function monter(offerId) {
+async function monter(offerId, { isSuperAdmin = false, initialOffer = TSHIRT_SANS_ID } = {}) {
   conteneur = document.createElement('div');
   document.body.appendChild(conteneur);
   racine = createRoot(conteneur);
@@ -51,10 +51,10 @@ async function monter(offerId) {
         open
         isEditing
         offerId={offerId}
-        initialOffer={TSHIRT_SANS_ID}
+        initialOffer={initialOffer}
         courses={[]}
         coachEmail={COACH}
-        isSuperAdmin={false}
+        isSuperAdmin={isSuperAdmin}
         API="/api"
         onSave={() => {}}
         onCancel={() => {}}
@@ -97,4 +97,32 @@ test("étape 3 : aucune rubrique Bannière à la création (pas d'offerId)", asy
   await monter(undefined);
   await allerEtape3();
   expect(texteRubrique()).toBe(false);
+});
+
+// V646 : un seul éditeur, deux rubriques, et le partenaire garde la sienne.
+describe('V646 — quelles rubriques pour qui', () => {
+  const rubriques = () => ['banniere-boutique-section', 'banniere-page-boutique-section']
+    .map((id) => !!conteneur.querySelector(`[data-testid="${id}"]`));
+  const PRODUIT = { name: 'Produit partenaire', price: 10, images: [], isProduct: true };
+
+  test('super-admin + T-shirt : accueil ET page Boutique', async () => {
+    await monter(TSHIRT_OFFER_ID, { isSuperAdmin: true });
+    await bouton(/Medias/);
+    expect(rubriques()).toEqual([true, true]);
+  });
+  test('super-admin + autre offre : aucune', async () => {
+    await monter('autre-offre', { isSuperAdmin: true, initialOffer: PRODUIT });
+    await bouton(/Medias/);
+    expect(rubriques()).toEqual([false, false]);
+  });
+  test('partenaire + son produit : sa bannière d\'accueil, pas la page Boutique', async () => {
+    await monter('autre-offre', { initialOffer: PRODUIT });
+    await bouton(/Medias/);
+    expect(rubriques()).toEqual([true, false]);
+  });
+  test('partenaire + offre non produit : aucune', async () => {
+    await monter('autre-offre', { initialOffer: { name: 'Cours', price: 10, images: [] } });
+    await bouton(/Medias/);
+    expect(rubriques()).toEqual([false, false]);
+  });
 });

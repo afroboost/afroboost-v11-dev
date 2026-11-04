@@ -43,3 +43,9 @@ Règle du moteur à respecter dans les enchaînements : 120 s entre deux demande
   déblocage sans présence (ancienne réservation supprimée, séance restituée, un seul code actif), le refus après présence
   validée (texte exact) et les KPI d'offres.
 - `parcours_hero_editeur.cjs` (V554) : Hero — A accueil sans disposition (7 tailles), B compte à rebours × Vue visiteur, C disposition libre (zones sûres, desktop ≠ mobile), D parité aperçu de l'éditeur ↔ accueil, E persistance (PUT unique capturé) ; D/E en SKIP tant que `[data-testid=hero-editeur]` n'existe pas. Build statique : `BUILD_DIR=<build hors dépôt> RELAIS_API=https://afroboost.com CAPTURES=<hors dépôt> node parcours_hero_editeur.cjs` (GET relayés sans identité, écritures bloquées).
+
+## V646 — Boutique (`parcours_boutique.cjs`) et isolation réseau (`reseau_local.sb`)
+- `reseau_local.sb` : profil du noyau macOS, seul `127.0.0.1` / `::1` est joignable (ni DNS, ni Internet, redirections et tâches de fond comprises). `lsof` ne prouve rien : il ne voit qu'un instant.
+- `parcours_boutique.cjs` REFUSE de démarrer si lui-même ou le serveur 8001 tourne hors de ce profil. Aucun relais vers la production : les médias absents viennent de `FICHIERS`. Mode d'emploi en tête du fichier.
+- Couvre `/boutique`, l'URL produit, galerie, zoom, variantes, checkout (faux Stripe), historique du navigateur, les deux bannières (image, cadrage, trim, miniature, sauvegarde, rechargement, indépendance), l'absence d'écrasement par l'enregistrement général, et la non-régression de l'accueil.
+- Prérequis local non versionnés : `.env.local` avec `MONGO_URL=mongodb://127.0.0.1:27017`, et un lien `static` -> `<hors dépôt>/pw_build` (le catch-all SPA n'est enregistré que si ce dossier existe à l'import).

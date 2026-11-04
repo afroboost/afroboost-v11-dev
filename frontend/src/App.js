@@ -301,6 +301,8 @@ import { visiteurEstConnecte, regrouperOffres as aimantsRegrouper, estRecurrente
 import { CarteLive, CarteOffreDuMoment, CarteSpordateur, CarteHoraires } from "./components/accueil/ColonneAccueil";
 // V645.3c — média de la bannière Boutique (vidéo sur segment + poster / image / fallback)
 import BanniereBoutiqueMedia from "./components/accueil/BanniereBoutiqueMedia";
+// V646 — routes de la page /boutique (fonctions pures, sans routeur).
+import { lireRouteBoutique, cheminProduit, trouverProduit, avecModeVisiteur } from "./utils/boutiqueRoute";
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -1696,7 +1698,7 @@ const V223_TIERS = {
 // NOTE V224: le bouton se desactive sur `checkoutBusy`, PAS sur `loading` — voir
 // la declaration de checkoutBusy dans App. `loading` reste relaye tel quel pour
 // ne rien retirer a l'API du composant.
-const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false, inlineDetail = false }) => {
+const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false, inlineDetail = false, onOuvrirProduit = null }) => {
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   // V645.3 — fiche produit « façon Adidas » (galerie + infos + variantes),
@@ -3179,7 +3181,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             {offer.isProduct && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); setShowDetail(true); }}
+                /* V646 : sur la page /boutique, le bouton ouvre l'URL du produit.
+                   Ailleurs (accueil), `onOuvrirProduit` est absent : la modale d'origine. */
+                onClick={(e) => { e.stopPropagation(); if (onOuvrirProduit) onOuvrirProduit(offer); else setShowDetail(true); }}
                 data-testid={`voir-produit-${offer.id}`}
                 className="w-full rounded-full font-semibold mt-3"
                 style={{ padding: '11px 16px', border: '1px solid var(--primary-color, #D91CD2)', color: 'var(--primary-color, #D91CD2)', background: 'transparent', cursor: 'pointer' }}
@@ -5102,6 +5106,9 @@ function App() {
   const [showSuperAdminPanel, setShowSuperAdminPanel] = useState(false);
   const [userRole, setUserRole] = useState(null); // 'super_admin', 'coach', 'user'
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
+  // V646 : bannière décidée par le serveur pour cette vitrine. Une réponse tardive du
+  // concept général (lancée avant que la vitrine soit connue) ne doit pas l'écraser.
+  const v646BanniereVitrineRef = useRef(null);
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
   const [showSubscriberSpace, setShowSubscriberSpace] = useState(null); // V184: Code abonné pour espace d'accès rapide
   const [parrainagePage, setParrainagePage] = useState(''); // V534: '' | 'centre' | 'duo'
@@ -5450,7 +5457,12 @@ function App() {
   const [hasSavedTicket, setHasSavedTicket] = useState(false); // Bouton flottant "Voir mon ticket"
 
   // Navigation et filtrage
-  const [activeFilter, setActiveFilter] = useState('all');
+  // V646 — la page /boutique : `null` = hors boutique, '' = la liste, sinon le
+  // segment du produit. Une chaîne PRIMITIVE, jamais un objet (règle anti-boucle).
+  // Lue dès l'initialisation : un accès direct n'affiche jamais l'accueil d'abord.
+  const [boutiqueRoute, setBoutiqueRoute] = useState(() => lireRouteBoutique(window.location.pathname));
+  // « Shop » allumé dès le premier rendu sur /boutique : même état, même violet.
+  const [activeFilter, setActiveFilter] = useState(() => (lireRouteBoutique(window.location.pathname) !== null ? 'shop' : 'all'));
   const [menuMobile, setMenuMobile] = useState(false);   // V541 : tiroir de navigation mobile
   const [rechercheMobile, setRechercheMobile] = useState(false);   // V541 : champ de recherche replie sous une icone
 
@@ -5966,6 +5978,8 @@ function App() {
       if (data.concept) {
         // V554 : la disposition du Hero (heroLayout) du super-admin ne doit
         // JAMAIS fuir sur la vitrine d'un partenaire : celle du partenaire, ou null.
+        v646BanniereVitrineRef.current = Object.fromEntries(
+          Object.entries(data.concept).filter(([cle]) => cle.startsWith('home_shop_banner_')));
         setConcept(prev => fusionnerConceptVitrine(prev, data.concept));
         if (data.concept.primaryColor) {
           applyPrimaryColor(data.concept.primaryColor); // V259: pose aussi --primary-rgb
@@ -6177,6 +6191,41 @@ function App() {
     { key: 'offers', label: t('offersFilter'), icon: 'gift' },
     { key: 'shop', label: t('shopFilter'), icon: 'shoppingCart' },
   ];
+  // V646 — ouvre la page Boutique (liste ou produit) dans l'historique du navigateur.
+  const v646AllerBoutique = useCallback((chemin) => {
+    const cible = avecModeVisiteur(chemin, window.location.search);
+    if (window.location.pathname + window.location.search !== cible) window.history.pushState({}, '', cible);
+    setBoutiqueRoute(lireRouteBoutique(chemin));
+    setActiveFilter('shop');
+    window.scrollTo(0, 0);
+  }, []);
+  // V646 — boutons Précédent / Suivant du navigateur.
+  useEffect(() => {
+    const surHistorique = () => {
+      const route = lireRouteBoutique(window.location.pathname);
+      setBoutiqueRoute(route);
+      setActiveFilter((f) => (route !== null ? 'shop' : (f === 'shop' ? 'all' : f)));
+    };
+    window.addEventListener('popstate', surHistorique);
+    return () => window.removeEventListener('popstate', surHistorique);
+  }, []);
+  // V646 — titre de l'onglet sur la page Boutique. Dépend de chaînes uniquement.
+  const v646NomProduit = boutiqueRoute
+    ? ((trouverProduit((offers || []).filter((o) => o.isProduct === true), boutiqueRoute) || {}).name || '')
+    : '';
+  useEffect(() => {
+    if (boutiqueRoute === null) return undefined;
+    const precedent = document.title;
+    document.title = (v646NomProduit ? v646NomProduit + ' | ' : '') + 'Boutique Afroboost';
+    return () => { document.title = precedent; };
+  }, [boutiqueRoute, v646NomProduit]);
+  // V646 : repère de la fiche produit, lu par le CSS pour placer la bulle de chat.
+  const v646SurFiche = !!boutiqueRoute;
+  useEffect(() => {
+    if (!v646SurFiche) return undefined;
+    document.body.setAttribute('data-af-fiche-produit', '1');
+    return () => document.body.removeAttribute('data-af-fiche-produit');
+  }, [v646SurFiche]);
   const v541AllerA = useCallback((cle) => {
     setMenuMobile(false);
     // « Sessions » n'est pas un filtre : c'est une fenêtre. On ne touche donc
@@ -6186,15 +6235,32 @@ function App() {
     // V540 : « Offres » n'ouvre PLUS le panneau « toutes les offres » par-dessus
     // — les 3 cartes occupent la zone principale. Le panneau reste accessible
     // par « Voir toutes les offres » (`setSignalToutesOffres`), inchangé.
+    // V646 : « Shop » ouvre la page /boutique. Exception : la vitrine d'un
+    // partenaire (/coach/x), dont le Shop est le sien : on y garde le défilement
+    // d'origine, sinon le visiteur quitterait ce partenaire pour la boutique
+    // de la plateforme.
+    if (cle === 'shop' && !/^\/(coach|partner)\//.test(window.location.pathname)) {
+      v646AllerBoutique('/boutique');
+      return;
+    }
+    const quitteBoutique = lireRouteBoutique(window.location.pathname) !== null;
+    if (quitteBoutique) {
+      window.history.pushState({}, '', avecModeVisiteur('/', window.location.search));
+      setBoutiqueRoute(null);
+    }
     setActiveFilter(cle);
     const sectionMap = { offers: 'offers-section', shop: 'products-section', communaute: 'mur-publications' };
-    if (sectionMap[cle]) {
-      const el = document.getElementById(sectionMap[cle]);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  }, []);
+    const defiler = () => {
+      if (sectionMap[cle]) {
+        const el = document.getElementById(sectionMap[cle]);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    // En quittant /boutique, la section visée n'existe qu'au rendu suivant.
+    if (quitteBoutique) setTimeout(defiler, 80); else defiler();
+  }, [v646AllerBoutique]);
   v541AllerARef.current = v541AllerA;
 
   /* Le tiroir se ferme comme on l'attend : Échap, et jamais ouvert en desktop
@@ -6700,7 +6766,7 @@ function App() {
       }
 
       if (cachedConcept) {
-        setConcept(cachedConcept);
+        setConcept({ ...cachedConcept, ...v646BanniereVitrineRef.current });
         // Appliquer les couleurs personnalisées
         if (cachedConcept.primaryColor) {
           applyPrimaryColor(cachedConcept.primaryColor); // V259: pose aussi --primary-rgb
@@ -6726,7 +6792,7 @@ function App() {
           console.warn('[P0-SOCLE] concept indisponible — couleurs inchangees');
         } else {
         cacheRef.current.concept = { data: conceptData, timestamp: now };
-        setConcept(conceptData);
+        setConcept({ ...conceptData, ...v646BanniereVitrineRef.current });
         // Appliquer les couleurs personnalisées
         if (conceptData.primaryColor) {
           applyPrimaryColor(conceptData.primaryColor); // V259: pose aussi --primary-rgb
@@ -6958,6 +7024,8 @@ function App() {
     if (concept.defaultLandingSection && concept.defaultLandingSection !== 'all' && concept.defaultLandingSection !== 'sessions') {
       // Délai plus long pour s'assurer que tout est prêt
       const timer = setTimeout(() => {
+        // V646 : la section d'atterrissage ne concerne que l'accueil.
+        if (lireRouteBoutique(window.location.pathname) !== null) return;
         let sectionId = null;
         if (concept.defaultLandingSection === 'offers' || concept.defaultLandingSection === 'shop') {
           sectionId = 'offers-section';
@@ -8471,6 +8539,9 @@ function App() {
   // v66: ?visitor=true bypass — le Super Admin voit la homepage publique telle que les visiteurs la voient
   // v67: Détection synchrone — si l'URL est /coach/{slugSuperAdmin}, c'est aussi du visitor mode
   const urlParams = new URLSearchParams(window.location.search);
+  // V646 : une URL de boutique ouverte par un coach connecté vaut « Vue Visiteur » :
+  // elle montre la boutique, pas le tableau de bord. Même mécanisme que `?visitor=true`.
+  if (coachMode && boutiqueRoute !== null) urlParams.set('visitor', 'true');
   const pathSlugMatch = window.location.pathname.match(/^\/(coach|partner)\/(.+)$/);
   const urlSlug = pathSlugMatch ? decodeURIComponent(pathSlugMatch[2]).toLowerCase().trim() : null;
   const isSuperAdminSlugInUrl = urlSlug && SUPER_ADMIN_SLUGS.includes(urlSlug);
@@ -9160,6 +9231,8 @@ function App() {
           ligne ne sait pas porter une media query. `min-height` garde le bloc
           titre + CTA lisible sur un écran bas (un portable 1024×600 ou un
           téléphone en paysage), où 43vh ne suffirait pas à le contenir. */}
+      {/* V646 : pas de Hero sur la page /boutique. */}
+      {boutiqueRoute === null && (
       <div
         className="relative w-full af-hero"
         data-testid="hero-carrousel"
@@ -9250,6 +9323,7 @@ function App() {
         <HeroTexte concept={concept} />
         {/* =============== FIN C1 =============== */}
       </div>
+      )}
 
       {/* v160: Overlay CoachVitrine SUPPRIMÉ — la vitrine coach utilise maintenant
           le layout unifié App.js (voir useEffect showCoachVitrine ligne 2866).
@@ -9593,8 +9667,101 @@ function App() {
         }}
       >
 
+        {/* V646 — LA PAGE BOUTIQUE. Aucun composant neuf : OfferCardSlider (carte,
+            puis fiche `inlineDetail` avec galerie, zoom, variantes, quantité et
+            checkout EXISTANTS), BanniereBoutiqueMedia et les classes .af-boutique.
+            Aucun panier, aucun paiement ajouté. La bannière lit ses PROPRES champs
+            `boutique_page_banner_*`, jamais ceux de l'accueil. */}
+        {boutiqueRoute !== null && (
+          <div className="af-boutique af-boutique-page" data-testid="page-boutique">
+            {boutiqueRoute === '' ? (
+              <>
+                <div className="af-boutique-tete">
+                  <div className="af-boutique-titres">
+                    <h1 className="af-boutique-titre">Boutique <span>Afroboost</span></h1>
+                    <p className="af-boutique-accroche">Équipe-toi. Bouge. Représente Afroboost.</p>
+                    <p className="af-boutique-sous">{t('shopDescription')}</p>
+                  </div>
+                </div>
+                <div className="af-boutique-banniere af-boutique-banniere--pleine" data-testid="page-boutique-banniere">
+                  <BanniereBoutiqueMedia
+                    url={concept.boutique_page_banner_url}
+                    type={concept.boutique_page_banner_type}
+                    trimStart={concept.boutique_page_banner_trim_start}
+                    trimEnd={concept.boutique_page_banner_trim_end}
+                    thumbnail={concept.boutique_page_banner_thumbnail}
+                    crop={concept.boutique_page_banner_crop}
+                  />
+                  <div className="af-boutique-banniere-overlay">
+                    <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
+                    <h2 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT.</h2>
+                    <button
+                      type="button"
+                      className="af-boutique-banniere-cta"
+                      onClick={() => { const el = document.querySelector('[data-testid="page-boutique-produits"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                    >
+                      Découvrir
+                    </button>
+                  </div>
+                </div>
+                <div className="af-boutique-page-grille" data-testid="page-boutique-produits">
+                  {filteredProducts.map((produit) => (
+                    <OfferCardSlider
+                      key={produit.id}
+                      offer={produit}
+                      selected={selectedOffer?.id === produit.id}
+                      pending={pendingOffer?.id === produit.id && !selectedOffer}
+                      onClick={() => { setSelectedCourse(null); setSelectedDates([]); handleSelectOffer(produit); }}
+                      courses={courses}
+                      lang={lang}
+                      startProgressiveCheckout={startProgressiveCheckout}
+                      loading={loading}
+                      checkoutBusy={checkoutBusy}
+                      onOuvrirProduit={(p) => v646AllerBoutique(cheminProduit(p))}
+                    />
+                  ))}
+                  {filteredProducts.length === 0 && (
+                    <p className="af-boutique-page-message" data-testid="page-boutique-vide">
+                      {offers.length === 0 ? 'Chargement de la boutique…' : (searchQuery.trim() ? `${t('noResults')} "${searchQuery.trim()}"` : 'Aucun produit pour le moment.')}
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (() => {
+              const produit = trouverProduit(visibleProducts, boutiqueRoute);
+              return (
+                <>
+                  <button type="button" className="af-boutique-page-retour" data-testid="page-boutique-retour" onClick={() => v646AllerBoutique('/boutique')}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>
+                    Boutique
+                  </button>
+                  {produit ? (
+                    <OfferCardSlider
+                      key={produit.id}
+                      offer={produit}
+                      selected={selectedOffer?.id === produit.id}
+                      pending={pendingOffer?.id === produit.id && !selectedOffer}
+                      onClick={() => { setSelectedCourse(null); setSelectedDates([]); handleSelectOffer(produit); }}
+                      courses={courses}
+                      lang={lang}
+                      startProgressiveCheckout={startProgressiveCheckout}
+                      loading={loading}
+                      checkoutBusy={checkoutBusy}
+                      inlineDetail
+                    />
+                  ) : (
+                    <p className="af-boutique-page-message" data-testid="page-boutique-introuvable">
+                      {offers.length === 0 ? 'Chargement du produit…' : 'Ce produit n\'est plus disponible.'}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        )}
+
         {/* Message si aucun résultat */}
-        {filteredServices.length === 0 && filteredProducts.length === 0 && visibleCourses.length === 0 && searchQuery.trim() && (
+        {boutiqueRoute === null && filteredServices.length === 0 && filteredProducts.length === 0 && visibleCourses.length === 0 && searchQuery.trim() && (
           <div className="text-center py-8 mb-8 rounded-xl" style={{ background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
             <p className="text-white opacity-70">🔍 {t('noResults')} "{searchQuery}"</p>
             <button 
@@ -9608,7 +9775,7 @@ function App() {
         )}
 
         {/* v16: DESCRIPTION PARTENAIRE — entre nav et sessions */}
-        {concept.description && activeFilter !== 'shop' && (
+        {boutiqueRoute === null && concept.description && activeFilter !== 'shop' && (
           <div className="mb-6 fade-in-section" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
             <p className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300, whiteSpace: 'pre-wrap' }}>
               {concept.description}
@@ -9620,7 +9787,7 @@ function App() {
             V119: SECTIONS DYNAMIQUES — Ordre configurable via concept.vitrineSectionOrder
             'offers-first' = Offres puis Sessions, 'sessions-first' = Sessions puis Offres (défaut)
             ===================================================== */}
-        {(() => {
+        {boutiqueRoute === null && (() => {
           // v159: Flow offer-first — sessions cachées par défaut, apparaissent au clic d'une offre
           const activeOffer = selectedOffer || pendingOffer;
           const isOffersFirst = true; // v159: force offers-first (UX plus simple)
@@ -10145,7 +10312,7 @@ function App() {
             l'onglet courant n'est pas « Shop ». Mesuré : chercher
             « merchandising » (mot-clé du T-shirt) depuis l'onglet « Offres »
             ne donnait RIEN à l'écran, et pas davantage de message. */}
-        {filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all' || v545RechercheEnCours) && (
+        {boutiqueRoute === null && filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all' || v545RechercheEnCours) && (
           <div id="products-section" className="af-boutique mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
             {/* V541c — UNE VRAIE BOUTIQUE, PAS UNE LIGNE DE TITRE.
                 Le Shop possédait déjà tout ce qu'il faut — galerie de plusieurs
@@ -10219,6 +10386,7 @@ function App() {
                 trimEnd={concept.home_shop_banner_trim_end}
                 thumbnail={concept.home_shop_banner_thumbnail}
                 crop={concept.home_shop_banner_crop}
+                repli={concept.home_shop_banner_repli}
               />
               <div className="af-boutique-banniere-overlay">
                 <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
@@ -10343,7 +10511,7 @@ function App() {
         )}
 
         {/* v57: SECTION AUDIO SHOP — Sélection multiple, prix dégressif, scroll, modale */}
-        {(() => {
+        {boutiqueRoute === null && (() => {
           const allAudioTracks = [];
           courses.forEach(course => {
             if (course.audio_tracks && course.audio_tracks.length > 0) {
@@ -11157,7 +11325,7 @@ function App() {
 
         {/* V645.2 — Bloc info locale + CTA essai. Visible visiteur uniquement.
             Le CTA ouvre le tunnel d'essai gratuit (même lien que le Hero). */}
-        {!coachMode && (
+        {boutiqueRoute === null && !coachMode && (
           <div style={{ maxWidth: '600px', margin: '48px auto 0', padding: '0 16px', textAlign: 'center' }}>
             <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
               MER 18H45 · DIM 18H30
@@ -11182,7 +11350,7 @@ function App() {
         )}
 
         {/* v104: Section FAQ Accordéon Homepage — titre cliquable */}
-        {!coachMode && homeFaqs.length > 0 && (
+        {boutiqueRoute === null && !coachMode && homeFaqs.length > 0 && (
           <div style={{ maxWidth: '700px', margin: '40px auto', padding: '0 16px' }}>
             <button
               onClick={() => setFaqSectionOpen(!faqSectionOpen)}

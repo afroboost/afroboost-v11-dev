@@ -1,0 +1,15 @@
+;; V646 — BAC À SABLE RÉSEAU DES BANCS (macOS, appliqué par le noyau) :
+;; seul 127.0.0.1 / ::1 est joignable. Ni DNS, ni Internet, quel que soit le code
+;; lancé (redirections, WebSocket, tâches de fond, Resend, Stripe, PostHog...).
+;; Usage : sandbox-exec -f tests/parcours/reseau_local.sb <commande>
+(version 1)
+(allow default)
+(deny network*)
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-bind (local ip "localhost:*"))
+;; Sockets Unix locales (IPC du navigateur), sauf le résolveur DNS du système.
+(allow network-outbound (remote unix-socket))
+(allow network-inbound (local unix-socket))
+(allow network-bind (local unix-socket))
+(deny network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
