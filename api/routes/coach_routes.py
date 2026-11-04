@@ -439,6 +439,9 @@ async def update_coach_profile(request: Request):
         raise HTTPException(status_code=401, detail="Authentification requise — reconnectez-vous", headers={"X-Auth-Reason": "jwt-required"})
     if is_super_admin(caller_email):
         return {"success": True, "message": "Super Admin - profil non modifiable"}
+    from api.routes.shared import v646_compte_coach_autorise
+    if os.environ.get("JWT_SECRET", "") and not await v646_compte_coach_autorise(db, caller_email):
+        raise HTTPException(status_code=403, detail="Ce compte n'est pas autorisé à modifier une vitrine")
     coach = await db.coaches.find_one({"email": caller_email})
     if not coach:
         raise HTTPException(status_code=404, detail="Coach non trouvé")

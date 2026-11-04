@@ -213,7 +213,7 @@ def require_auth(request: Request) -> str:
     )
 
 
-def v646_coach_signe(request: Request) -> str:
+async def v646_coach_signe(request: Request) -> str:
     """V646 — identité d'une écriture sur une vitrine : le jeton signé, et lui seul.
 
     Le repli V265 de `require_auth` laisse passer `X-User-Email`, qu'un `curl` écrit à
@@ -224,15 +224,18 @@ def v646_coach_signe(request: Request) -> str:
     """
     if not os.environ.get("JWT_SECRET", ""):
         return require_auth(request)
-    from api.routes.shared import coach_jwt_email
+    from api.routes.shared import coach_jwt_email, v646_compte_coach_autorise
     email = coach_jwt_email(request)
-    if email:
-        return email
-    raise HTTPException(
-        status_code=401,
-        detail="Authentification requise — reconnectez-vous",
-        headers={"X-Auth-Reason": "jwt-required"},
-    )
+    if not email:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentification requise — reconnectez-vous",
+            headers={"X-Auth-Reason": "jwt-required"},
+        )
+    # 403 et non 401 : se reconnecter n'y changerait rien.
+    if not await v646_compte_coach_autorise(db, email):
+        raise HTTPException(status_code=403, detail="Ce compte n'est pas autorisé à modifier une vitrine")
+    return email
 
 
 def v646_exiger_proprietaire(email: str, document: dict, message: str) -> None:
@@ -2484,7 +2487,7 @@ async def n456_occurrences_publiques(coach: str = "", days: int = 14,
 async def create_course(course: CourseCreate, request: Request):
     # Sécurité : vérifier que l'utilisateur est authentifié
     # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
-    user_email = v646_coach_signe(request)
+    user_email = await v646_coach_signe(request)
     course_data = course.model_dump()
     # M1-GEO1 : une region mal orthographiee n'entre JAMAIS en base en silence.
     _reg, _reg_st = m1geo1_region_normalisee(course_data.get("region"))
@@ -2493,7 +2496,14 @@ async def create_course(course: CourseCreate, request: Request):
                             detail="Région inconnue. Valeurs acceptées : %s."
                                    % ", ".join(M1GEO1_REGIONS))
     course_data["region"] = _reg or None
-    if user_email and not course_data.get("coach_id"):
+    # V646 : même règle que POST /offers. Le propriétaire est l'appelant ; seul le super-admin
+    # peut désigner un coach, et ce coach doit exister.
+    _cible = str(course_data.get("coach_id") or "").strip().lower()
+    if _cible and _cible != user_email and is_super_admin(user_email):
+        if not await db.coaches.find_one({"email": _cible}, {"_id": 1}):
+            raise HTTPException(status_code=400, detail="Ce coach n'existe pas")
+        course_data["coach_id"] = _cible
+    else:
         course_data["coach_id"] = user_email
     course_obj = Course(**course_data)
     await db.courses.insert_one(course_obj.model_dump())
@@ -2503,7 +2513,7 @@ async def create_course(course: CourseCreate, request: Request):
 async def update_course(course_id: str, course_update: dict, request: Request):
     """Update a course - supports partial updates including playlist and audio_tracks"""
     # V646 : jeton signé + propriétaire. Tout coach pouvait réécrire n'importe quel cours.
-    _v646_email = v646_coach_signe(request)
+    _v646_email = await v646_coach_signe(request)
     # Récupérer le cours existant
     existing = await db.courses.find_one({"id": course_id}, {"_id": 0})
     if not existing:
@@ -2511,7 +2521,10 @@ async def update_course(course_id: str, course_update: dict, request: Request):
     v646_exiger_proprietaire(_v646_email, existing, "Vous ne pouvez modifier que vos propres cours")
     
     # Fusionner les données (mise à jour partielle)
-    update_data = {k: v for k, v in course_update.items() if v is not None}
+    # V646 : id, _id, coach_id et owner_* ne changent jamais par cette route, quel que soit
+    # l'appelant. Ils sont ignorés et non refusés : le tableau de bord renvoie le cours entier.
+    update_data = {k: v for k, v in course_update.items()
+                   if v is not None and k not in ("id", "_id", "coach_id") and not k.startswith("owner_")}
 
     # M1-GEO1 : meme garde qu'a la creation. « Non classe » se dit en envoyant
     # une chaine vide — elle efface la region au lieu d'en inventer une.
@@ -2537,10 +2550,11 @@ async def update_course(course_id: str, course_update: dict, request: Request):
 async def archive_course(course_id: str, request: Request):
     """Archive a course instead of deleting it"""
     # V646 : jeton signé + propriétaire.
-    _v646_email = v646_coach_signe(request)
+    _v646_email = await v646_coach_signe(request)
     _v646_cours = await db.courses.find_one({"id": course_id}, {"_id": 0, "coach_id": 1})
-    if _v646_cours:
-        v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez archiver que vos propres cours")
+    if not _v646_cours:
+        raise HTTPException(status_code=404, detail="Cours non trouvé")
+    v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez archiver que vos propres cours")
     await db.courses.update_one({"id": course_id}, {"$set": {"archived": True}})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     return {"success": True, "course": updated}
@@ -2552,10 +2566,12 @@ async def delete_course(course_id: str, request: Request):
     Aucune trace ne doit rester dans la base de données.
     """
     # V646 : jeton signé + propriétaire (cette route efface aussi les réservations).
-    _v646_email = v646_coach_signe(request)
+    _v646_email = await v646_coach_signe(request)
+    # Cours inexistant : rien n'est effacé, ni ses réservations ni ses conversations.
     _v646_cours = await db.courses.find_one({"id": course_id}, {"_id": 0, "coach_id": 1})
-    if _v646_cours:
-        v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez supprimer que vos propres cours")
+    if not _v646_cours:
+        raise HTTPException(status_code=404, detail="Cours non trouvé")
+    v646_exiger_proprietaire(_v646_email, _v646_cours, "Vous ne pouvez supprimer que vos propres cours")
     deleted_counts = {
         "course": 0,
         "reservations": 0,
@@ -2597,7 +2613,7 @@ async def purge_archived_courses(request: Request):
     """
     # V646 : jeton signé. Un coach ne purge que SES archives ; tout purger reste réservé
     # au super-admin (n'importe quel coach effaçait les archives et réservations des autres).
-    _v646_email = v646_coach_signe(request)
+    _v646_email = await v646_coach_signe(request)
     _v646_filtre = {"archived": True}
     if not is_super_admin(_v646_email):
         _v646_filtre["coach_id"] = _v646_email
@@ -3164,7 +3180,7 @@ def _v256_normalize_external_link(data: dict) -> None:
 @api_router.post("/offers", response_model=Offer)
 async def create_offer(offer: OfferCreate, request: Request):
     # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
-    user_email = v646_coach_signe(request)
+    user_email = await v646_coach_signe(request)
     offer_data = offer.model_dump()
     # U1a : meme normalisation qu'a la mise a jour — une seule regle, deux portes.
     offer_data["audience"] = u1a_audience(offer_data.get("audience"))
@@ -3257,7 +3273,7 @@ async def create_offer(offer: OfferCreate, request: Request):
 @api_router.put("/offers/{offer_id}", response_model=Offer)
 async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
     # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
-    user_email = v646_coach_signe(request)
+    user_email = await v646_coach_signe(request)
     update_data = offer.model_dump()
     # ============ R2c — MODIFIER SON OFFRE, PAS CELLE DES AUTRES ============
     #
@@ -3393,7 +3409,7 @@ async def update_offer(offer_id: str, offer: OfferCreate, request: Request):
 async def delete_offer(offer_id: str, request: Request):
     """v20: Supprime une offre avec vérification d'ownership + nettoyage codes promo"""
     # V646 : l'identité vient du jeton signé, jamais de l'en-tête.
-    user_email = v646_coach_signe(request)
+    user_email = await v646_coach_signe(request)
 
     # v20: Vérifier que l'offre existe
     offer = await db.offers.find_one({"id": offer_id})
@@ -3515,7 +3531,7 @@ async def r2c_classifier(offer_id: str, corps: R2CClassification, request: Reque
     modifie pas l'offre. C'est aussi pour cela qu'elle est separee de
     `PUT /offers` plutot qu'un drapeau de plus dedans.
     """
-    email = v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
+    email = await v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1, "name": 1})
@@ -3572,7 +3588,7 @@ async def r3a_enregistrer_localisation(offer_id: str, corps: R3ALocalisation,
     N'ECRIT QUE LES QUATRE CHAMPS DE LIEU. `location` (le texte libre
     historique), le prix, la visibilite et les cours lies ne sont pas touches.
     """
-    email = v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
+    email = await v646_coach_signe(request)  # V646 : le rôle ne vient jamais de l'en-tête
     if not is_super_admin(email):
         raise HTTPException(status_code=403, detail="Réservé à l'administrateur")
     _offre = await db.offers.find_one({"id": offer_id}, {"_id": 0, "id": 1})
@@ -7954,7 +7970,7 @@ async def get_payment_links(request: Request):
 async def update_payment_links(links: PaymentLinksUpdate, request: Request):
     # V646 : aucune vérification ici. Un anonyme écrivait, et l'en-tête du super-admin
     # remplaçait les liens de paiement de la plateforme.
-    user_email = v646_coach_signe(request)
+    user_email = await v646_coach_signe(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # ID de lien selon le coach
@@ -21822,7 +21838,7 @@ async def update_concept(concept: ConceptUpdate, request: Request):
     # concept « concept_ » fantome, et un en-tete falsifie ecrivait chez autrui.
     # V646 : jeton signé. Avec le repli V265, l'en-tête du super-admin suffisait à réécrire
     # le concept de la plateforme, bannières officielles comprises.
-    user_email = v646_coach_signe(request)
+    user_email = await v646_coach_signe(request)
     is_admin = is_super_admin(user_email)  # v9.5.6
     
     # Super Admin: concept global, Coach: concept personnel
@@ -21882,7 +21898,7 @@ async def update_concept(concept: ConceptUpdate, request: Request):
 @api_router.post("/coach/update-branding")
 async def update_coach_branding(request: Request):
     """Met à jour accent_color et logo_url du coach"""
-    email = v646_coach_signe(request)  # V646 : jamais le seul en-tête
+    email = await v646_coach_signe(request)  # V646 : jamais le seul en-tête
     body = await request.json()
 
     updates = {}
@@ -21911,7 +21927,7 @@ async def get_coach_branding(coach_email: str):
 @api_router.post("/coach/update-seo")
 async def update_coach_seo(request: Request):
     """Met à jour meta_title, meta_description, keywords du coach"""
-    email = v646_coach_signe(request)  # V646 : jamais le seul en-tête
+    email = await v646_coach_signe(request)  # V646 : jamais le seul en-tête
     body = await request.json()
 
     updates = {}

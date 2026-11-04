@@ -90,6 +90,8 @@ def nettoyer():
     db.courses.delete_many({"$or": [{"id": {"$regex": "banc"}}, {"coach_id": q}, {"name": "PIRATE"}]})
     db.payment_links.delete_many({"id": {"$regex": r"example[0-9]*\."}})
     db.coach_packs.delete_one({"id": "pack-banc-0"})
+    db.reservations.delete_many({"id": {"$regex": "banc"}})
+    db.chat_sessions.delete_many({"id": {"$regex": "banc"}})
 
 
 def etat():
@@ -216,6 +218,132 @@ def tester_refus():
     v("jeton d'un coach ordinaire : refus", r.status_code in (401, 403) and not db.coaches.find_one({"email": "pirate1@example.org"}), r.status_code)
     r = requests.post(f"{BASE}/api/coach/register", json={"email": "cree-par-admin.banc@example.com", "name": "Cree Par Admin"}, headers=porteur(jeton(ADMIN)), timeout=20)
     v("jeton signé du super-admin : création possible", r.status_code == 200 and db.coaches.find_one({"email": "cree-par-admin.banc@example.com"}), r.status_code)
+
+
+def jeton_session(email, role="coach"):
+    """Le jeton tel que `/auth/login` et `/auth/me` l'émettent : email + role, SANS `type`."""
+    return jwt.encode({"email": email, "role": role, "iat": int(time.time()), "exp": int(time.time()) + 1800}, SECRET, algorithm="HS256")
+
+
+def tester_quatre_failles():
+    print("\n── Faille 1 : un jeton qui n'est pas une session coach")
+    abonne_espace = jwt.encode({"type": "subscriber_space", "email": A, "coach_id": A, "slug": None, "jti": "x", "iat": int(time.time()), "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    abonne_espace_lui = jwt.encode({"type": "subscriber_space", "email": "abonne.banc@example.org", "coach_id": A, "jti": "y", "iat": int(time.time()), "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    abonne = jwt.encode({"type": "subscriber", "code": "AFR-BANC", "email": "abonne.banc@example.org", "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    invite = jwt.encode({"iss": "afroboost", "aud": "live-guest", "sub": "x", "email": A, "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    autre_type = jwt.encode({"type": "admin", "email": ADMIN, "exp": int(time.time()) + 900}, SECRET, algorithm="HS256")
+    for acteur, j in (("jeton subscriber_space au nom de A", abonne_espace), ("jeton subscriber_space d'un abonné", abonne_espace_lui),
+                      ("jeton subscriber d'un abonné", abonne), ("jeton à audience (invité)", invite), ("type inconnu au nom du super-admin", autre_type),
+                      ("jeton d'un inconnu, sans compte coach", jeton_session("inconnu.banc@example.org"))):
+        echecs = []
+        for nom, meth, url, corps in ROUTES:
+            avant = etat()
+            r = appel(meth, url, corps, porteur(j))
+            if r.status_code not in (401, 403) or etat() != avant:
+                echecs.append(f"{nom}={r.status_code}")
+                nettoyer_et_resemer()
+        v(f"{acteur} : refus sur les {len(ROUTES)} routes, rien d'écrit", not echecs, " ".join(echecs)[:200])
+
+    print("\n── Coach désactivé : son jeton encore valide n'écrit plus")
+    db.coaches.update_one({"email": A}, {"$set": {"is_active": False}})
+    echecs = []
+    for nom, meth, url, corps in ROUTES:
+        avant = etat()
+        r = appel(meth, url, corps, porteur(jeton_session(A)))
+        if r.status_code != 403 or etat() != avant:
+            echecs.append(f"{nom}={r.status_code}")
+            db.coaches.update_one({"email": A}, {"$set": {"is_active": False}})
+    v("coach désactivé : 403 sur toutes les routes, rien d'écrit", not echecs, " ".join(echecs)[:200])
+    db.coaches.update_one({"email": A}, {"$set": {"is_active": True}})
+    nettoyer_et_resemer()
+    r = appel("put", "/api/concept", BANNIERE, porteur(jeton_session(A)))
+    v("réactivé : il écrit de nouveau", r.status_code == 200, r.status_code)
+    nettoyer_et_resemer()
+
+    print("\n── Vraies sessions : connexion, renouvellement, compte activé")
+    em, mdp = "session.banc@example.com", "motdepasse-banc-1"
+    r = requests.post(f"{BASE}/api/auth/register", json={"email": em, "name": "Session Banc", "password": mdp}, timeout=20)
+    v("inscription : compte en attente", r.status_code == 403, r.status_code)
+    r = requests.post(f"{BASE}/api/auth/login", json={"email": em, "password": mdp}, timeout=20)
+    v("en attente : connexion refusée, aucun jeton", r.status_code != 200 or not r.json().get("token"), r.status_code)
+    r = requests.post(f"{BASE}/api/admin/activate-coach", json={"email": em}, headers=porteur(jeton_session(ADMIN, "super_admin")), timeout=20)
+    if r.status_code == 404 or r.status_code == 405:
+        db.users_auth.update_one({"email": em}, {"$set": {"pending_validation": False}})
+        db.coaches.update_one({"email": em}, {"$set": {"is_active": True}})
+    r = requests.post(f"{BASE}/api/auth/login", json={"email": em, "password": mdp}, timeout=20)
+    jeton_reel = r.json().get("token") if r.status_code == 200 else ""
+    v("connexion réelle : un jeton est émis", bool(jeton_reel), r.status_code)
+    charge = jwt.decode(jeton_reel, SECRET, algorithms=["HS256"]) if jeton_reel else {}
+    v("ce jeton a bien la forme attendue (rôle, sans type)", charge.get("role") == "coach" and "type" not in charge, sorted(charge))
+    r2 = requests.put(f"{BASE}/api/concept", json=BANNIERE, headers=porteur(jeton_reel), timeout=20)
+    v("jeton de connexion réel : écrit dans son concept", r2.status_code == 200, r2.status_code)
+    r2 = requests.post(f"{BASE}/api/courses", json=COURS, headers=porteur(jeton_reel), timeout=20)
+    v("jeton de connexion réel : crée son cours", r2.status_code == 200 and r2.json().get("coach_id") == em, r2.status_code)
+    r2 = requests.get(f"{BASE}/api/coach/profile", headers=porteur(jeton_reel), timeout=20)
+    v("jeton de connexion réel : lit son profil", r2.status_code == 200 and r2.json().get("email") == em, r2.status_code)
+    cookie = r.cookies.get("coach_session_token") or ""
+    r3 = requests.get(f"{BASE}/api/auth/me", cookies={"coach_session_token": cookie}, timeout=20)
+    jeton_neuf = r3.json().get("token") if r3.status_code == 200 else ""
+    v("renouvellement réel par /auth/me : un jeton est émis", bool(jeton_neuf), r3.status_code)
+    r4 = requests.put(f"{BASE}/api/concept", json=BANNIERE, headers=porteur(jeton_neuf), timeout=20)
+    v("jeton renouvelé : écrit dans son concept", r4.status_code == 200, r4.status_code)
+    r5 = requests.get(f"{BASE}/api/auth/whoami", headers=porteur(jeton_neuf), timeout=20)
+    v("/auth/whoami reconnaît le jeton renouvelé", r5.status_code == 200 and r5.json().get("valid") is True, r5.status_code)
+    r6 = requests.put(f"{BASE}/api/concept", json=BANNIERE, headers=porteur(jeton_session(ADMIN, "super_admin")), timeout=20)
+    v("session du super-admin : écrit dans le concept de la plateforme", r6.status_code == 200, r6.status_code)
+    nettoyer_et_resemer()
+
+    print("\n── Faille 2 : créer un cours au nom d'un autre")
+    ja = porteur(jeton_session(A))
+    r = requests.post(f"{BASE}/api/courses", json={**COURS, "coach_id": B}, headers=ja, timeout=20)
+    v("A crée un cours « de B » : il reste à A", r.status_code == 200 and r.json().get("coach_id") == A, (r.status_code, r.json().get("coach_id")))
+    r = requests.post(f"{BASE}/api/courses", json={**COURS, "coach_id": ADMIN}, headers=ja, timeout=20)
+    v("A crée un cours « de la plateforme » : il reste à A", r.status_code == 200 and r.json().get("coach_id") == A, r.json().get("coach_id"))
+    jadm = porteur(jeton_session(ADMIN, "super_admin"))
+    r = requests.post(f"{BASE}/api/courses", json={**COURS, "coach_id": A}, headers=jadm, timeout=20)
+    v("le super-admin peut créer un cours pour un coach existant", r.status_code == 200 and r.json().get("coach_id") == A, r.status_code)
+    r = requests.post(f"{BASE}/api/courses", json={**COURS, "coach_id": "fantome.banc@example.org"}, headers=jadm, timeout=20)
+    v("le super-admin : coach inexistant refusé", r.status_code == 400, r.status_code)
+    r = requests.post(f"{BASE}/api/courses", json=COURS, headers=jadm, timeout=20)
+    v("le super-admin, sans propriétaire : le cours est à lui", r.status_code == 200 and r.json().get("coach_id") == ADMIN, r.json().get("coach_id"))
+    nettoyer_et_resemer()
+
+    print("\n── Faille 3 : champs protégés d'un cours")
+    protege = {"id": "vole-banc", "_id": "vole-banc", "coach_id": B, "owner_id": "vole", "owner_type": "partner", "name": "Renomme"}
+    for acteur, entetes in (("le propriétaire", ja), ("le super-admin", jadm)):
+        nettoyer_et_resemer()
+        r = requests.put(f"{BASE}/api/courses/cours-a-banc", json=protege, headers=entetes, timeout=20)
+        d = db.courses.find_one({"id": "cours-a-banc"}, {"_id": 0}) or {}
+        v(f"{acteur} : id, coach_id et owner_* restent inchangés", r.status_code == 200 and d.get("coach_id") == A and "owner_id" not in d and "owner_type" not in d and not db.courses.find_one({"id": "vole-banc"}), (r.status_code, d.get("coach_id")))
+        v(f"{acteur} : les autres champs sont bien modifiés", d.get("name") == "Renomme", d.get("name"))
+    nettoyer_et_resemer()
+    complet = db.courses.find_one({"id": "cours-a-banc"}, {"_id": 0})
+    complet["name"] = "Comme le tableau de bord"
+    r = requests.put(f"{BASE}/api/courses/cours-a-banc", json=complet, headers=ja, timeout=20)
+    v("PUT d'un cours complet, comme le tableau de bord : toujours accepté", r.status_code == 200 and db.courses.find_one({"id": "cours-a-banc"})["name"] == "Comme le tableau de bord", r.status_code)
+    nettoyer_et_resemer()
+
+    print("\n── Faille 4 : supprimer ou archiver un cours inexistant")
+    fantome = "cours-fantome-banc"
+
+    def semer_liees():
+        db.reservations.delete_many({"courseId": fantome})
+        db.chat_sessions.delete_many({"courseId": fantome})
+        db.reservations.insert_one({"id": "resa-fantome-banc", "courseId": fantome})
+        db.chat_sessions.insert_one({"id": "chat-fantome-banc", "courseId": fantome})
+
+    for acteur, entetes in (("un coach", ja), ("le super-admin", jadm)):
+        semer_liees()
+        r = requests.delete(f"{BASE}/api/courses/{fantome}", headers=entetes, timeout=20)
+        v(f"{acteur} : suppression d'un cours inexistant = 404, données liées conservées", r.status_code == 404 and db.reservations.count_documents({"courseId": fantome}) == 1 and db.chat_sessions.count_documents({"courseId": fantome}) == 1, r.status_code)
+        r = requests.put(f"{BASE}/api/courses/{fantome}/archive", headers=entetes, timeout=20)
+        v(f"{acteur} : archivage d'un cours inexistant = 404", r.status_code == 404, r.status_code)
+    db.reservations.delete_many({"courseId": fantome})
+    db.chat_sessions.delete_many({"courseId": fantome})
+    db.reservations.insert_one({"id": "resa-a-banc", "courseId": "cours-a-banc"})
+    r = requests.delete(f"{BASE}/api/courses/cours-a-banc", headers=ja, timeout=20)
+    v("cours existant : suppression et réservations liées, comme avant", r.status_code == 200 and not db.courses.find_one({"id": "cours-a-banc"}) and not db.reservations.find_one({"id": "resa-a-banc"}), r.status_code)
+    nettoyer_et_resemer()
 
 
 def nettoyer_et_resemer():
@@ -359,6 +487,7 @@ def main():
     try:
         tester_refus()
         tester_acces_legitime()
+        tester_quatre_failles()
         nettoyer()
         tester_resolution()
     finally:
