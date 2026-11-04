@@ -76,3 +76,49 @@ def test_normaliser_l_une_n_invente_rien_sur_l_autre():
     v = {"home_shop_banner_trim_start": 1, "home_shop_banner_trim_end": 2}
     norm(v)
     assert set(v) == {"home_shop_banner_trim_start", "home_shop_banner_trim_end"}
+
+
+# ---------------------------------------------------- VITRINE D'UN PARTENAIRE
+from api.routes.coach_routes import v646_banniere_vitrine  # noqa: E402
+
+PLATEFORME = {
+    "home_shop_banner_url": "/api/files/plateforme.jpg", "home_shop_banner_type": "image",
+    "home_shop_banner_trim_start": 0.0, "home_shop_banner_trim_end": 0.0,
+    "home_shop_banner_thumbnail": "", "home_shop_banner_crop": {"x": 0.1, "y": 0.2, "zoom": 2},
+    "boutique_page_banner_url": "/api/files/page.jpg", "termsText": "prive", "coach_id": "x@example.com",
+}
+PARTENAIRE = {
+    "home_shop_banner_url": "/api/files/lui.webm", "home_shop_banner_type": "video",
+    "home_shop_banner_trim_start": 1.0, "home_shop_banner_trim_end": 6.0,
+    "home_shop_banner_thumbnail": "/api/files/mini.jpg", "home_shop_banner_crop": {"x": 0.9, "y": 0.8, "zoom": 1.5},
+    "coach_id": "lui@example.com", "boutique_page_banner_url": "/api/files/autre.jpg",
+}
+CLES = {"home_shop_banner_url", "home_shop_banner_type", "home_shop_banner_trim_start",
+        "home_shop_banner_trim_end", "home_shop_banner_thumbnail", "home_shop_banner_crop"}
+
+
+def test_partenaire_configure_sa_banniere_complete():
+    b = v646_banniere_vitrine(PARTENAIRE, PLATEFORME)
+    assert b["home_shop_banner_url"] == "/api/files/lui.webm"
+    assert b["home_shop_banner_type"] == "video"
+    assert (b["home_shop_banner_trim_start"], b["home_shop_banner_trim_end"]) == (1.0, 6.0)
+    assert b["home_shop_banner_thumbnail"] == "/api/files/mini.jpg"
+    assert b["home_shop_banner_crop"] == {"x": 0.9, "y": 0.8, "zoom": 1.5}
+
+
+def test_partenaire_sans_banniere_ou_retiree_garde_celle_de_la_plateforme():
+    for lui in (None, {}, {"home_shop_banner_url": ""}, {"home_shop_banner_url": "", "home_shop_banner_trim_end": 9.0}):
+        b = v646_banniere_vitrine(lui, PLATEFORME)
+        assert b["home_shop_banner_url"] == "/api/files/plateforme.jpg"
+        assert b["home_shop_banner_trim_end"] == 0.0, "aucun réglage du partenaire ne s'applique au média de la plateforme"
+
+
+def test_liste_blanche_stricte():
+    for lui in (PARTENAIRE, None):
+        assert set(v646_banniere_vitrine(lui, PLATEFORME)) == CLES
+
+
+def test_aucune_banniere_nulle_part():
+    b = v646_banniere_vitrine(None, None)
+    assert set(b) == CLES and b["home_shop_banner_url"] == "" and b["home_shop_banner_crop"] is None
+

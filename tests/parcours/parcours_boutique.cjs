@@ -421,6 +421,151 @@ async function parcoursBulle(browser) {
   await ctx.close();
 }
 
+// ════════════════════════ PARTENAIRES : LEUR VITRINE ════════════════════════
+/** Deux partenaires fictifs, en base LOCALE. Priorité : sa bannière, sinon celle de la plateforme. */
+async function parcoursPartenaires(browser) {
+  reinitialiserBannieres();
+  const A = 'coach-a-banc@example.com'; const B = 'coach-b-banc@example.com';
+  const seme = (email, id) => `
+db.coaches.update_one({"email":"${email}"},{"$set":{"email":"${email}","id":"${id}","name":"${id}","username":"${id}","platform_name":"${id}","is_active":True,"credits":50,"role":"coach"}},upsert=True)
+db.offers.update_one({"id":"produit-${id}"},{"$set":{"id":"produit-${id}","name":"Produit ${id}","price":10,"images":[],"isProduct":True,"offer_type":"product","visible":True,"coach_id":"${email}","description":"test"}},upsert=True)
+db.concept.delete_one({"id":"concept_${email}"})`;
+  mongo(`${seme(A, 'coach-a-banc')}${seme(B, 'coach-b-banc')}
+print("true")`);
+  const lire = (id) => mongo(`print(json.dumps(db.concept.find_one({"id":${JSON.stringify(id)}},{"_id":0}) or {}))`);
+  const banniere = (c) => JSON.stringify(Object.entries(c).filter(([k]) => /^(home_shop|boutique_page)_banner/.test(k)).sort());
+  const jetonDe = (email) => execFileSync('python3', ['-c', 'import jwt,sys,time;print(jwt.encode({"email":sys.argv[1],"type":"coach","iat":int(time.time()),"exp":int(time.time())+1800},"pw-local-secret",algorithm="HS256"))', email], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const officielles = banniere(lire('concept'));
+  const urlPlateforme = lire('concept').home_shop_banner_url;
+  const SEL = '#products-section .af-boutique-banniere';
+  const visiteur = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+  await verrouiller(visiteur);
+  const pub = await visiteur.newPage();
+  const vitrine = async (u) => { await pub.goto(`${BASE}/partner/${u}`, { waitUntil: 'domcontentloaded' }); await pret(pub, SEL); };
+  const apiVitrine = async (u) => (await (await fetch(`${BASE}/api/coach/vitrine/${u}`)).json());
+  try {
+    // Sans bannière : celle de la plateforme
+    await vitrine('coach-a-banc');
+    await pret(pub, `${SEL} img`);
+    v('T1 partenaire sans bannière : celle de la plateforme', (await pub.getAttribute(`${SEL} img`, 'src')) === urlPlateforme);
+
+    // Le partenaire A enregistre la sienne, avec BanniereBoutiqueSection, dans son tableau de bord
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+    await verrouiller(ctx);
+    const jetonA = jetonDe(A);
+    await ctx.addInitScript(({ e, j }) => {
+      localStorage.setItem('afroboost_jwt', j);
+      localStorage.setItem('afroboost_coach_mode', 'true');
+      localStorage.setItem('afroboost_coach_user', JSON.stringify({ email: e, name: 'Coach A', role: 'coach' }));
+      localStorage.setItem('afroboost_coach_tab', 'offers');
+    }, { e: A, j: jetonA });
+    const p = await ctx.newPage();
+    const ouvrir = async () => {
+      await p.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+      await pret(p, 'button:has-text("Offres & Cours")');
+      await p.locator('button:has-text("Offres & Cours")').first().click();
+      const t = p.locator('h3', { hasText: 'Produit coach-a-banc' }).first();
+      await t.waitFor({ state: 'attached', timeout: 20000 });
+      await t.locator('xpath=ancestor::div[.//button[normalize-space()="Modifier"]][1]').getByRole('button', { name: 'Modifier', exact: true }).click();
+      await p.getByRole('button', { name: '(3) Medias', exact: true }).click();
+      await pret(p, '[data-testid="banniere-boutique-titre"]');
+      await p.click('[data-testid="banniere-boutique-titre"]');
+    };
+    await ouvrir();
+    v('T2 un seul éditeur : pas de rubrique Page Boutique pour un partenaire', (await p.locator('details[data-testid$="-section"]').count()) === 1);
+    const racine = p.locator('[data-testid="banniere-boutique-section"]');
+    await racine.locator('input[type="file"]').setInputFiles(path.join(FICHIERS, 'banniere-b.png'));
+    await pret(p, '[data-testid="banniere-boutique-apercu-img"]');
+    await p.click('[data-testid="banniere-boutique-cadrer"]');
+    await pret(p, '[data-testid="banniere-boutique-cadrage-zoom"]');
+    await p.waitForTimeout(400);
+    await p.locator('[data-testid="banniere-boutique-cadrage-zoom"]').fill('1.6');
+    await p.waitForTimeout(400);
+    await p.click('[data-testid="banniere-boutique-cadrage-valider"]');
+    await p.click('[data-testid="banniere-boutique-enregistrer"]');
+    await pret(p, '[data-testid="banniere-boutique-etat-ok"]');
+    const urlA = lire(`concept_${A}`).home_shop_banner_url;
+    v('T3 sauvegarde dans SON concept', /^\/api\/files\//.test(urlA || ''), urlA);
+    v('T4 bannières officielles Afroboost intactes', banniere(lire('concept')) === officielles);
+    v('T5 l\'autre partenaire n\'a rien reçu', !lire(`concept_${B}`).home_shop_banner_url);
+
+    await vitrine('coach-a-banc');
+    await pret(pub, `${SEL} img`);
+    const styleA = await pub.getAttribute(`${SEL} img`, 'style');
+    v('T6 vitrine A : SA bannière, avec son cadrage', (await pub.getAttribute(`${SEL} img`, 'src')) === urlA && /scale\(1\.6\)/.test(styleA || ''), styleA);
+    await pub.locator(SEL).scrollIntoViewIfNeeded();
+    await capture(pub, 'partenaire-a-sa-banniere');
+    await pub.reload({ waitUntil: 'domcontentloaded' });
+    await pret(pub, `${SEL} img`);
+    v('T7 rechargement de la vitrine : toujours la sienne', (await pub.getAttribute(`${SEL} img`, 'src')) === urlA);
+    await ouvrir();
+    await pret(p, '[data-testid="banniere-boutique-apercu-img"]');
+    v('T8 rechargement de l\'éditeur : restituée', (await p.getAttribute('[data-testid="banniere-boutique-apercu-img"]', 'src')) === urlA);
+
+    await vitrine('coach-b-banc');
+    await pret(pub, `${SEL} img`);
+    v('T9 vitrine B, sans bannière : toujours celle de la plateforme', (await pub.getAttribute(`${SEL} img`, 'src')) === urlPlateforme);
+    await pub.locator(SEL).scrollIntoViewIfNeeded();
+    await capture(pub, 'partenaire-b-plateforme');
+
+    // Concept général arrivant APRÈS la vitrine : il n'écrase ni l'une ni l'autre.
+    let retardees = 0;
+    await pub.route('**/api/concept', async (route) => { retardees += 1; await new Promise((r) => setTimeout(r, 1800)); await route.fallback(); });
+    await vitrine('coach-a-banc');
+    await pub.waitForTimeout(2600);
+    // Sans requête réellement retardée, ce contrôle ne prouverait rien.
+    v('T10 réponse tardive du concept général : A garde la sienne', retardees > 0 && (await pub.getAttribute(`${SEL} img`, 'src')) === urlA, `${retardees} requête(s) retardée(s)`);
+    await vitrine('coach-b-banc');
+    await pub.waitForTimeout(2600);
+    v('T11 réponse tardive du concept général : B garde celle de la plateforme', (await pub.getAttribute(`${SEL} img`, 'src')) === urlPlateforme);
+    await pub.unroute('**/api/concept');
+    await pub.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    await pret(pub, `${SEL} img`);
+    v('T12 accueil officiel : sa bannière, jamais celle d\'un partenaire', (await pub.getAttribute(`${SEL} img`, 'src')) === urlPlateforme);
+
+    // Réponse publique : les seuls champs de bannière prévus, aucune donnée privée
+    const ra = await apiVitrine('coach-a-banc');
+    const cles = Object.keys(ra.concept).filter((k) => /banner/.test(k)).sort();
+    const attendues = ['crop', 'thumbnail', 'trim_end', 'trim_start', 'type', 'url'].map((k) => `home_shop_banner_${k}`).sort();
+    v('T13 réponse publique : les 6 champs prévus, rien sur /boutique', JSON.stringify(cles) === JSON.stringify(attendues), cles.length);
+    v('T14 réponse publique : aucun e-mail', !JSON.stringify(ra).includes('@example.com'));
+
+    // Autorisations, sur la même route
+    const corps = JSON.stringify({ home_shop_banner_url: '/api/files/pirate/x.png', home_shop_banner_type: 'image' });
+    const put = (h) => fetch(`${BASE}/api/concept`, { method: 'PUT', headers: { 'content-type': 'application/json', ...h }, body: corps });
+    const aAvant = banniere(lire(`concept_${A}`));
+    const sans = await put({});
+    v('T15 sans identité : refus, rien d\'écrit', (sans.status === 401 || sans.status === 403) && banniere(lire(`concept_${A}`)) === aAvant, sans.status);
+    const jetonB = jetonDe(B);
+    const usurpe = await put({ authorization: `Bearer ${jetonB}`, 'x-user-email': A });
+    v('T16 jeton de B + en-tête de A : A n\'est pas touché', banniere(lire(`concept_${A}`)) === aAvant, usurpe.status);
+    v('T17 un partenaire ne peut pas toucher aux bannières officielles', banniere(lire('concept')) === officielles);
+    mongo(`db.concept.update_one({"id":"concept_${B}"},{"$unset":{"home_shop_banner_url":"","home_shop_banner_type":""}})
+print("true")`);
+
+    // Vidéo : découpe et miniature transmises
+    await fetch(`${BASE}/api/concept`, { method: 'PUT', headers: { 'content-type': 'application/json', authorization: `Bearer ${jetonA}`, 'x-user-email': A }, body: JSON.stringify({ home_shop_banner_url: urlA, home_shop_banner_type: 'video', home_shop_banner_trim_start: 1, home_shop_banner_trim_end: 6, home_shop_banner_thumbnail: urlA }) });
+    const rv = (await apiVitrine('coach-a-banc')).concept;
+    v('T18 découpe, type et miniature transmis', rv.home_shop_banner_type === 'video' && rv.home_shop_banner_trim_start === 1 && rv.home_shop_banner_trim_end === 6 && rv.home_shop_banner_thumbnail === urlA);
+
+    // Retirer : retour à la bannière de la plateforme
+    await ouvrir();
+    await p.click('[data-testid="banniere-boutique-retirer"]');
+    await pret(p, '[data-testid="banniere-boutique-etat-ok"]');
+    await vitrine('coach-a-banc');
+    await pret(pub, `${SEL} img`);
+    v('T19 bannière retirée : retour à celle de la plateforme', (await pub.getAttribute(`${SEL} img`, 'src')) === urlPlateforme);
+    v('T20 bannières officielles toujours intactes', banniere(lire('concept')) === officielles);
+    await ctx.close();
+  } finally {
+    await visiteur.close();
+    mongo(`
+for e,i in (("${A}","coach-a-banc"),("${B}","coach-b-banc")):
+    db.coaches.delete_one({"email":e}); db.offers.delete_one({"id":"produit-"+i}); db.concept.delete_one({"id":"concept_"+e})
+print("true")`);
+  }
+}
+
 // ════════════════════════ B. LES DEUX BANNIÈRES ════════════════════════
 async function parcoursBannieres(browser, jeton) {
   reinitialiserBannieres();
@@ -667,6 +812,7 @@ async function parcoursBannieres(browser, jeton) {
   if (!seul || seul === 'desktop') await garde('desktop', () => parcoursVisiteur(browser, 'desktop', { viewport: { width: 1440, height: 900 } }));
   if (!seul || seul === 'mobile') await garde('mobile', () => parcoursVisiteur(browser, 'mobile', { ...devices['iPhone 13'] }));
   if (!seul || seul === 'mobile') await garde('mobile360', () => parcoursBulle(browser));
+  if (!seul || seul === 'partenaires') await garde('partenaires', () => parcoursPartenaires(browser));
   if (!seul || seul === 'bannieres') await garde('bannières', () => parcoursBannieres(browser, jeton));
   await browser.close();
   console.log(`\nZ1 requêtes non locales coupées : ${coupes.length}`);

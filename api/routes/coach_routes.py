@@ -615,6 +615,24 @@ async def get_public_coach_profile(coach_id: str):
     return coach
 
 # === VITRINE COACH ===
+# V646 : la bannière Boutique d'une vitrine, et rien d'autre. Liste blanche : ces six
+# champs seulement, jamais `boutique_page_banner_*` (la page /boutique de la plateforme).
+_V646_BANNIERE_DEFAUTS = {
+    "home_shop_banner_url": "", "home_shop_banner_type": "",
+    "home_shop_banner_trim_start": 0.0, "home_shop_banner_trim_end": 0.0,
+    "home_shop_banner_thumbnail": "", "home_shop_banner_crop": None,
+}
+
+
+def v646_banniere_vitrine(concept_partenaire: Optional[dict], concept_plateforme: Optional[dict]) -> dict:
+    """Bannière du partenaire s'il en a configuré une, sinon celle de la plateforme.
+    C'est le serveur qui décide : sur une vitrine, le navigateur ne charge pas toujours
+    le concept général, et il ne peut donc pas assurer ce repli lui-même. Pur, sans E/S."""
+    source = concept_partenaire if (concept_partenaire or {}).get("home_shop_banner_url") else concept_plateforme
+    source = source or {}
+    return {k: source.get(k, defaut) for k, defaut in _V646_BANNIERE_DEFAUTS.items()}
+
+
 @coach_router.get("/coach/vitrine/{username}")
 @coach_router.get("/partner/vitrine/{username}")
 async def get_coach_vitrine(username: str):
@@ -716,6 +734,11 @@ async def get_coach_vitrine(username: str):
     # V554 : cle toujours presente (null si absente) -- sinon le front fusionne
     # {...prev, ...data.concept} et la vitrine heriterait de la disposition du super-admin.
     concept_data.setdefault("heroLayout", None)
+    # V646 : le concept de la plateforme n'est relu que pour ces champs, déjà publics.
+    _v646_plateforme = None
+    if not (concept or {}).get("home_shop_banner_url"):
+        _v646_plateforme = await db.concept.find_one({"id": "concept"}, {"_id": 0, **{k: 1 for k in _V646_BANNIERE_DEFAUTS}})
+    concept_data.update(v646_banniere_vitrine(concept, _v646_plateforme))
     logger.info(f"[VITRINE-V29] {username} → concept_id={concept_id}, heroVideos={len(concept_data.get('heroVideos', []))}, offers={len(offers)}, courses={len(courses)}")
     # R2b — LA VITRINE EST UNE PAGE PUBLIQUE, ET ELLE LE RESTE.
     # `coach` et `offers` portaient tous deux l'e-mail du proprietaire

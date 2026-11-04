@@ -5106,6 +5106,9 @@ function App() {
   const [showSuperAdminPanel, setShowSuperAdminPanel] = useState(false);
   const [userRole, setUserRole] = useState(null); // 'super_admin', 'coach', 'user'
   const [showCoachSearch, setShowCoachSearch] = useState(false); // v8.9.4: Modal recherche coach
+  // V646 : bannière décidée par le serveur pour cette vitrine. Une réponse tardive du
+  // concept général (lancée avant que la vitrine soit connue) ne doit pas l'écraser.
+  const v646BanniereVitrineRef = useRef(null);
   const [showCoachVitrine, setShowCoachVitrine] = useState(null); // v8.9.6: Username du coach pour vitrine
   const [showSubscriberSpace, setShowSubscriberSpace] = useState(null); // V184: Code abonné pour espace d'accès rapide
   const [parrainagePage, setParrainagePage] = useState(''); // V534: '' | 'centre' | 'duo'
@@ -5975,6 +5978,8 @@ function App() {
       if (data.concept) {
         // V554 : la disposition du Hero (heroLayout) du super-admin ne doit
         // JAMAIS fuir sur la vitrine d'un partenaire : celle du partenaire, ou null.
+        v646BanniereVitrineRef.current = Object.fromEntries(
+          Object.entries(data.concept).filter(([cle]) => cle.startsWith('home_shop_banner_')));
         setConcept(prev => fusionnerConceptVitrine(prev, data.concept));
         if (data.concept.primaryColor) {
           applyPrimaryColor(data.concept.primaryColor); // V259: pose aussi --primary-rgb
@@ -6761,7 +6766,7 @@ function App() {
       }
 
       if (cachedConcept) {
-        setConcept(cachedConcept);
+        setConcept({ ...cachedConcept, ...v646BanniereVitrineRef.current });
         // Appliquer les couleurs personnalisées
         if (cachedConcept.primaryColor) {
           applyPrimaryColor(cachedConcept.primaryColor); // V259: pose aussi --primary-rgb
@@ -6787,7 +6792,7 @@ function App() {
           console.warn('[P0-SOCLE] concept indisponible — couleurs inchangees');
         } else {
         cacheRef.current.concept = { data: conceptData, timestamp: now };
-        setConcept(conceptData);
+        setConcept({ ...conceptData, ...v646BanniereVitrineRef.current });
         // Appliquer les couleurs personnalisées
         if (conceptData.primaryColor) {
           applyPrimaryColor(conceptData.primaryColor); // V259: pose aussi --primary-rgb
