@@ -127,6 +127,96 @@ async def v646_identite_partenaire(request) -> str:
     return entete if entete.lower() == (email or "").lower() else email
 
 
+# ═══ V647 — UNE SÉANCE PHYSIQUE PEUT PORTER DEUX FICHES ═══════════════════════════
+#
+# CONSTAT : le mercredi 18:45 et le dimanche 18:30 existent chacun en DEUX fiches : la
+# fiche forfait (archivée, `agenda_abonne`) et la fiche publiée « Cours à l'unité ».
+# Réservations, codes, Pass Duo, rappels et annulations visent l'une OU l'autre : on ne
+# les fusionne donc jamais en base, seul l'AFFICHAGE les réunit.
+#
+# LA RÈGLE EST VOLONTAIREMENT ÉTROITE : la même heure à la même adresse ne prouve rien
+# (une édition spéciale, ou deux salles). Il faut TOUT à la fois : deux fiches récurrentes
+# exactement, même coach, même jour, même heure, même adresse, une fiche forfait et une
+# fiche publiée, et au moins une offre publique commune. Au moindre doute : deux cartes.
+def v647_adresse_normalisee(adresse) -> str:
+    """PURE — « Chem. des Valangines 97, 2000 Neuchâtel) » = « chemin des valangines 97 2000 neuchatel »."""
+    import unicodedata
+    _a = unicodedata.normalize("NFKD", str(adresse or "")).encode("ascii", "ignore").decode().lower()
+    _a = re.sub(r"\bchem\b\.?", "chemin", _a)
+    return " ".join(re.findall(r"[a-z0-9]+", _a))
+
+
+def _v647_recurrente(cours: dict) -> bool:
+    return not (cours.get("date") or cours.get("v610_evenement") or cours.get("remplace_cours_id")
+                or cours.get("_v640b_ponctuel")) and isinstance(cours.get("weekday"), int)
+
+
+def v647_groupes_seance_physique(cours, offres_par_cours) -> dict:
+    """PURE — {id de fiche: {"id": identifiant du groupe, "principale": id de la fiche forfait}}.
+    `offres_par_cours` : {id de fiche: identifiants des offres PUBLIQUES qui y mènent}."""
+    _paquets = {}
+    for _c in cours or []:
+        _id = (_c or {}).get("id")
+        if not _id or not _v647_recurrente(_c):
+            continue
+        _adresse = v647_adresse_normalisee(_c.get("locationName") or _c.get("location"))
+        _coach = str(_c.get("coach_id") or "").strip().lower()
+        _heure = str(_c.get("time") or "").strip()
+        if _adresse and _coach and _heure:
+            _paquets.setdefault((_coach, _c["weekday"], _heure, _adresse), []).append(_c)
+    _groupes = {}
+    for _liste in _paquets.values():
+        if len(_liste) != 2:
+            continue
+        _forfaits = [c for c in _liste if c.get("agenda_abonne") is True]
+        _publiees = [c for c in _liste if c.get("agenda_abonne") is not True
+                     and c.get("archived") is not True and c.get("visible") is not False]
+        if len(_forfaits) != 1 or len(_publiees) != 1:
+            continue
+        _a, _b = _forfaits[0]["id"], _publiees[0]["id"]
+        if not set(offres_par_cours.get(_a) or ()) & set(offres_par_cours.get(_b) or ()):
+            continue
+        _info = {"id": "+".join(sorted((_a, _b))), "principale": _a}
+        _groupes[_a] = _info
+        _groupes[_b] = _info
+    return _groupes
+
+
+async def v647_groupes_depuis_base(database) -> dict:
+    """Les groupes, calculés sur les MÊMES fiches et offres que l'agenda public."""
+    _offres = await database.offers.find({"visible": {"$ne": False}},
+                                         {"_id": 0, "id": 1, "linked_course_ids": 1}).to_list(200)
+    _par_cours = {}
+    for _o in _offres:
+        for _cid in (_o.get("linked_course_ids") or []):
+            _par_cours.setdefault(_cid, set()).add(_o.get("id"))
+    if not _par_cours:
+        return {}
+    _cours = await database.courses.find(
+        {"id": {"$in": list(_par_cours)}, "$or": [
+            {"visible": {"$ne": False}, "archived": {"$ne": True}}, {"agenda_abonne": True}]},
+        {"_id": 0, "id": 1, "weekday": 1, "time": 1, "date": 1, "coach_id": 1, "location": 1, "locationName": 1,
+         "agenda_abonne": 1, "archived": 1, "visible": 1, "v610_evenement": 1, "remplace_cours_id": 1,
+         "_v640b_ponctuel": 1}).to_list(300)
+    return v647_groupes_seance_physique(_cours, _par_cours)
+
+
+def v647_inscrits_du_groupe(reservations, places_de) -> int:
+    """PURE — le total d'une séance physique. Une même personne inscrite sur les deux fiches
+    compte UNE fois (le plus grand de ses deux totaux) ; sans e-mail, chaque réservation compte."""
+    _par_personne = {}
+    _total = 0
+    for _r in reservations or []:
+        _email = str(_r.get("userEmail") or "").strip().lower()
+        if not _email:
+            _total += places_de(_r)
+            continue
+        _fiches = _par_personne.setdefault(_email, {})
+        _cid = str(_r.get("courseId") or "")
+        _fiches[_cid] = _fiches.get(_cid, 0) + places_de(_r)
+    return _total + sum(max(f.values()) for f in _par_personne.values())
+
+
 async def v646_compte_coach_autorise(database, email: str) -> bool:
     """V646 — ce jeton signé correspond-il à un compte qui peut écrire AUJOURD'HUI ?
 

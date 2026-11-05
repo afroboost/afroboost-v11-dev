@@ -4709,8 +4709,9 @@ async def v567_inscriptions_par_session(request: Request, debut: str, fin: str):
     _perim = await _v567_perimetre(request)
     _bas, _haut = _v567_bornes(debut, fin)
     _q = {**_perim, "courseId": {"$nin": [None, ""]}, "datetime": {"$gte": _bas, "$lt": _haut}}
+    # V647 : `id` et `userEmail` ne servent qu'à ne pas compter deux fois une personne ; jamais renvoyés.
     _resas = await db.reservations.find(
-        _q, {"_id": 0, "courseId": 1, "datetime": 1, "quantity": 1}).to_list(V567_LIMITE_RESERVATIONS)
+        _q, {"_id": 0, "id": 1, "courseId": 1, "datetime": 1, "quantity": 1, "userEmail": 1}).to_list(V567_LIMITE_RESERVATIONS)
     _par_cle, _cours = {}, set()
     for _r in _resas:
         _k = v567_cle_occurrence(_r.get("courseId"), _r.get("datetime"))
@@ -4724,8 +4725,28 @@ async def v567_inscriptions_par_session(request: Request, debut: str, fin: str):
                                       {"_id": 0, "linked_course_ids": 1, "max_participants": 1}).to_list(500)
         for _c in _cours:
             _cap[_c] = v567_capacite([o for o in _liees if _c in (o.get("linked_course_ids") or [])])
-    return {"sessions": {k: {"inscrits": n, "capacite": _cap.get(k.split("|", 1)[0])}
-                         for k, n in _par_cle.items()}}
+    _sessions = {k: {"inscrits": n, "capacite": _cap.get(k.split("|", 1)[0])}
+                 for k, n in _par_cle.items()}
+    # V647 : en plus, le total de chaque séance physique portée par deux fiches. Les clés
+    # par fiche restent : ajouter ne retire rien à ce qui existe.
+    try:
+        from api.routes.shared import v647_groupes_depuis_base, v647_inscrits_du_groupe
+        _groupes = await v647_groupes_depuis_base(db)
+        _par_seance = {}
+        for _r in _resas:
+            _info = _groupes.get(str(_r.get("courseId") or ""))
+            _k = v567_cle_occurrence(_r.get("courseId"), _r.get("datetime")) if _info else ""
+            if _k:
+                _par_seance.setdefault(f"{_info['id']}|{_k.split('|', 1)[1]}", []).append(_r)
+        for _k, _liste in _par_seance.items():
+            _ids = _k.split("|", 1)[0].split("+")
+            _liees = await db.offers.find({"linked_course_ids": {"$in": _ids}},
+                                          {"_id": 0, "max_participants": 1}).to_list(500)
+            _sessions[_k] = {"inscrits": v647_inscrits_du_groupe(_liste, v567_places),
+                             "capacite": v567_capacite(_liees)}
+    except Exception as _err:  # noqa: BLE001 — l'écran additionne alors les fiches
+        logger.warning("[V647] total des séances non calculé (%s)", type(_err).__name__)
+    return {"sessions": _sessions}
 
 
 @reservation_router.get("/coach/sessions/detail")

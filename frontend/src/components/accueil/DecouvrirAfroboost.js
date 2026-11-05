@@ -28,7 +28,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { normaliserAgenda } from '../SessionsModal';
+import { normaliserAgenda, regrouperSeancesPhysiques } from '../SessionsModal';
 import {
   FAMILLE, familleOffre, prixAffiche, badgeOffre, regrouperOffres, promesseCourte,
 } from '../../utils/offresAimants';
@@ -101,7 +101,7 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
       try {
         const r = await axios.get(`${API}/sessions/agenda`, { params: { days: 60 } });
         const brut = (r && r.data && r.data.occurrences) || [];
-        if (vivant) setSeances(normaliserAgenda(brut));
+        if (vivant) setSeances(regrouperSeancesPhysiques(normaliserAgenda(brut))); // V647 : même nom que le calendrier
       } catch (e) {
         // Agenda indisponible : on n'invente aucune date, on propose le programme.
         if (vivant) setSeances([]);

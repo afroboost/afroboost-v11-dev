@@ -2790,6 +2790,16 @@ async def _agenda_occurrences(days: int = 60):
         logger.warning("[AGENDA] cours illisibles : %s", _e)
         return {"occurrences": [], "jours": _jours}
 
+    # V647 : deux fiches d'une même séance physique sont SIGNALÉES ici, jamais fusionnées :
+    # c'est l'écran du calendrier qui les présente en une seule carte.
+    # Un confort d'affichage : s'il échoue, l'agenda reste servi, avec deux cartes.
+    try:
+        from api.routes.shared import v647_groupes_seance_physique as _v647_groupes
+        _v647 = _v647_groupes(_cours, {_cid: {_o.get("id") for _o in _liste}
+                                       for _cid, _liste in _offres_par_cours.items()})
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V647] seances physiques non calculees : %s", type(_e).__name__)
+        _v647 = {}
     _vues = set()
     _sorties = []
     for _c in _cours:
@@ -2800,6 +2810,10 @@ async def _agenda_occurrences(days: int = 60):
             _vues.add(_cle)
             _occ["offers"] = _offres_par_cours.get(_c.get("id"), [])
             _occ["recurrent"] = not bool(_c.get("date"))
+            _v647_info = _v647.get(_c.get("id"))
+            if _v647_info:
+                _occ["seance_physique"] = _v647_info["id"]
+                _occ["seance_principale"] = _v647_info["principale"] == _c.get("id")
             _sorties.append(_occ)
     _sorties.sort(key=lambda x: x.get("datetime") or "")
     return {"occurrences": _sorties, "jours": _jours}
