@@ -62,7 +62,7 @@ def poser():
         _abo("V648-CASE", "Lea Fictive", "lea.fictive@example.test",
              suivi_paiement={"montant_total": 400, "prochaine_echeance": D(3)}),
         _abo("V648-STRIPE", "Sam Fictif", "sam.fictif@example.test", billing_mode="saison_2x", stripe_subscription_id="sub_faux_v648",
-             montant_encaisse=199.99),
+             montant_encaisse=199.99, origine_paiement="stripe"),
         _abo("V648-SANSMAIL", "Noa Fictive", ""),
     ])
 

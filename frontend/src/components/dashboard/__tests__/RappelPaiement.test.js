@@ -54,7 +54,7 @@ function brancher({ lignes = [ligne()], apercu = APERCU, reglages = REGLAGES, hi
     if (url.endsWith('/simulation')) {
       return Promise.resolve({ data: { simulation: true, aucun_envoi: true, lignes: [
         { code: 'CODE-1', nom: 'Marie', enverrait: true, jalons: [{ palier: 'J0', date: '2026-11-05', etat: 'a_venir' }] },
-        { code: 'CODE-S', nom: 'Sam', enverrait: false, message_exclusion: 'Abonnement prélevé par Stripe : aucun rappel à envoyer.', jalons: [] },
+        { code: 'CODE-S', nom: 'Sam', enverrait: false, message_exclusion: 'Prélevé automatiquement par Stripe : pas de rappel manuel pour cette échéance.', jalons: [] },
       ] } });
     }
     return Promise.reject(new Error(`url inattendue ${url}`));
@@ -189,8 +189,25 @@ describe('suivi incomplet (case « en plusieurs fois » non cochée)', () => {
   });
 });
 
+test('le mode réel est affiché, sur la ligne et dans l\'aperçu', async () => {
+  brancher({ lignes: [ligne({ mode_paiement: 'TWINT' })], apercu: { ...APERCU, mode_paiement: 'TWINT' } });
+  await monter();
+  expect((await attendre('v649-mode-CODE-1')).textContent).toBe('TWINT');
+  await clic($('v648-voir-CODE-1'));
+  expect((await attendre('v649-mode-apercu')).textContent).toBe('TWINT');
+});
+
+test('paiement à vérifier : aucun bouton, sans parler de Stripe', async () => {
+  brancher({ lignes: [ligne({ mode_paiement: 'Paiement à vérifier', possible: false, motif: 'paiement_a_verifier', message: 'Paiement à vérifier : les informations de paiement sont contradictoires ou incomplètes. Aucun rappel possible.', envoi: null })] });
+  await monter();
+  const b = await attendre('v648-bloque-CODE-1');
+  expect(b.textContent).toContain('Paiement à vérifier');
+  expect($('v648-ligne-CODE-1').textContent).not.toContain('Stripe');
+  expect($('v648-rappel-CODE-1')).toBeNull();
+});
+
 test('ligne exclue (saison_2x) : motif affiché, aucun bouton', async () => {
-  brancher({ lignes: [ligne({ code: 'CODE-S', possible: false, motif: 'stripe_recurrent', message: 'Abonnement prélevé par Stripe : aucun rappel à envoyer.', envoi: null })] });
+  brancher({ lignes: [ligne({ code: 'CODE-S', possible: false, motif: 'stripe_recurrent', message: 'Prélevé automatiquement par Stripe : pas de rappel manuel pour cette échéance.', envoi: null })] });
   await monter();
   expect((await attendre('v648-bloque-CODE-S')).textContent).toContain('Stripe');
   expect($('v648-rappel-CODE-S')).toBeNull();
