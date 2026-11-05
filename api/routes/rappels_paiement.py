@@ -39,7 +39,15 @@ LES ÉTATS D'UN ENVOI :
                renvoi immédiat. Le coach peut réessayer entre 15 minutes et 23 heures après, avec la
                MÊME clé : Resend ne délivre pas deux fois, et c'est la seule résolution fiable.
                Passé 23 h, Resend a oublié la clé : aucun nouveau message pour cet abonnement, même
-               avec une autre date. Une reprise qui échoue reste `incertain`.
+               avec une autre date. Une reprise qui échoue reste `incertain`. L'écran dit « Envoi à
+               vérifier » : le super-admin peut présenter une PREUVE du fournisseur (l'e-mail existe,
+               bon destinataire, bon objet, bonne période), qui passe la ligne à `envoye` SANS rien
+               envoyer. Sans preuve, le blocage reste : on contacte la personne hors du système.
+               L'absence de trace n'est jamais une preuve : elle n'ouvre aucun envoi.
+
+LA SIGNATURE D'UN PARTENAIRE EST STRUCTURÉE. Deux champs validés (nom, activité) dans une formule
+fixe, jamais un texte libre : pas de lien, pas d'instruction de paiement. La seule règle est ici :
+l'écran affiche le refus renvoyé par le serveur.
 
 UNE RÉPONSE TARDIVE N'ÉCRASE RIEN. Un succès reste un fait, tant qu'il porte la clé en vigueur. Un
 échec ne compte que si l'essai est toujours celui en cours : sinon, l'état plus prudent reste.
@@ -54,6 +62,7 @@ import hashlib
 import hmac
 import html as _html
 import logging
+import math
 import os
 import re
 import unicodedata
@@ -65,7 +74,8 @@ from pymongo.errors import DuplicateKeyError
 
 import api.resend_central as _rc
 from api.routes.shared import (SUPER_ADMIN_EMAIL, abo_actuel_du_code, coach_jwt_email,
-                               suivi_paiement_lire, suivi_rappel, v617_jour_local, v617_visible_par)
+                               suivi_paiement_lire, suivi_rappel, v617_jour_local, v617_visible_par,
+                               v646_compte_coach_autorise)
 
 try:
     import resend
@@ -98,16 +108,26 @@ MAX_RAPPELS_PAR_ECHEANCE = 3          # le premier rappel compris
 ATTENTE_REPRISE = timedelta(minutes=15)   # jamais de renvoi immédiat après un résultat incertain
 DUREE_JETON_APERCU = 1800             # secondes de validité d'un aperçu
 NOM_PRO_MAX = 60
-# Lettres latines accentuées : un « а » cyrillique ne peut pas imiter « Afroboost ».
-RE_NOM_PRO = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿŒœ0-9][A-Za-zÀ-ÖØ-öø-ÿŒœ0-9 '’&.\-]*$")
-RE_NOM_DOMAINE = re.compile(r"\.[a-zà-ÿ]{2,}", re.IGNORECASE)     # « evil.com », « evil.com-pay », « www.x »
-RE_NOM_CHIFFRE_COLLE = re.compile(r"[^\W\d_]\d|\d[^\W\d_]")      # « Afr0boost », « CH93 »
-NOM_CHIFFRES_MAX = 4                  # un numéro de compte, même découpé, n'y tient pas
-# Ces lettres ne se décomposent pas en Unicode : sans cette table, « Afrøboost » passerait.
-NOM_SOSIES = str.maketrans({"ø": "o", "ß": "ss", "œ": "oe", "æ": "ae", "ð": "d", "þ": "th",
-                            "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b"})
+ACTIVITE_MAX = 40
+NOM_CHIFFRES_MAX = 4                  # « Fit24 » oui ; un numéro de compte, même découpé, non
+SIGNE_NOM = " '’&.-"
+RE_NOM_DOMAINE = re.compile(r"(\bdot\b|\bpoint\b|\.)\s*(com|ch|net|org|fr|de|it|io|me|ly|co|shop|xyz|app|site|online|info|biz|link|top|club)\b", re.IGNORECASE)
+# Sosies : lettres qui ne se décomposent pas, chiffres, et lettres d'autres alphabets identiques à l'œil.
+NOM_SOSIES = str.maketrans({"ø": "o", "ß": "ss", "œ": "oe", "æ": "ae", "ð": "d", "þ": "th", "0": "o", "1": "i", "3": "e", "4": "a",
+                            "5": "s", "7": "t", "8": "b", "а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p",
+                            "с": "c", "т": "t", "у": "y", "х": "x", "і": "i", "ѕ": "s", "ј": "j", "α": "a", "β": "b", "ε": "e", "ι": "i",
+                            "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x", "օ": "o", "ս": "u",
+                            "ł": "l", "đ": "d", "ı": "i", "ħ": "h", "ŋ": "n", "ƀ": "b", "ɪ": "i"})
 NOM_SOSIES_COURTS = {ord("œ"): "o", ord("æ"): "a", ord("ß"): "s", ord("þ"): "t"}   # l'autre lecture : une seule lettre
-NOMS_TROMPEURS = ("afroboost", "bassi", "stripe", "twint", "paypal", "banque", "support", "administrat", "paiement", "service client")
+MARQUE_PLATEFORME = "afroboost"
+MARQUES_PAIEMENT = ("twint", "paypal", "stripe", "revolut")
+# Des mots entiers, jamais des préfixes : Payet, Lien Nguyen ou Jean Carte signent normalement.
+MOTS_INTERDITS = frozenset(("iban", "payer", "payez", "paie", "pay", "payment", "paiement", "paiements", "virement", "transfer", "transfert", "envoyez", "envoyer",
+                            "send", "bank", "banque", "konto", "zahlung", "uberweisung", "compte", "account", "clique", "cliquez", "click", "urgent", "support",
+                            "admin", "administrateur", "administration", "chf", "eur", "usd", "www", "http", "https"))
+MOTS_DE_TITRE = frozenset(("coach", "officiel", "officielle", "by", "le", "la", "m", "mr", "mme", "monsieur", "madame", "mister", "dr", "docteur", "team", "equipe"))
+RE_RESEND_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+OBJETS_RAPPEL = ("Rappel : ton deuxième paiement Afroboost", "Rappel : ton prochain paiement Afroboost")
 
 SIMULATION_MAX = 50
 RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -126,7 +146,7 @@ MOTIFS = {
     "sans_email": "Aucune adresse e-mail valide sur l'abonnement.",
     "destinataire_ambigu": "L'adresse du code et celle de l'abonnement sont différentes.",
     "refus_email": "Cette personne a demandé à ne plus recevoir d'e-mails.",
-    "signature_manquante": "Nom professionnel du coach absent ou refusé (lien, adresse, nom trompeur ou trop long) : le message ne peut pas être signé.",
+    "signature_manquante": "Renseigne ta signature (nom et activité) dans « Rappels de paiement » : le message ne peut pas être signé.",
 }
 AVERTISSEMENT_CASE = ("La case « paiement en plusieurs fois » n'est pas cochée alors qu'un solde reste affiché. "
                       "Ce solde est un calcul, pas une preuve de non-paiement : vérifie ce qui est réellement dû.")
@@ -145,8 +165,8 @@ def _nombre(v):
         if v in (None, ""):
             return None
         n = float(v)
-        return n if n == n else None
-    except (TypeError, ValueError):
+        return n if math.isfinite(n) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -183,6 +203,8 @@ def eligibilite(sub, code_doc=None, offre=None, motif_abo="unique", maintenant=N
         return _non("solde_inconnu")
     if _enc > _total + 0.005 or _total <= 0 or _enc <= 0:
         return _non("suivi_incoherent")      # encaissé > total, ou aucun premier paiement enregistré
+    if not re.match(r"^[A-Z]{3}$", str(_s.get("devise") or "CHF")):
+        return _non("suivi_incoherent")      # la devise est écrite dans l'e-mail : rien d'autre que son code
     _reste = round(_total - _enc, 2)
     if _reste <= 0.005:
         return _non("solde_nul")
@@ -218,10 +240,10 @@ def eligibilite(sub, code_doc=None, offre=None, motif_abo="unique", maintenant=N
             "avertissement": AVERTISSEMENT_CASE if not _plusieurs else ""}
 
 
-def empreinte(sub_id, verdict) -> str:
+def empreinte(sub_id, verdict, texte="") -> str:
     """PUR. Résume ce que le coach a vu : si un seul de ces éléments change, l'envoi est refusé."""
     _b = "|".join(str(x) for x in (sub_id, "%.2f" % verdict["reste"], verdict["devise"], verdict["echeance"],
-                                   verdict["destinataire"], verdict.get("paiement_actuel"), verdict.get("nb_paiements")))
+                                   verdict["destinataire"], verdict.get("paiement_actuel"), verdict.get("nb_paiements"), texte))
     return hashlib.sha256(_b.encode("utf-8")).hexdigest()[:24]
 
 
@@ -265,7 +287,7 @@ def _statut_effectif(doc, maintenant) -> str:
 
 
 def _refus_incertain_definitif(doc) -> dict:
-    return _refus("incertain_bloque", doc, message=MSG_INCERTAIN + " Plus aucun essai sûr : aucun nouvel envoi pour cet abonnement, contacte la personne directement.")
+    return _refus("incertain_bloque", doc, message="Envoi à vérifier : " + MSG_INCERTAIN + " Aucun nouvel envoi sans preuve du fournisseur : contacte la personne directement, hors du système.")
 
 
 def decision_relance(docs, delai_jours, maintenant, echeance=None) -> dict:
@@ -342,42 +364,116 @@ def jeton_valide(jeton, emp, etat, coach, maintenant) -> str:
     try:
         _q, _sig = str(jeton).split(".", 1)
         _q = int(_q)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return "different"
-    if not os.environ.get("JWT_SECRET") or not hmac.compare_digest(_sig, _signature_jeton(emp, etat, coach, _q)):
+    if not os.environ.get("JWT_SECRET") or not hmac.compare_digest(_sig.encode("utf-8"), _signature_jeton(emp, etat, coach, _q).encode("utf-8")):
         return "different"
     _age = int(maintenant.timestamp()) - _q
     return "ok" if 0 <= _age <= DUREE_JETON_APERCU else "expire"
 
 
-def nom_pro_valide(nom) -> bool:
-    """PUR. Ce nom peut-il signer un e-mail parti de l'adresse Afroboost ? Au moindre doute, non."""
-    if not isinstance(nom, str):
-        return False
-    _n = nom.strip()
-    if not _n or len(_n) > NOM_PRO_MAX or not RE_NOM_PRO.match(_n):
-        return False
-    if RE_NOM_DOMAINE.search(_n) or RE_NOM_CHIFFRE_COLLE.search(_n) or sum(c.isdigit() for c in _n) > NOM_CHIFFRES_MAX:
-        return False
-    # « A.f.r-o b0ost », « Bässi » : on compare le nom réduit à ses lettres, chiffres ressemblants compris.
-    _plat = unicodedata.normalize("NFKD", _n.lower())
+def _lectures_nom(texte) -> list:
+    """PUR. Comment ce texte se lit à l'œil : accents retirés, sosies remplacés, « l » lu « i »."""
+    _plat = unicodedata.normalize("NFKD", texte.casefold()).casefold()
     _plat = "".join(c for c in _plat if not unicodedata.combining(c))
-    _lectures = set()
-    for _texte in (_plat.translate(NOM_SOSIES), _plat.translate(NOM_SOSIES_COURTS).translate(NOM_SOSIES)):
-        _compact = "".join(c for c in _texte if c.isalpha())
-        # « l » et « i » se confondent à l'écran : « Bassl » se lit « Bassi ».
-        _lectures.update((_compact, _compact.replace("l", "i")))
-    return not any(t.replace(" ", "") in v for t in NOMS_TROMPEURS for v in _lectures)
+    _sortie = []
+    for _t in (_plat.translate(NOM_SOSIES), _plat.translate(NOM_SOSIES_COURTS).translate(NOM_SOSIES)):
+        _sortie.extend((_t, _t.replace("l", "i")))
+    return _sortie
 
 
-def nom_professionnel(coach) -> str:
-    """PUR. Le nom sous lequel un partenaire exerce, s'il est acceptable ; sinon chaîne vide.
-    « Afroboost » seul est le défaut de la plateforme : le nom du coach prend alors le relais.
-    Un autre nom refusé ne se rattrape pas en silence : le coach doit le corriger."""
-    _c = coach or {}
-    _plateforme = str(_c.get("platform_name") or "").strip()
-    _nom = _plateforme if _plateforme and _plateforme.lower() != "afroboost" else str(_c.get("name") or "").strip()
-    return _nom if nom_pro_valide(_nom) else ""
+def _alphabet(c) -> str:
+    return unicodedata.name(c, "?").split(" ")[0]
+
+
+def _caractere_accepte(texte, i) -> bool:
+    """PUR. Lettres et chiffres de tous alphabets, signes de nom. Les marques et les liaisons
+    (ZWJ/ZWNJ) seulement dans une écriture qui en a besoin : en latin, elles cachent des mots."""
+    _c = texte[i]
+    if _c.isalnum() or _c in SIGNE_NOM:
+        return True
+    _av = texte[i - 1] if i else ""
+    _ap = texte[i + 1] if i + 1 < len(texte) else ""
+    _non_latin = lambda x: bool(x) and (x.isalpha() or unicodedata.category(x).startswith("M")) and _alphabet(x) != "LATIN"  # noqa: E731
+    if _c in "\u200c\u200d":
+        return _non_latin(_av) and (not _ap or _ap == " " or _non_latin(_ap))
+    _nom = unicodedata.name(_c, "")
+    if not unicodedata.category(_c).startswith("M") or "VARIATION SELECTOR" in _nom or "GRAPHEME JOINER" in _nom:
+        return False
+    return _non_latin(_av) or (_av.isalpha() and unicodedata.combining(_c) != 0)
+
+
+def _mot_coherent(mot) -> bool:
+    """PUR. Un mot latin ne contient que des lettres qui se lisent en latin simple, et aucun autre alphabet."""
+    _lettres = [c for c in unicodedata.normalize("NFKD", mot) if c.isalpha()]
+    _alph = {_alphabet(c) for c in _lettres}
+    if "LATIN" in _alph and len(_alph) > 1:
+        return False
+    if _alph == {"LATIN"}:
+        return all(c.casefold().translate(NOM_SOSIES).isascii() for c in _lettres)
+    return True
+
+
+def motif_nom_refuse(texte, maximum=NOM_PRO_MAX) -> str:
+    """PUR. Chaîne vide si ce texte peut entrer dans une signature ; sinon l'explication pour le coach.
+
+    Accepte les chiffres, les accents et tous les alphabets. « Bassi » n'est refusé que seul ou avec un
+    titre (« Coach Bassi ») : Bassirou ou Jean Bassi signent normalement.
+    """
+    if not isinstance(texte, str) or not texte.strip():
+        return "Ce champ est vide."
+    _n = unicodedata.normalize("NFC", texte.strip())
+    if len(_n) > maximum:
+        return "Trop long : %d caractères au plus." % maximum
+    if not all(_caractere_accepte(_n, i) for i in range(len(_n))):
+        return "Seuls les lettres, chiffres, espaces et les signes ' & . - sont acceptés : pas de lien ni d'adresse e-mail."
+    if not _n[0].isalnum():
+        return "Commence par une lettre ou un chiffre."
+    if RE_NOM_DOMAINE.search(_n):
+        return "Pas de lien ni d'adresse de site."
+    for _mot in _n.split():
+        _parts = _mot.split(".")
+        # Un point ne sert qu'aux initiales (A.B., St.) : « evil.shop » ou « 1.1.1.1 » sont des adresses.
+        if len(_parts) > 1 and (any(len(p) > 1 for p in _parts[1:]) or any(p.isdigit() for p in _parts)):
+            return "Pas de lien ni d'adresse de site."
+    if sum(c.isdigit() for c in _n) > NOM_CHIFFRES_MAX:
+        return "Trop de chiffres : %d au plus, pas de numéro de compte ni de téléphone." % NOM_CHIFFRES_MAX
+    if not all(_mot_coherent(m) for m in re.split(r"[\s'’&.\-]+", _n) if m):
+        return "Un même mot mélange plusieurs alphabets ou des lettres inhabituelles : écris-le simplement."
+    for _l in _lectures_nom(_n):
+        _mots = [m for m in re.split(r"[^\w]+", _l) if m]
+        if MARQUE_PLATEFORME in "".join(c for c in _l if c.isalpha()):
+            return "Ce nom imite la marque Afroboost."
+        # Les lettres isolées (« T W I N T ») se recollent ; deux vrais mots non : Christ Ripert signe normalement.
+        _blocs, _court = [], ""
+        for _m in _mots:
+            if len(_m) <= 2:
+                _court += _m
+            else:
+                _blocs.extend([_court, _m] if _court else [_m])
+                _court = ""
+        _blocs.append(_court)
+        if any(m in b for m in MARQUES_PAIEMENT for b in _blocs):
+            return "Ce nom imite un moyen de paiement (TWINT, Stripe…)."
+        if set(_mots) & MOTS_INTERDITS or "serviceclient" in "".join(_mots):
+            return "Pas d'instruction de paiement ni de mot de service (paiement, compte, support…)."
+        if "".join(m for m in _mots if m not in MOTS_DE_TITRE) == "bassi":
+            return "« Coach Bassi » est réservé à la signature officielle : ajoute ton prénom et ton nom."
+    return ""
+
+
+def signature_structuree(sig) -> str:
+    """PUR. Deux champs validés dans une formule fixe. Chaîne vide si un champ est absent ou refusé."""
+    _s = sig if isinstance(sig, dict) else {}
+    _nom, _act = _s.get("nom"), _s.get("activite")
+    if motif_nom_refuse(_nom, NOM_PRO_MAX):
+        return ""
+    if _act not in (None, "") and motif_nom_refuse(_act, ACTIVITE_MAX):
+        return ""
+    if sum(c.isdigit() for c in _nom + (_act or "")) > NOM_CHIFFRES_MAX:
+        return ""                        # un numéro ne se répartit pas entre les deux champs
+    _ligne = _nom.strip() + (", " + _act.strip() if _act else "")
+    return _ligne + "\nCoach partenaire d'Afroboost"
 
 
 def cle_idempotence(cle, tentative=1) -> str:
@@ -385,20 +481,21 @@ def cle_idempotence(cle, tentative=1) -> str:
     return "rappel-paiement-" + hashlib.sha256(("%s#%s" % (cle, tentative)).encode("utf-8")).hexdigest()[:40]
 
 
-def signature_du_code(code_doc, coach=None) -> str:
-    """PUR. « Coach Bassi, d'Afroboost » pour ses codes ; un partenaire signe de SON nom professionnel.
-    Chaîne vide si ce nom manque : l'envoi est alors refusé, plutôt que signé au hasard."""
+def signature_du_code(code_doc, sig=None) -> str:
+    """PUR. « Coach Bassi, d'Afroboost » pour ses codes ; un partenaire signe avec SES champs validés.
+    Chaîne vide s'ils manquent : l'envoi est alors refusé, plutôt que signé au hasard."""
     _proprio = str((code_doc or {}).get("coach_id") or "").strip().lower()
     if _proprio in COACHS_BASSI:
         return "Coach Bassi, d'Afroboost"
-    return nom_professionnel(coach)
+    return signature_structuree(sig)
 
 
 def _prenom(nom) -> str:
     _n = str(nom or "").strip()
     if not _n or "@" in _n:
         return ""
-    return _n.split()[0][:40]
+    _p = _n.split()[0][:40]
+    return "" if motif_nom_refuse(_p) else _p      # le nom vient de saisies : rien d'autre qu'un prénom dans l'e-mail
 
 
 def _montant_lisible(m) -> str:
@@ -425,7 +522,7 @@ def construire_message(prenom, reste, devise, echeance, signature, paiement_actu
     _p3 = "À très vite en cours !"
     _texte = "\n\n".join((_bonjour, _p1, _p2, _p3 + "\n" + signature))
     _lignes = "".join('<p style="margin:0 0 16px">%s</p>' % _html.escape(x, quote=True) for x in (_bonjour, _p1, _p2))
-    _fin = '<p style="margin:0">%s<br>%s</p>' % (_html.escape(_p3, quote=True), _html.escape(signature, quote=True))
+    _fin = '<p style="margin:0">%s<br>%s</p>' % (_html.escape(_p3, quote=True), _html.escape(signature, quote=True).replace("\n", "<br>"))
     _corps = ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#222;'
               'max-width:520px;margin:0 auto;padding:16px">%s%s</div>' % (_lignes, _fin))
     return {"sujet": _sujet, "texte": _texte, "html": _corps}
@@ -468,12 +565,8 @@ async def _exiger_coach(request: Request):
     """La même porte que `GET /discount-codes/echeances` : un jeton signé, jamais un en-tête."""
     _email = (coach_jwt_email(request) or "").lower().strip()
     _admin = _email == SUPER_ADMIN_EMAIL.lower()
-    _ok = _admin
-    if not _ok and _email:
-        if await db.coaches.find_one({"email": _email}, {"_id": 1}) or \
-           await db.coach_auth.find_one({"email": _email}, {"_id": 1}):
-            _ok = True
-    if not _ok:
+    # La règle existante : un compte désactivé ou en attente de validation n'écrit plus à personne.
+    if not _admin and not await v646_compte_coach_autorise(db, _email):
         raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     return _email, _admin
 
@@ -491,13 +584,21 @@ def _peut_voir(code_doc, sub, appelant, admin) -> bool:
     return admin or not _proprio or _proprio == appelant
 
 
+def _acces(ctx: dict, appelant, admin) -> bool:
+    """PUR. Toutes les fiches de ce code, pas la première : un doublon ne donne pas accès au client d'un autre."""
+    if not ctx or not ctx.get("code"):
+        return False
+    return _peut_voir(ctx.get("code"), ctx.get("sub"), appelant, admin) and all(
+        v617_visible_par(c, appelant, admin) for c in ctx.get("codes") or [])
+
+
 async def _contexte(sub_id: str) -> dict:
     """Tout est relu en base à chaque appel : rien de ce que le navigateur envoie n'est cru."""
     _sub = await db.subscriptions.find_one({"id": sub_id}, {"_id": 0})
     if not _sub or not str(_sub.get("code") or "").strip():
         return {}
     _re = {"$regex": "^%s$" % re.escape(str(_sub["code"]).strip()), "$options": "i"}
-    _codes = await db.discount_codes.find({"code": _re}, {"_id": 0}).to_list(2)
+    _codes = await db.discount_codes.find({"code": _re}, {"_id": 0}).to_list(20)
     _tous = await db.subscriptions.find({"code": _re}, {"_id": 0}).to_list(50)
     _code = _codes[0] if _codes else None
     _actuel, _motif = abo_actuel_du_code(_tous, (_code or {}).get("assignedEmail"))
@@ -508,11 +609,11 @@ async def _contexte(sub_id: str) -> dict:
     if _sub.get("offer_id"):
         _offre = await db.offers.find_one({"id": _sub["offer_id"]}, {"_id": 0, "billing_mode": 1})
     _proprio = str((_code or {}).get("coach_id") or "").strip().lower()
-    _coach = None
+    _sig = None
     if _proprio not in COACHS_BASSI:
-        _coach = await db.coaches.find_one({"email": _proprio}, {"_id": 0, "name": 1, "platform_name": 1})
-    return {"sub": _sub, "code": _code, "offre": _offre, "motif_abo": _motif, "codes_trouves": len(_codes),
-            "proprio": _proprio, "coach": _coach}
+        _sig = (await db[COL_REGLAGES].find_one({"_id": _proprio}, {"signature": 1}) or {}).get("signature")
+    return {"sub": _sub, "code": _code, "offre": _offre, "motif_abo": _motif, "codes_trouves": len(_codes), "codes": _codes,
+            "proprio": _proprio, "signature": _sig}
 
 
 async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
@@ -520,7 +621,7 @@ async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
         return {"ok": False, "motif": "code_ambigu", "message": MOTIFS["code_ambigu"]}
     _v = eligibilite(ctx.get("sub"), ctx.get("code"), ctx.get("offre"), ctx.get("motif_abo"),
                      maintenant, ignorer_fenetre)
-    if _v["ok"] and not signature_du_code(ctx.get("code"), ctx.get("coach")):
+    if _v["ok"] and not signature_du_code(ctx.get("code"), ctx.get("signature")):
         return {"ok": False, "motif": "signature_manquante", "message": MOTIFS["signature_manquante"]}
     if _v["ok"] and _refus_email is not None and await _refus_email("email", _v["destinataire"]):
         return {"ok": False, "motif": "refus_email", "message": MOTIFS["refus_email"]}
@@ -529,7 +630,7 @@ async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
 
 def _message_de(ctx: dict, verdict: dict) -> dict:
     return construire_message(_prenom(ctx["sub"].get("name")), verdict["reste"], verdict["devise"], verdict["echeance"],
-                              signature_du_code(ctx.get("code"), ctx.get("coach")), verdict.get("paiement_actuel"))
+                              signature_du_code(ctx.get("code"), ctx.get("signature")), verdict.get("paiement_actuel"))
 
 
 def _delai_valide(v) -> int:
@@ -543,16 +644,29 @@ async def _delai_relance(ctx: dict) -> int:
     return _delai_valide(_r.get("delai_relance_jours"))
 
 
-async def _docs_abonnement(sub_id: str) -> list:
-    return await db[COL_RAPPELS].find({"subscription_id": sub_id, "palier": PALIER_MANUEL}).to_list(200)
+async def _docs_abonnement(sub_id: str, ctx: dict = None) -> list:
+    """Les envois de cet abonnement ET ceux de cette personne chez ce coach : remplacer ou renouveler un
+    abonnement ne doit effacer ni un envoi à vérifier, ni le délai. Jamais les envois d'un autre coach."""
+    _ou = [{"subscription_id": sub_id}]
+    _dest = str(((ctx or {}).get("sub") or {}).get("email") or "").strip().lower()
+    if _dest:
+        _ou.append({"destinataire": _dest, "coach_id": (ctx or {}).get("proprio", "")})
+    return await db[COL_RAPPELS].find({"palier": PALIER_MANUEL, "$or": _ou}).to_list(200)
 
 
-def _vue_envoi(decision: dict, delai: int) -> dict:
+def _incertain_a_verifier(decision: dict, maintenant: datetime) -> bool:
+    _doc = decision.get("doc") or {}
+    return decision.get("type") == "incertain_bloque" or (bool(_doc) and _statut_effectif(_doc, maintenant) == "incertain")
+
+
+def _vue_envoi(decision: dict, delai: int, admin: bool = False, maintenant: datetime = None) -> dict:
     """Ce que l'écran doit dire de l'envoi suivant. La route d'envoi redécide de toute façon."""
     _a = decision["action"]
+    _verif = _incertain_a_verifier(decision, maintenant or datetime.now(timezone.utc))
     return {"peut_envoyer": _a != "refus", "action": _a, "type": decision.get("type"),
             "etape": etape_du_rang(decision.get("rang")), "prochaine_le": decision.get("prochaine_le"),
-            "message": decision.get("message", ""), "confirmation_incertain": _a == "reprise", "delai_jours": delai}
+            "message": decision.get("message", ""), "confirmation_incertain": _a == "reprise", "delai_jours": delai,
+            "a_verifier": _verif, "verification_admin": _verif and admin}
 
 
 def _ligne_historique(doc) -> dict:
@@ -568,7 +682,7 @@ async def _historique(sub_id: str) -> list:
     return [_ligne_historique(d) for d in _docs]
 
 
-async def _ligne_liste(ctx: dict, maintenant: datetime) -> dict:
+async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> dict:
     """Une ligne de la section « Rappels de paiement ». Lecture seule."""
     _sub = ctx["sub"]
     _sid = _sub.get("id")
@@ -584,7 +698,7 @@ async def _ligne_liste(ctx: dict, maintenant: datetime) -> dict:
               "verification_requise": bool(_v.get("verification_requise")), "envoi": None}
     if _v["ok"]:
         _delai = await _delai_relance(ctx)
-        _ligne["envoi"] = _vue_envoi(decision_relance(await _docs_abonnement(_sid), _delai, maintenant, _v["echeance"]), _delai)
+        _ligne["envoi"] = _vue_envoi(decision_relance(await _docs_abonnement(_sid, ctx), _delai, maintenant, _v["echeance"]), _delai, admin, maintenant)
     return _ligne
 
 
@@ -603,24 +717,26 @@ def _exiger_permis(decision: dict, reprise: bool) -> None:
         raise HTTPException(status_code=409, detail={"type": "incertain", "reprise_possible": True, "message": MSG_INCERTAIN})
 
 
-async def _docs_interrompus_inscrits(sub_id: str, maintenant: datetime) -> list:
+async def _docs_interrompus_inscrits(sub_id: str, maintenant: datetime, ctx: dict = None) -> list:
     """Un processus disparu pendant l'appel : on l'écrit, l'historique doit dire la vérité."""
-    _docs = await _docs_abonnement(sub_id)
+    _docs = await _docs_abonnement(sub_id, ctx)
     _marques = False
     for _x in _docs:
         if _x.get("statut") == "en_cours" and _statut_effectif(_x, maintenant) == "incertain":
             await db[COL_RAPPELS].update_one({"_id": _x["_id"], "statut": "en_cours", "maj_le": _x.get("maj_le")},
                                              {"$set": {"statut": "incertain", "erreur": "interrompu", "maj_le": maintenant.isoformat()}})
             _marques = True
-    return await _docs_abonnement(sub_id) if _marques else _docs
+    return await _docs_abonnement(sub_id, ctx) if _marques else _docs
 
 
-async def _reserver(sub_id: str, base: dict, reprise: bool, maintenant: datetime, delai: int) -> dict:
+async def _reserver(sub_id: str, base: dict, reprise: bool, maintenant: datetime, delai: int, ctx: dict = None, etat_vu: str = None) -> dict:
     """La SEULE porte vers le fournisseur. Rend le document réservé, ou lève 409. Atomique."""
     _iso = maintenant.isoformat()
     _occupe = {"type": "en_cours", "message": MSG_EN_COURS}
-    _d = decision_relance(await _docs_interrompus_inscrits(sub_id, maintenant), delai, maintenant, base["echeance"])
+    _d = decision_relance(await _docs_interrompus_inscrits(sub_id, maintenant, ctx), delai, maintenant, base["echeance"])
     _exiger_permis(_d, reprise)
+    if etat_vu is not None and etat_decision(_d) != etat_vu:
+        raise HTTPException(status_code=409, detail=_occupe)      # un autre essai est passé depuis l'aperçu
     _ex = _d.get("doc") or {}
     _action = _d["action"]
 
@@ -667,6 +783,41 @@ async def _appel_fournisseur(cle: str, params: dict, options: dict):
                    reference=cle, sdk=resend).send, params, options)
 
 
+def date_fournisseur(valeur):
+    """PUR. Les dates de Resend varient (espace, « +00 », « Z », fraction courte). None si illisible."""
+    _t = str(valeur or "").strip().replace(" ", "T")
+    _t = re.sub(r"Z$", "+00:00", _t)
+    _t = re.sub(r"([+-]\d{2})$", r"\1:00", _t)
+    _t = re.sub(r"\.(\d{1,6})\d*", lambda m: "." + m.group(1).ljust(6, "0"), _t)
+    return _instant(_t)
+
+
+def preuve_conforme(email, doc) -> str:
+    """PUR. Cette fiche du fournisseur prouve-t-elle CET envoi ? Chaîne vide si oui, sinon le motif."""
+    if not isinstance(email, dict):
+        return "Réponse du fournisseur illisible."
+    _a = email.get("to")
+    _a = _a if isinstance(_a, list) else [_a]
+    if str(doc.get("destinataire") or "").lower() not in [str(x).strip().lower() for x in _a]:
+        return "Le destinataire ne correspond pas."
+    if email.get("subject") not in OBJETS_RAPPEL:
+        return "L'objet ne correspond pas à un rappel de paiement."
+    if "notifications@afroboost.com" not in str(email.get("from") or ""):
+        return "L'expéditeur ne correspond pas."
+    _cree = date_fournisseur(email.get("created_at"))
+    _deb = _instant(doc.get("premier_essai_le"))
+    if _cree is None or _deb is None:
+        return "Date du fournisseur illisible."
+    if not _deb - timedelta(minutes=10) <= _cree <= _deb + timedelta(hours=24):
+        return "La date de cet e-mail ne correspond pas à cet essai."
+    return ""
+
+
+class PreuveEnvoi(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    resend_id: str = ""
+
+
 class EnvoiRappel(BaseModel):
     model_config = ConfigDict(extra="ignore")
     empreinte: str = ""
@@ -682,6 +833,8 @@ async def lire_reglages(request: Request):
     return {"mode": _doc.get("mode") if _doc.get("mode") in MODES else MODE_MANUEL,
             "delais": [p for p in (_doc.get("delais") or list(PALIERS_AUTO)) if p in PALIERS_AUTO],
             "delai_relance_jours": _delai_valide(_doc.get("delai_relance_jours")),
+            "signature_officielle": _email in COACHS_BASSI,
+            "signature": _doc.get("signature") or {"nom": "", "activite": ""},
             "automatisation_disponible": AUTOMATISATION_DISPONIBLE,
             "envoi_reel": await _envoi_reel_autorise()}
 
@@ -700,7 +853,7 @@ async def ecrire_reglages(request: Request):
     if _mode not in MODES:
         raise HTTPException(status_code=400, detail="Mode inconnu : MANUEL ou AUTOMATIQUE.")
     _delais = _corps.get("delais", list(PALIERS_AUTO))
-    if not isinstance(_delais, list) or not all(d in PALIERS_AUTO for d in _delais):
+    if not isinstance(_delais, list) or not all(isinstance(d, str) and d in PALIERS_AUTO for d in _delais):
         raise HTTPException(status_code=400, detail="Délais inconnus : J-3, J0 ou J+3.")
     _propres = [p for p in PALIERS_AUTO if p in _delais]
     _champs = {"mode": _mode, "delais": _propres, "maj_le": datetime.now(timezone.utc).isoformat()}
@@ -715,6 +868,36 @@ async def ecrire_reglages(request: Request):
             "automatisation_disponible": AUTOMATISATION_DISPONIBLE}
 
 
+@router.put("/api/rappels-paiement/signature")
+async def ecrire_signature(request: Request):
+    """Les deux champs de la signature d'un partenaire. Un refus explique pourquoi, champ par champ."""
+    _email, _ = await _exiger_coach(request)
+    if _email in COACHS_BASSI:
+        raise HTTPException(status_code=400, detail={"type": "signature_officielle", "message": "La signature officielle d'Afroboost n'est pas modifiable."})
+    try:
+        _corps = await request.json()
+    except Exception:  # noqa: BLE001
+        _corps = None
+    if not isinstance(_corps, dict):
+        raise HTTPException(status_code=400, detail={"type": "nom_refuse", "champ": "nom", "message": "Signature illisible."})
+    _nom = _corps.get("nom")
+    _act = _corps.get("activite") or ""
+    _m = motif_nom_refuse(_nom, NOM_PRO_MAX)
+    if _m:
+        raise HTTPException(status_code=400, detail={"type": "nom_refuse", "champ": "nom", "message": "Nom : " + _m})
+    if _act:
+        _m = motif_nom_refuse(_act, ACTIVITE_MAX)
+        if _m:
+            raise HTTPException(status_code=400, detail={"type": "nom_refuse", "champ": "activite", "message": "Activité : " + _m})
+    if not isinstance(_act, str):
+        raise HTTPException(status_code=400, detail={"type": "nom_refuse", "champ": "activite", "message": "Activité illisible."})
+    if sum(c.isdigit() for c in _nom + _act) > NOM_CHIFFRES_MAX:
+        raise HTTPException(status_code=400, detail={"type": "nom_refuse", "champ": "nom", "message": "Trop de chiffres au total : %d au plus." % NOM_CHIFFRES_MAX})
+    _sig = {"nom": _nom.strip(), "activite": _act.strip()}
+    await db[COL_REGLAGES].update_one({"_id": _email}, {"$set": {"signature": _sig, "maj_le": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return {"signature": _sig, "apercu": signature_structuree(_sig)}
+
+
 @router.get("/api/rappels-paiement/liste")
 async def liste_rappels(request: Request):
     """Les soldes restants des abonnements ACTUELS visibles par ce coach. Lecture seule, 50 lignes au plus.
@@ -724,11 +907,11 @@ async def liste_rappels(request: Request):
     _lignes = []
     async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": "active"}, {"_id": 0, "id": 1}):
         _ctx = await _contexte(_s.get("id"))
-        if not _ctx or not _peut_voir(_ctx.get("code"), _ctx.get("sub"), _email, _admin):
+        if not _acces(_ctx, _email, _admin):
             continue
         if (suivi_paiement_lire(_ctx["sub"]).get("reste_a_payer") or 0) <= 0:
             continue
-        _lignes.append(await _ligne_liste(_ctx, _maintenant))
+        _lignes.append(await _ligne_liste(_ctx, _maintenant, _admin))
     _lignes.sort(key=lambda x: x.get("prochaine_echeance") or "9999")
     return {"lignes": _lignes[:SIMULATION_MAX], "envoi_reel": await _envoi_reel_autorise()}
 
@@ -751,7 +934,7 @@ async def simuler_automatique(request: Request):
     _lignes = []
     async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": "active"}, {"_id": 0, "id": 1}):
         _ctx = await _contexte(_s.get("id"))
-        if not _ctx or not _peut_voir(_ctx.get("code"), _ctx.get("sub"), _email, _admin):
+        if not _acces(_ctx, _email, _admin):
             continue
         _v = await _verdict(_ctx, ignorer_fenetre=True)
         _vue = suivi_paiement_lire(_ctx["sub"])
@@ -779,7 +962,7 @@ async def apercu_rappel(sub_id: str, request: Request):
     """L'aperçu obligatoire. Lecture seule. 404 (et non 403) sur le client d'un autre coach."""
     _email, _admin = await _exiger_coach(request)
     _ctx = await _contexte(sub_id)
-    if not _ctx or not _peut_voir(_ctx.get("code"), _ctx.get("sub"), _email, _admin):
+    if not _acces(_ctx, _email, _admin):
         raise HTTPException(status_code=404, detail="Abonnement introuvable.")
     _v = await _verdict(_ctx)
     _hist = await _historique(sub_id)
@@ -789,13 +972,65 @@ async def apercu_rappel(sub_id: str, request: Request):
     _msg = _message_de(_ctx, _v)
     _delai = await _delai_relance(_ctx)
     _maintenant = datetime.now(timezone.utc)
-    _dec = decision_relance(await _docs_abonnement(sub_id), _delai, _maintenant, _v["echeance"])
-    _envoi = _vue_envoi(_dec, _delai)
-    return {"possible": True, "envoi_reel": _reel, "empreinte": jeton_apercu(empreinte(sub_id, _v), etat_decision(_dec), _email, _maintenant),
+    _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), _delai, _maintenant, _v["echeance"])
+    _envoi = _vue_envoi(_dec, _delai, _admin, _maintenant)
+    return {"possible": True, "envoi_reel": _reel, "empreinte": jeton_apercu(empreinte(sub_id, _v, _msg["texte"]), etat_decision(_dec), _email, _maintenant),
             "destinataire": _v["destinataire"],
             "reste": _v["reste"], "devise": _v["devise"], "echeance": _v["echeance"], "avertissement": _v.get("avertissement", ""),
             "verification_requise": bool(_v.get("verification_requise")), "envoi": _envoi,
             "sujet": _msg["sujet"], "texte": _msg["texte"], "code": _ctx["sub"].get("code"), "historique": _hist}
+
+
+@router.post("/api/rappels-paiement/{sub_id}/verifier-envoi")
+async def verifier_envoi(sub_id: str, corps: PreuveEnvoi, request: Request):
+    """Résoudre un « Envoi à vérifier » sur PREUVE du fournisseur. SUPER-ADMIN. N'ENVOIE JAMAIS RIEN.
+
+    Preuve = une fiche Resend existante, retrouvée par le journal central de cet envoi ou par
+    l'identifiant fourni, avec le bon destinataire, le bon objet et la bonne période. La ligne passe
+    alors à `envoye`, avec sa date réelle : le délai et le maximum s'appliquent. Aucune clé n'est
+    réutilisée. Sans preuve : rien ne change, le blocage reste.
+    """
+    _email, _admin = await _exiger_coach(request)
+    if not _admin:
+        raise HTTPException(status_code=403, detail="Réservé au super-admin.")
+    _sans = lambda motif, msg: {"resolu": False, "motif": motif, "message": msg + " Le blocage reste : contacte la personne hors du système."}  # noqa: E731
+    _maintenant = datetime.now(timezone.utc)
+    _ctx = await _contexte(sub_id)
+    _doc = next((d for d in sorted(await _docs_interrompus_inscrits(sub_id, _maintenant, _ctx), key=lambda x: str(x.get("cree_le")), reverse=True)
+                 if d.get("statut") == "incertain"), None)
+    if not _doc:
+        raise HTTPException(status_code=409, detail={"type": "rien_a_verifier", "message": "Aucun envoi à vérifier sur cet abonnement."})
+    _rid = str(corps.resend_id or "").strip()
+    if _rid and not RE_RESEND_ID.match(_rid):
+        raise HTTPException(status_code=400, detail="Identifiant du fournisseur illisible.")
+    _journal = await db[_rc.COL_JOURNAL].find_one({"reference": _doc["_id"], "resend_id": {"$nin": [None, ""]}}, {"_id": 0, "resend_id": 1})
+    _source = "journal" if _journal else "identifiant"
+    _rid = (_journal or {}).get("resend_id") or _rid
+    if not _rid:
+        return _sans("aucune_preuve", "Aucune trace de cet envoi dans le journal, et aucun identifiant fourni.")
+    _ailleurs = await db[_rc.COL_JOURNAL].find_one({"resend_id": _rid, "reference": {"$nin": [_doc["_id"], None, ""]}}, {"_id": 1})
+    if _ailleurs or await db[COL_RAPPELS].find_one({"resend_id": _rid, "_id": {"$ne": _doc["_id"]}}, {"_id": 1}):
+        return _sans("preuve_deja_utilisee", "Cet identifiant prouve déjà un autre rappel.")
+    if resend is None or not os.environ.get("RESEND_API_KEY"):
+        return _sans("fournisseur_indisponible", "Le fournisseur n'est pas joignable.")
+    try:
+        _fiche = await asyncio.to_thread(resend.Emails.get, _rid)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V648] preuve illisible : %s", type(_err).__name__)
+        return _sans("fournisseur_indisponible", "Le fournisseur n'a pas confirmé cet e-mail.")
+    _motif = preuve_conforme(_fiche, _doc)
+    if _motif:
+        return _sans("preuve_non_conforme", _motif)
+    _cree = date_fournisseur(_fiche.get("created_at"))
+    _pris = await db[COL_RAPPELS].find_one_and_update(
+        {"_id": _doc["_id"], "statut": "incertain", "maj_le": _doc.get("maj_le")},
+        {"$set": {"statut": "envoye", "resend_id": _rid, "envoye_le": _cree.isoformat(), "maj_le": _maintenant.isoformat(),
+                  "resolution": {"par": _email, "le": _maintenant.isoformat(), "source": _source, "dernier_evenement": _fiche.get("last_event")}},
+         "$unset": {"erreur": ""}})
+    if not _pris:
+        raise HTTPException(status_code=409, detail={"type": "en_cours", "message": MSG_EN_COURS})
+    _note = " Le fournisseur signale un échec de remise : préviens la personne autrement." if _fiche.get("last_event") in ("bounced", "failed", "complained") else ""
+    return {"resolu": True, "message": "Preuve reçue : cet envoi est bien parti. Aucun message n'a été envoyé." + _note}
 
 
 @router.post("/api/rappels-paiement/{sub_id}/envoyer")
@@ -806,15 +1041,18 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     if corps.confirmation is not True:
         raise HTTPException(status_code=400, detail="Confirmation du coach requise.")
     _ctx = await _contexte(sub_id)
-    if not _ctx or not _peut_voir(_ctx.get("code"), _ctx.get("sub"), _email, _admin):
+    if not _acces(_ctx, _email, _admin):
         raise HTTPException(status_code=404, detail="Abonnement introuvable.")
     _v = await _verdict(_ctx)
     if not _v["ok"]:
         raise HTTPException(status_code=409, detail={"type": _v["motif"], "message": _v["message"]})
-    _emp = empreinte(sub_id, _v)
+    _msg = _message_de(_ctx, _v)
+    _emp = empreinte(sub_id, _v, _msg["texte"])
     _delai = await _delai_relance(_ctx)
     _instant_envoi = datetime.now(timezone.utc)
-    _dec = decision_relance(await _docs_interrompus_inscrits(sub_id, _instant_envoi), _delai, _instant_envoi, _v["echeance"])
+    _reel = await _envoi_reel_autorise()
+    _docs = await _docs_interrompus_inscrits(sub_id, _instant_envoi, _ctx) if _reel else await _docs_abonnement(sub_id, _ctx)
+    _dec = decision_relance(_docs, _delai, _instant_envoi, _v["echeance"])
     _exiger_permis(_dec, corps.reprise_incertain)
     _jeton = jeton_valide(corps.empreinte, _emp, etat_decision(_dec), _email, _instant_envoi)
     if _jeton == "expire":
@@ -836,16 +1074,15 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
                 "message": "Ce montant ne correspond pas au solde calculé. Corrige d'abord le suivi de paiement : rien n'a été envoyé ni modifié."})
 
     # VERROU D'ENVOI. Ici, aucune écriture et aucun fournisseur : rien ne peut partir.
-    if not await _envoi_reel_autorise():
+    if not _reel:
         return {"issue": "simulation", "envoye": False, "message": "Simulation : aucun e-mail n'a été envoyé."}
     if resend is None or not os.environ.get("RESEND_API_KEY"):
         raise HTTPException(status_code=503, detail="Service d'e-mail non configuré : rien n'a été envoyé.")
 
-    _msg = _message_de(_ctx, _v)
     _base = {"subscription_id": sub_id, "code": _ctx["sub"].get("code"), "coach_id": _ctx.get("proprio", ""),
              "palier": PALIER_MANUEL, "echeance": _v["echeance"], "montant": _v["reste"], "devise": _v["devise"],
              "destinataire": _v["destinataire"], "empreinte": _emp, "envoye_par": _email, "montant_confirme": _confirme}
-    _doc = await _reserver(sub_id, _base, corps.reprise_incertain, datetime.now(timezone.utc), _delai)
+    _doc = await _reserver(sub_id, _base, corps.reprise_incertain, datetime.now(timezone.utc), _delai, _ctx, etat_decision(_dec))
     _cle = _doc["_id"]
     _reprise = bool(_doc.get("_reprise"))
     # L'échec d'une reprise ne dit rien du premier essai : le message est toujours peut-être parti.
@@ -854,7 +1091,7 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     # DERNIÈRE VÉRIFICATION, jeton en main : un paiement saisi pendant la réservation arrête tout.
     _ctx2 = await _contexte(sub_id)
     _v2 = await _verdict(_ctx2) if _ctx2 else {"ok": False, "motif": "aucun_abonnement_actuel", "message": ""}
-    if not _v2["ok"] or empreinte(sub_id, _v2) != _emp:
+    if not _v2["ok"] or empreinte(sub_id, _v2, _message_de(_ctx2, _v2)["texte"]) != _emp:
         await _clore_sans_succes(_doc, _si_refus, "donnees_changees")
         raise HTTPException(status_code=409, detail={"type": "donnees_changees", "message": "Les données ont changé : rien n'a été envoyé."})
 

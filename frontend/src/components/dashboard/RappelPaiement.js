@@ -26,7 +26,7 @@ const montant = (v, d) => `${Number(v).toFixed(2)} ${d || 'CHF'}`;
 export const LIBELLES_STATUT = {
   envoye: 'Envoyé',
   echec: 'Refusé : aucun message parti',
-  incertain: 'À vérifier : le message est peut-être parti',
+  incertain: 'Envoi à vérifier : le message est peut-être parti',
   en_cours: 'Envoi en cours',
 };
 
@@ -72,6 +72,19 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
   const [envoi, setEnvoi] = useState(false);
   const [resultat, setResultat] = useState(null);
   const [repriseOfferte, setRepriseOfferte] = useState(false);
+  const [resendId, setResendId] = useState('');
+  const [preuve, setPreuve] = useState(null);
+
+  const verifier = async () => {
+    setErreur(''); setPreuve(null);
+    try {
+      const r = await axios.post(`${API}/${encodeURIComponent(subId)}/verifier-envoi`, { resend_id: resendId.trim() });
+      setPreuve(r.data);
+      onEnvoye?.();
+    } catch (e) {
+      setErreur(detailErreur(e, "La vérification a échoué. Le blocage reste.").message);
+    }
+  };
 
   useEffect(() => {
     if (!ouvert || !subId) return undefined;
@@ -101,7 +114,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
       setResultat(r.data);
       if (r.data?.envoye) onEnvoye?.();
     } catch (e) {
-      const d = detailErreur(e, "L'envoi a échoué : aucun message n'est parti.");
+      const d = detailErreur(e, "Résultat inconnu : le message est peut-être parti. Rouvre l'aperçu avant toute autre action.");
       setErreur(d.message);
       if (d.reprise_possible) setRepriseOfferte(true);
       setConfirme(false);
@@ -155,6 +168,22 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
               </p>
             )}
 
+            {etat?.verification_admin && !preuve?.resolu && (
+              <div className="rounded-md p-3 space-y-2" style={STYLE_CARTE} data-testid="v648-verification">
+                <label className="block text-xs text-white">
+                  Identifiant de l'e-mail chez le fournisseur (si le journal n'en a pas)
+                  <input type="text" value={resendId} onChange={(e) => setResendId(e.target.value)}
+                    className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-resend-id" />
+                </label>
+                <button type="button" onClick={verifier} data-testid="v648-verifier"
+                  className="w-full py-2 rounded-md text-sm font-semibold" style={STYLE_BORD}>
+                  Vérifier chez le fournisseur
+                </button>
+                <p className="text-[11px] text-white/60">N'envoie rien. Sans preuve, le blocage reste.</p>
+              </div>
+            )}
+            {preuve && <p className="text-sm text-white font-semibold" data-testid="v648-preuve">{preuve.message}</p>}
+
             {etat?.peut_envoyer && !modeEnvoi && (
               <button type="button" onClick={() => setModeEnvoi(true)} data-testid="v648-continuer"
                 className="w-full py-2 rounded-md text-sm font-semibold" style={STYLE_BORD}>
@@ -166,7 +195,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
               <>
                 {incertain && (
                   <p className="text-xs text-white" data-testid="v648-incertain">
-                    Le dernier envoi n'a pas pu être confirmé. Réessayer utilise la même clé : le service d'e-mail ne le délivre pas deux fois.
+                    Le dernier envoi n'a pas pu être confirmé. Réessayer réutilise la même clé d'envoi, prévue pour éviter un doublon.
                   </p>
                 )}
                 {verification && (
@@ -208,6 +237,47 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
 }
 
 const DELAIS = ['J-3', 'J0', 'J+3'];
+
+/** La règle est sur le serveur : cet écran affiche son refus, il ne la recopie pas. */
+function SignaturePartenaire({ valeur, onEnregistre }) {
+  const [nom, setNom] = useState(valeur?.nom || '');
+  const [activite, setActivite] = useState(valeur?.activite || '');
+  const [refus, setRefus] = useState('');
+  const [apercu, setApercu] = useState('');
+
+  const enregistrer = async () => {
+    setRefus(''); setApercu('');
+    try {
+      const r = await axios.put(`${API}/signature`, { nom, activite });
+      setApercu(r.data?.apercu || '');
+      onEnregistre?.();
+    } catch (e) {
+      setRefus(detailErreur(e, "La signature n'a pas été enregistrée.").message);
+    }
+  };
+
+  return (
+    <div className="rounded-md p-3 space-y-2" style={STYLE_CARTE} data-testid="v648-signature">
+      <p className="text-xs font-semibold text-white">Ta signature</p>
+      <label className="block text-xs text-white/80">
+        Nom professionnel
+        <input type="text" value={nom} onChange={(e) => setNom(e.target.value)}
+          className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-signature-nom" />
+      </label>
+      <label className="block text-xs text-white/80">
+        Activité (facultatif)
+        <input type="text" value={activite} onChange={(e) => setActivite(e.target.value)}
+          className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-signature-activite" />
+      </label>
+      <button type="button" onClick={enregistrer} data-testid="v648-signature-enregistrer"
+        className="px-2.5 py-1 rounded-md text-xs font-semibold" style={STYLE_BORD}>
+        Enregistrer ma signature
+      </button>
+      {refus && <p className="text-xs text-red-400" data-testid="v648-signature-refus">{refus}</p>}
+      {apercu && <p className="text-xs text-white/80 whitespace-pre-wrap" data-testid="v648-signature-apercu">{apercu}</p>}
+    </div>
+  );
+}
 
 function ReglagesRappels({ enregistrer, reglages, erreur, enregistre }) {
   const [simulation, setSimulation] = useState(null);
@@ -333,6 +403,9 @@ function LigneRappel({ ligne, onOuvrir }) {
               {libelleEnvoi(etat)}
             </button>
           )}
+          {etat?.a_verifier && (
+            <span className="font-semibold text-red-400" data-testid={`v648-a-verifier-envoi-${ligne.code}`}>Envoi à vérifier</span>
+          )}
           {etat && !etat.peut_envoyer && (
             <span className="text-white/70" data-testid={`v648-attente-${ligne.code}`}>
               {etat.type === 'deja_envoye' && etat.prochaine_le ? `Prochain envoi possible le ${dateCH(etat.prochaine_le)}` : etat.message}
@@ -402,6 +475,10 @@ export default function RappelsPaiementSection() {
           style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.15)' }}>
           L'envoi réel est désactivé : aucun e-mail ne partira.
         </p>
+      )}
+
+      {reglages && reglages.signature_officielle === false && (
+        <SignaturePartenaire valeur={reglages.signature} onEnregistre={relire} />
       )}
 
       {reglages && (

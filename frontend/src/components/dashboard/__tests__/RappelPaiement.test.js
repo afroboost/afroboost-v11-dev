@@ -243,6 +243,64 @@ describe('relances', () => {
   });
 });
 
+describe('envoi à vérifier', () => {
+  const B = { peut_envoyer: false, action: 'refus', type: 'incertain_bloque', etape: 'Rappel', message: 'Envoi à vérifier : contacte la personne directement, hors du système.', a_verifier: true, verification_admin: false, delai_jours: 7 };
+
+  test('statut visible ; un coach ordinaire ne voit aucune action de résolution', async () => {
+    brancher({ lignes: [ligne({ envoi: B })], apercu: { ...APERCU, envoi: B } });
+    await monter();
+    expect((await attendre('v648-a-verifier-envoi-CODE-1')).textContent).toBe('Envoi à vérifier');
+    await clic($('v648-voir-CODE-1'));
+    expect((await attendre('v648-envoi-bloque')).textContent).toContain('hors du système');
+    expect($('v648-verifier')).toBeNull();
+    expect($('v648-envoyer')).toBeNull();
+  });
+
+  test('super-admin : vérifier la preuve ne passe jamais par la route d\'envoi', async () => {
+    const A = { ...B, verification_admin: true };
+    brancher({ lignes: [ligne({ envoi: A })], apercu: { ...APERCU, envoi: A } });
+    axios.post.mockResolvedValue({ data: { resolu: false, message: 'Aucune trace. Le blocage reste.' } });
+    await monter();
+    await clic(await attendre('v648-voir-CODE-1'));
+    await saisir(await attendre('v648-resend-id'), 'abc-12345');
+    await clic($('v648-verifier'));
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post.mock.calls[0][0]).toContain('/s1/verifier-envoi');
+    expect(axios.post.mock.calls[0][1]).toEqual({ resend_id: 'abc-12345' });
+    expect((await attendre('v648-preuve')).textContent).toContain('Le blocage reste');
+    expect($('v648-envoyer')).toBeNull();
+  });
+});
+
+describe('signature du partenaire', () => {
+  test('Afroboost : aucun champ, la signature officielle ne se modifie pas', async () => {
+    brancher({ reglages: { ...REGLAGES, signature_officielle: true } });
+    await monter();
+    await attendre('v648-mode-MANUEL');
+    expect($('v648-signature')).toBeNull();
+  });
+
+  test('partenaire : deux champs, et le refus du serveur est affiché tel quel', async () => {
+    brancher({ reglages: { ...REGLAGES, signature_officielle: false, signature: { nom: '', activite: '' } } });
+    axios.put.mockRejectedValue({ response: { status: 400, data: { detail: { type: 'nom_refuse', champ: 'nom', message: "Nom : Pas de lien ni d'adresse de site." } } } });
+    await monter();
+    await saisir(await attendre('v648-signature-nom'), 'evil.com');
+    await saisir($('v648-signature-activite'), 'Danse');
+    await clic($('v648-signature-enregistrer'));
+    expect(axios.put).toHaveBeenCalledWith(expect.stringContaining('/signature'), { nom: 'evil.com', activite: 'Danse' });
+    expect((await attendre('v648-signature-refus')).textContent).toContain('Pas de lien');
+  });
+
+  test('accepté : la signature telle qu\'elle partira est montrée', async () => {
+    brancher({ reglages: { ...REGLAGES, signature_officielle: false, signature: { nom: '', activite: '' } } });
+    axios.put.mockResolvedValue({ data: { apercu: "Fit24\nCoach partenaire d'Afroboost" } });
+    await monter();
+    await saisir(await attendre('v648-signature-nom'), 'Fit24');
+    await clic($('v648-signature-enregistrer'));
+    expect((await attendre('v648-signature-apercu')).textContent).toContain('Coach partenaire');
+  });
+});
+
 test('envoi incertain : le texte le dit, et la reprise le demande explicitement', async () => {
   const I = { ...ENVOI, action: 'reprise', confirmation_incertain: true };
   brancher({ lignes: [ligne({ envoi: I })], apercu: { ...APERCU, envoi: I } });

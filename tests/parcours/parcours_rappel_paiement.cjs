@@ -27,7 +27,9 @@ const fixture = (...a) => execFileSync('python3', [FIX, ...a], { encoding: 'utf8
 const compter = () => JSON.parse(fixture('compter'));
 const lignesEmails = () => (fs.existsSync(EMAILS) ? fs.readFileSync(EMAILS, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 const rappelsEmails = () => lignesEmails().filter((m) => /paiement Afroboost/.test(m.subject || ''));
-const jeton = execFileSync('python3', ['-c', 'import jwt,sys,time;print(jwt.encode({"email":sys.argv[1],"type":"coach","iat":int(time.time()),"exp":int(time.time())+1800},"pw-local-secret",algorithm="HS256"))', SUPER_ADMIN], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+const PARTENAIRE = 'partenaire.v648@example.test';
+const jetonDe = (email) => execFileSync('python3', ['-c', 'import jwt,sys,time;print(jwt.encode({"email":sys.argv[1],"type":"coach","iat":int(time.time()),"exp":int(time.time())+1800},"pw-local-secret",algorithm="HS256"))', email], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+const JETON_PARTENAIRE = jetonDe(PARTENAIRE);
 const id = (x) => `[data-testid="${x}"]`;
 
 async function capture(p, nom, options = {}) {
@@ -46,19 +48,19 @@ async function fermer(p) {
   await fenetreFermee(p, id('v648-dialogue'));
 }
 
-async function contexte(browser, viewport, onglet) {
+async function contexte(browser, viewport, onglet, email = SUPER_ADMIN) {
   const ctx = await browser.newContext({ viewport, serviceWorkers: 'block' });
   await ctx.route('**/*', (route) => {
     const u = new URL(route.request().url());
     if (['data:', 'blob:'].includes(u.protocol) || u.hostname === '127.0.0.1') return route.continue();
     return route.abort();
   });
-  await ctx.addInitScript(({ email, j, tab }) => {
+  await ctx.addInitScript(({ mail, j, tab, role }) => {
     localStorage.setItem('afroboost_jwt', j);
     localStorage.setItem('afroboost_coach_mode', 'true');
-    localStorage.setItem('afroboost_coach_user', JSON.stringify({ email, name: 'Banc', role: 'super_admin' }));
+    localStorage.setItem('afroboost_coach_user', JSON.stringify({ email: mail, name: 'Banc', role }));
     localStorage.setItem('afroboost_coach_tab', tab);
-  }, { email: SUPER_ADMIN, j: jeton, tab: onglet });
+  }, { mail: email, j: email === PARTENAIRE ? JETON_PARTENAIRE : jetonDe(email), tab: onglet, role: email === SUPER_ADMIN ? 'super_admin' : 'coach' });
   const p = await ctx.newPage();
   p.appels = { liste: 0, erreurs: [] };
   p.on('request', (r) => { if (r.url().endsWith('/rappels-paiement/liste')) p.appels.liste += 1; });
@@ -68,8 +70,8 @@ async function contexte(browser, viewport, onglet) {
 }
 
 /** Le vrai chemin : la carte « Paiements » de Gestion, puis la section repliable. */
-async function ouvrirPagePaiements(browser, viewport) {
-  const { ctx, p } = await contexte(browser, viewport, 'offers');
+async function ouvrirPagePaiements(browser, viewport, email = SUPER_ADMIN) {
+  const { ctx, p } = await contexte(browser, viewport, 'offers', email);
   const carte = p.getByRole('button', { name: /^Paiements/ }).first();
   await carte.waitFor({ timeout: 60000 });
   await carte.click();
@@ -252,6 +254,55 @@ async function ouvrirSection(p) {
     v('téléphone : fenêtre dans l\'écran (gouttière 16 px)', Math.round(boite.x) === 16 && Math.round(boite.x + boite.width) === 374, JSON.stringify(boite));
     v('téléphone : la fenêtre tient en hauteur', boite.y >= 0 && boite.y + boite.height <= 844, JSON.stringify(boite));
     await capture(p, '07-apercu-telephone');
+    await ctx.close();
+
+    // ── F bis. Envoi à vérifier (super-admin) ──
+    fixture('incertain', 'v648-v648-retard');
+    ({ ctx, p } = await ouvrirPagePaiements(browser, { width: 1440, height: 900 }));
+    await ouvrirSection(p);
+    v('statut visible « Envoi à vérifier »', (await p.locator(id('v648-a-verifier-envoi-V648-RETARD')).textContent()) === 'Envoi à vérifier');
+    v('aucun bouton d\'envoi sur cette ligne', (await p.locator(id('v648-rappel-V648-RETARD')).count()) === 0);
+    await p.click(id('v648-voir-V648-RETARD'));
+    await p.waitForSelector(id('v648-verification'));
+    await fenetreStable(p, id('v648-dialogue'));
+    v('contact manuel proposé', /hors du système/.test(await p.locator(id('v648-envoi-bloque')).textContent()));
+    v('aucun bouton d\'envoi dans la fenêtre', (await p.locator(id('v648-envoyer')).count()) === 0);
+    await capture(p, '08-envoi-a-verifier');
+    const avantV = rappelsEmails().length;
+    await p.click(id('v648-verifier'));
+    await p.waitForSelector(id('v648-preuve'));
+    v('sans preuve : le blocage reste', /blocage reste/.test(await p.locator(id('v648-preuve')).textContent()));
+    v('vérifier n\'envoie aucun e-mail', rappelsEmails().length === avantV);
+    await fermer(p);
+    await ctx.close();
+
+    // ── F ter. Partenaire : signature structurée, réglée sur la même page ──
+    fixture('partenaire', JETON_PARTENAIRE);
+    ({ ctx, p } = await ouvrirPagePaiements(browser, { width: 1440, height: 900 }, PARTENAIRE));
+    await ouvrirSection(p);
+    v('partenaire : ses seuls clients', (await p.locator(`${id('v648-liste')} > li`).count()) === 1 && await p.locator(id('v648-ligne-V648-PART')).isVisible());
+    v('partenaire sans signature : aucun envoi, motif clair', (await p.locator(id('v648-rappel-V648-PART')).count()) === 0 && /signature/i.test(await p.locator(id('v648-bloque-V648-PART')).textContent()));
+    for (const [mauvais, attendu] of [['evil.com', /lien/i], ['Coach Bassi', /réservé/i], ['Paie ici', /paiement/i]]) {
+      await p.fill(id('v648-signature-nom'), mauvais);
+      await p.click(id('v648-signature-enregistrer'));
+      await p.waitForSelector(id('v648-signature-refus'));
+      v(`signature « ${mauvais} » : refus expliqué`, attendu.test(await p.locator(id('v648-signature-refus')).textContent()), await p.locator(id('v648-signature-refus')).textContent());
+    }
+    await p.locator(id('v648-signature')).scrollIntoViewIfNeeded();
+    await capture(p, '09-signature-refusee');
+    await p.fill(id('v648-signature-nom'), 'Bassirou Diop');
+    await p.fill(id('v648-signature-activite'), 'Fit24');
+    await p.click(id('v648-signature-enregistrer'));
+    await p.waitForSelector(id('v648-signature-apercu'));
+    v('nom légitime accepté, signature montrée', /Bassirou Diop, Fit24/.test(await p.locator(id('v648-signature-apercu')).textContent()));
+    await p.waitForSelector(id('v648-rappel-V648-PART'));
+    await p.click(id('v648-voir-V648-PART'));
+    await p.waitForSelector(id('v648-texte'));
+    await fenetreStable(p, id('v648-dialogue'));
+    const tp = await p.locator(id('v648-texte')).textContent();
+    v('le message porte sa signature, jamais celle de Bassi', tp.includes('Bassirou Diop, Fit24') && tp.includes("Coach partenaire d'Afroboost") && !tp.includes('Coach Bassi'));
+    v('partenaire : pas de bouton de résolution', (await p.locator(id('v648-verification')).count()) === 0);
+    await capture(p, '10-apercu-partenaire');
     await ctx.close();
 
     // ── F. L'encadré de Codes promo reste celui de la production ──

@@ -78,6 +78,7 @@ class ErreurResend(Exception):
 class FauxEmails:
     def __init__(self):
         self.appels, self.reponse, self.delai = [], None, 0
+        self.lectures, self.fiche = [], ErreurResend(404)
 
     def send(self, params, options=None):
         self.appels.append((params, options))
@@ -88,6 +89,13 @@ class FauxEmails:
         if isinstance(r, Exception):
             raise r
         return r if r is not None else {"id": "em_%d" % len(self.appels)}
+
+
+    def get(self, identifiant):
+        self.lectures.append(identifiant)
+        if isinstance(self.fiche, Exception):
+            raise self.fiche
+        return self.fiche
 
 
 class FauxResend:
@@ -142,9 +150,9 @@ v("prénom échappé dans le HTML", "<script>" not in x["html"] and "&lt;script&
 v("aucun lien dans le message", "http" not in m["html"] and "http" not in m["texte"])
 v("signature de Bassi sur un code sans propriétaire", rp.signature_du_code({"coach_id": ""}) == "Coach Bassi, d'Afroboost")
 v("signature de Bassi sur son code", rp.signature_du_code({"coach_id": ADMIN}) == "Coach Bassi, d'Afroboost")
-v("un partenaire signe de son nom", rp.signature_du_code({"coach_id": PARTENAIRE}, {"name": "Lea"}) == "Lea")
-v("le nom professionnel passe avant le nom", rp.signature_du_code({"coach_id": PARTENAIRE}, {"name": "Lea", "platform_name": "Studio Lea"}) == "Studio Lea")
-v("« Afroboost » par défaut n'est pas son nom", rp.signature_du_code({"coach_id": PARTENAIRE}, {"name": "Lea", "platform_name": "Afroboost"}) == "Lea")
+v("un partenaire signe de son nom, formule fixe", rp.signature_du_code({"coach_id": PARTENAIRE}, {"nom": "Lea Martin"}) == "Lea Martin\nCoach partenaire d'Afroboost")
+v("avec son activité", rp.signature_du_code({"coach_id": PARTENAIRE}, {"nom": "Lea Martin", "activite": "Studio Lea"}) == "Lea Martin, Studio Lea\nCoach partenaire d'Afroboost")
+v("activité refusée : aucune signature", rp.signature_du_code({"coach_id": PARTENAIRE}, {"nom": "Lea Martin", "activite": "Paie sur evil.com"}) == "")
 v("partenaire sans nom : aucune signature inventée", rp.signature_du_code({"coach_id": PARTENAIRE}) == "")
 
 print("── Erreurs du fournisseur")
@@ -209,17 +217,41 @@ v("autre coach : refusé", rp.jeton_valide(_j0, _e0, "nouveau|1|0", "x@example.t
 v("empreinte seule, sans signature : refusée", rp.jeton_valide(_e0, _e0, "nouveau|1|0", _c0, _N) == "different")
 v("jeton vide : refusé", rp.jeton_valide("", _e0, "nouveau|1|0", _c0, _N) == "different" and rp.jeton_valide(None, _e0, "nouveau|1|0", _c0, _N) == "different")
 print("── Nom professionnel")
-for _ok in ("Lea", "Studio Lea", "Coach Tom", "Danse & Co", "Marie-Hélène D'Arc", "St. Gall Fitness", "Sébastien", "A.B. Coaching", "Studio 54", "Zoé Œuvre"):
-    v(f"accepté : {_ok}", rp.nom_pro_valide(_ok) is True)
+for _ok in ("Lea", "Studio Lea", "Coach Tom", "Danse & Co", "Marie-Hélène D'Arc", "St. Gall Fitness", "Sébastien", "A.B. Coaching", "Studio 54", "Zoé Œuvre",
+            "Fit24", "Club 360", "Bassirou", "Bassirou Diop", "Jean Bassi", "Bassi Diop", "Müller", "Åsa Lind", "Ngọc Anh", "李小龙", "Дмитрий Иванов", "Νίκος", "محمد علي", "Ñandú",
+            "Christ Ripert", "Lien Nguyen", "Thomas Paye", "Jean Carte", "Thomas Payet", "Łukasz Nowak", "Aydın Kaya", "Đặng Hoa", "Þór", "فرزانه\u200cها", "മന്ദാകിനി\u200d", "Hélène", "He\u0301le\u0300ne"):
+    v(f"accepté : {_ok}", rp.motif_nom_refuse(_ok) == "", rp.motif_nom_refuse(_ok))
 for _no in ("", None, 42, "x" * 61, "https://evil.example", "evil.com", "www.evil", "Paie ici evil.ch", "lea@evil.test", "Lea\nPaie ici", "Lea <b>", "Afroboost", "Afroboost Officiel",
-            "AFROBOOST", "Afr0boost", "A f r o b o o s t", "A.f.r-o.boost", "Coach Bassi", "Bässi", "B4ssi", "Сoach Bassi", "Аfroboost", "Support Stripe", "TWINT Paiement", "CH93 00762 01162",
+            "AFROBOOST", "Afr0boost", "A f r o b o o s t", "A.f.r-o.boost", "Coach Bassi", "Bassi", "Bässi", "B4ssi", "Сoach Bassi", "Аfroboost", "Support Stripe", "TWINT Paiement", "CH93 00762 01162",
             "Service client", "Ma Banque", "Afrøboost", "Afrœboost", "Bæssi", "Bassl", "BASSL", "8assi", "Afro 8oost", "Bass 1", "evil.com-pay", "evil.com&x", "evil .com", "x.ch-y",
-            "CH93 0076 2011 6238 5295 7", "12 34 56", "1 2 3 4 5", "Afr0boost24"):
-    v(f"refusé : {_no!r}"[:50], rp.nom_pro_valide(_no) is False)
-v("le défaut « Afroboost » cède au nom du coach", rp.nom_professionnel({"platform_name": "Afroboost", "name": "Lea"}) == "Lea")
-v("un nom de plateforme refusé ne se rattrape pas en silence", rp.nom_professionnel({"platform_name": "Afroboost Officiel", "name": "Lea"}) == "")
+            "CH93 0076 2011 6238 5295 7", "12 34 56", "1 2 3 4 5", "Afr0boost24", "evil point com", "evil dot ch", "Paie ici", "Virement Lea", "Cliquez ici", "IBAN Lea",
+            "\U0001d400\U0001d405\U0001d411\U0001d40e\U0001d401\U0001d40e\U0001d40e\U0001d412\U0001d413", "\U0001d402oach \U0001d401assi", "Afr\u0585b\u0585\u0585st", "\u1d00\ua730\u0280\u1d0f\u0299\u1d0f\u1d0f\ua731\u1d1b",
+            "Coach Bass\u0131", "Coach Bass\u026a", "Coach \u0180assi", "evil.c\ufe0fom", "pa\ufe0fiement", "I\u034fBAN", "w\u034fww", "site.\u092d\u093e\u0930\u0924", "1.1.1.1", "evil dot shop", "evil. com",
+            "Payez \u00e0 Jean", "Bank Transfer", "Envoyez CHF \u00e0 Jean", "Zahlung Konto", "Monsieur Bassi", "Dr Bassi", "Team Bassi", "Equipe Bassi", "T W I N T", "S t r i p e", "Lea\u200dMartin",
+            "Lea\u200bMartin", "Lea\u202eMartin", "Bοss Аdmin", "Сoach Lea", "Coach B.a.s.s.i", "Le Coach Bassi"):
+    v(f"refusé : {_no!r}"[:50], rp.motif_nom_refuse(_no) != "")
+v("un refus s'explique en français", "lien" in rp.motif_nom_refuse("evil.com").lower())
+v("activité limitée à 40 caractères", rp.motif_nom_refuse("x" * 41, rp.ACTIVITE_MAX) != "" and rp.motif_nom_refuse("x" * 40, rp.ACTIVITE_MAX) == "")
 v("signature officielle conservée", rp.signature_du_code({"coach_id": ""}) == "Coach Bassi, d'Afroboost")
-v("un partenaire ne peut pas signer Bassi", rp.signature_du_code({"coach_id": PARTENAIRE}, {"name": "Coach Bassi"}) == "")
+v("un partenaire ne peut pas signer Bassi", rp.signature_du_code({"coach_id": PARTENAIRE}, {"nom": "Coach Bassi"}) == "")
+v("chiffres : le total des deux champs compte", rp.signature_du_code({"coach_id": PARTENAIRE}, {"nom": "Jean 0791", "activite": "Club 234"}) == "")
+v("prénom client douteux : « Bonjour, »", rp._prenom("https://evil.example/x") == "" and rp._prenom("Marie Dupont") == "Marie" and rp._prenom("Paiement urgent") == "")
+v("devise libre refusée", e(abo(devise="CHF sur IBAN CH93"))["motif"] == "suivi_incoherent" and e(abo(devise="EVIL.CH"))["motif"] == "suivi_incoherent" and e(abo(devise="EUR"))["ok"] is True)
+v("montant infini refusé", e(abo(montant_encaisse="inf"))["motif"] == "solde_inconnu" and e(abo(suivi_paiement=suivi(montant_total="inf")))["ok"] is False and rp._nombre(10 ** 400) is None)
+v("jeton non ASCII : refusé sans erreur", rp.jeton_valide("123.\u00e9", "e", "x", "c", datetime.now(timezone.utc)) == "different")
+print("── Preuve du fournisseur")
+_d0 = {"destinataire": "a@example.test", "premier_essai_le": "2026-11-05T10:00:00+00:00"}
+_f0 = {"to": ["A@example.test"], "subject": rp.OBJETS_RAPPEL[0], "created_at": "2026-11-05 10:00:03.5+00", "from": "Afroboost <notifications@afroboost.com>"}
+v("fiche conforme", rp.preuve_conforme(_f0, _d0) == "", rp.preuve_conforme(_f0, _d0))
+v("autre destinataire : refus", rp.preuve_conforme(dict(_f0, to=["b@example.test"]), _d0) != "")
+v("autre objet : refus", rp.preuve_conforme(dict(_f0, subject="Bienvenue"), _d0) != "")
+v("autre expéditeur : refus", rp.preuve_conforme(dict(_f0, **{"from": "x@evil.test"}), _d0) != "")
+v("trop ancien : refus", rp.preuve_conforme(dict(_f0, created_at="2026-11-01 10:00:00+00"), _d0) != "")
+v("trop tardif : refus", rp.preuve_conforme(dict(_f0, created_at="2026-11-07 10:00:00+00"), _d0) != "")
+v("date illisible : refus", rp.preuve_conforme(dict(_f0, created_at="?"), _d0) != "")
+v("réponse vide : refus", rp.preuve_conforme(None, _d0) != "")
+for _f in ("2026-11-05 10:00:03.5+00", "2026-11-05T10:00:03Z", "2026-11-05T10:00:03.123456789+00:00", "2026-11-05T10:00:03+00:00"):
+    v(f"format de date accepté : {_f}", rp.preuve_conforme(dict(_f0, created_at=_f), _d0) == "", rp.preuve_conforme(dict(_f0, created_at=_f), _d0))
 v("date d'incertain illisible : refus", _dr([{"rang": 1, "statut": "incertain"}], 7, _N)["action"] == "refus")
 v("échec : même rang", _dr([{"rang": 3, "statut": "echec"}], 7, _N)["rang"] == 3)
 v("étapes lisibles", rp.etape_du_rang(1) == "Rappel" and rp.etape_du_rang(2) == "Relance 1" and rp.etape_du_rang(3) == "Relance 2")
@@ -242,6 +274,8 @@ async def semer(db, flag=False):
     await db.feature_flags.insert_one({"id": "feature_flags", **({rp.DRAPEAU_ENVOI_REEL: True} if flag else {})})
     await db.coaches.insert_many([{"email": PARTENAIRE, "name": "Lea", "platform_name": "Studio Lea"}, {"email": AUTRE, "name": "Tom"},
                                   {"email": SANS_NOM}])
+    await db[rp.COL_REGLAGES].insert_many([{"_id": PARTENAIRE, "signature": {"nom": "Lea Martin", "activite": "Studio Lea"}},
+                                            {"_id": AUTRE, "signature": {"nom": "Tom Roche"}}])
     await db.offers.insert_many([{"id": "o-manuel", "billing_mode": "unique"}, {"id": "o-2x", "billing_mode": "saison_2x"}])
     await db.discount_codes.insert_many([
         {"id": "c1", "code": "CODE-1", "coach_id": "", "assignedEmail": "cliente@example.test"},
@@ -305,7 +339,7 @@ async def principal():
         v("le propriétaire avec son jeton : 200 (preuve V310c)", r.status_code == 200, r.status_code)
         r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)
         v("un partenaire voit SON client", r.status_code == 200 and r.json()["possible"], r.text)
-        v("il signe de son nom professionnel", r.json()["texte"].endswith("Studio Lea") and "Bassi" not in r.json()["texte"], r.json()["texte"])
+        v("il signe de son nom professionnel", r.json()["texte"].endswith("Lea Martin, Studio Lea\nCoach partenaire d'Afroboost") and "Bassi" not in r.json()["texte"], r.json()["texte"])
         r = await cl.get("/api/rappels-paiement/s-sansnom/apercu", headers=jeton(SANS_NOM))
         v("partenaire sans nom : aucun message possible", r.json()["possible"] is False and r.json()["motif"] == "signature_manquante", r.text)
         r = await cl.get("/api/rappels-paiement/s1/apercu", headers=P)
@@ -478,7 +512,7 @@ async def principal():
         print("── Le délai suit le coach propriétaire")
         await cl.put("/api/rappels-paiement/reglages", headers=P, json={"mode": "MANUEL", "delai_relance_jours": 30})
         ap_l = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=A)).json()
-        v("le super-admin voit le client du partenaire signé par lui", ap_l["texte"].endswith("Studio Lea"))
+        v("le super-admin voit le client du partenaire signé par lui", "Lea Martin, Studio Lea" in ap_l["texte"])
         r = await cl.post("/api/rappels-paiement/s-lea/envoyer", headers=A, json={"confirmation": True, "empreinte": ap_l["empreinte"]})
         v("les réponses vont au coach propriétaire", r.status_code == 200 and faux.Emails.appels[-1][0].get("reply_to") == PARTENAIRE, r.text)
         d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s-lea", D(0), 1)})
@@ -664,7 +698,9 @@ async def principal():
         v_s = rp.empreinte("s1", rp.eligibilite(await db.subscriptions.find_one({"id": "s1"}, {"_id": 0})))
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": v_s})
         v("sans aperçu demandé (empreinte calculée) : refus", r.status_code == 409 and len(faux.Emails.appels) == 0, r.text)
-        vieux_j = rp.jeton_apercu(v_s, "nouveau|1|0", ADMIN, datetime.now(timezone.utc) - timedelta(minutes=31))
+        _t0 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["texte"]
+        _e_vraie = rp.empreinte("s1", rp.eligibilite(await db.subscriptions.find_one({"id": "s1"}, {"_id": 0})), _t0)
+        vieux_j = rp.jeton_apercu(_e_vraie, "nouveau|1|0", ADMIN, datetime.now(timezone.utc) - timedelta(minutes=31))
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": vieux_j})
         v("aperçu de plus de 30 min : refus", r.status_code == 409 and r.json()["detail"]["type"] == "apercu_expire" and len(faux.Emails.appels) == 0, r.text)
         ap_a = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=A)).json()
@@ -673,12 +709,98 @@ async def principal():
 
         print("── Signature partenaire, par la route")
         for mauvais in ("Afroboost Officiel", "Coach Bassi", "https://evil.example", "paie@evil.test", "x" * 61):
-            await db.coaches.update_one({"email": PARTENAIRE}, {"$set": {"platform_name": mauvais}})
+            r = await cl.put("/api/rappels-paiement/signature", headers=P, json={"nom": mauvais})
+            v(f"saisie {mauvais[:24]!r} : refus expliqué", r.status_code == 400 and r.json()["detail"]["type"] == "nom_refuse" and r.json()["detail"]["message"].startswith("Nom :"), r.text)
+            # Même si la base est modifiée à la main, le contrôle se refait à chaque aperçu et envoi.
+            await db[rp.COL_REGLAGES].update_one({"_id": PARTENAIRE}, {"$set": {"signature.nom": mauvais}})
             r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)
             v(f"nom {mauvais[:24]!r} : aucun aperçu", r.json()["possible"] is False and r.json()["motif"] == "signature_manquante" and "texte" not in r.json(), r.text)
             r = await cl.post("/api/rappels-paiement/s-lea/envoyer", headers=P, json={"confirmation": True, "empreinte": ap_a["empreinte"]})
             v(f"nom {mauvais[:24]!r} : aucun envoi", r.status_code == 409 and r.json()["detail"]["type"] == "signature_manquante" and len(faux.Emails.appels) == 0, r.text)
-        await db.coaches.update_one({"email": PARTENAIRE}, {"$set": {"platform_name": "Studio Lea"}})
+        await db[rp.COL_REGLAGES].update_one({"_id": PARTENAIRE}, {"$set": {"signature.nom": "Lea Martin"}})
+        r = await cl.put("/api/rappels-paiement/signature", headers=P, json={"nom": "Lea Martin", "activite": "Paie sur evil.com"})
+        v("activité refusée, explication par champ", r.status_code == 400 and r.json()["detail"]["champ"] == "activite", r.text)
+        r = await cl.put("/api/rappels-paiement/signature", headers=P, json={"nom": "Fit24"})
+        v("nom légitime avec chiffres : accepté", r.status_code == 200 and r.json()["apercu"] == "Fit24\nCoach partenaire d'Afroboost", r.text)
+        r = await cl.put("/api/rappels-paiement/signature", headers=P, json={"nom": "Bassirou Diop", "activite": "Danse"})
+        v("Bassirou : accepté", r.status_code == 200, r.text)
+        r = await cl.put("/api/rappels-paiement/signature", headers=A, json={"nom": "Autre"})
+        v("la signature officielle ne se modifie pas", r.status_code == 400 and r.json()["detail"]["type"] == "signature_officielle", r.text)
+        r = await cl.put("/api/rappels-paiement/signature", json={"nom": "Lea"})
+        v("sans jeton : 403", r.status_code == 403)
+        r = await cl.put("/api/rappels-paiement/signature", headers={"X-User-Email": PARTENAIRE}, json={"nom": "Lea"})
+        v("avec le seul en-tête X-User-Email : 403", r.status_code == 403)
+        v("un partenaire n'écrit que sa signature", (await db[rp.COL_REGLAGES].find_one({"_id": AUTRE}))["signature"]["nom"] == "Tom Roche")
+        await db[rp.COL_REGLAGES].update_one({"_id": PARTENAIRE}, {"$set": {"signature": {"nom": "Lea Martin", "activite": "Studio Lea"}}})
+        v("réglages : partenaire = champs ; Afroboost = signature officielle",
+          (await cl.get("/api/rappels-paiement/reglages", headers=P)).json()["signature_officielle"] is False and (await cl.get("/api/rappels-paiement/reglages", headers=A)).json()["signature_officielle"] is True)
+
+        print("── Envoi à vérifier : résolution sur preuve seulement")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        faux.Emails.reponse = TimeoutError()
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        faux.Emails.reponse = None
+        cle1 = rp.cle_envoi("s1", D(0))
+        deb = datetime.now(timezone.utc) - timedelta(hours=24)
+        await db[rp.COL_RAPPELS].update_one({"_id": cle1}, {"$set": {"premier_essai_le": deb.isoformat(), "maj_le": deb.isoformat()}})
+        cle_avant = (await db[rp.COL_RAPPELS].find_one({"_id": cle1}))["idempotency_key"]
+        n_envois = len(faux.Emails.appels)
+        URL_V = "/api/rappels-paiement/s1/verifier-envoi"
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        v("statut visible : à vérifier, envoi fermé, action admin", ap["envoi"]["a_verifier"] is True and ap["envoi"]["verification_admin"] is True and ap["envoi"]["peut_envoyer"] is False and "Envoi à vérifier" in ap["envoi"]["message"], ap["envoi"])
+        L = {x["code"]: x for x in (await cl.get("/api/rappels-paiement/liste", headers=A)).json()["lignes"]}
+        v("la liste le montre aussi", L["CODE-1"]["envoi"]["a_verifier"] is True)
+        for nom, h in (("sans jeton", {}), ("en-tête seul", {"X-User-Email": ADMIN}), ("partenaire", P), ("autre coach", O)):
+            r = await cl.post(URL_V, headers=h, json={"resend_id": "abcd-1234"})
+            v(f"vérifier, {nom} : 403", r.status_code == 403, r.status_code)
+        r = await cl.post(URL_V, headers=A, json={})
+        v("sans preuve : blocage maintenu, contact manuel proposé", r.status_code == 200 and r.json()["resolu"] is False and r.json()["motif"] == "aucune_preuve" and "hors du système" in r.json()["message"], r.text)
+        r = await cl.post(URL_V, headers=A, json={"resend_id": "../../domains"})
+        v("identifiant illisible : 400, le fournisseur n'est pas appelé", r.status_code == 400 and faux.Emails.lectures == [], r.text)
+        r = await cl.post(URL_V, headers=A, json={"resend_id": "abcd-1234"})
+        v("le fournisseur ne connaît pas cet e-mail : blocage maintenu", r.json()["resolu"] is False and r.json()["motif"] == "fournisseur_indisponible", r.text)
+        cree = (deb + timedelta(seconds=3)).isoformat()
+        bonne = {"to": ["cliente@example.test"], "subject": rp.OBJETS_RAPPEL[0], "created_at": cree, "last_event": "delivered", "from": "Afroboost <notifications@afroboost.com>"}
+        for nom, mauvaise in (("autre destinataire", dict(bonne, to=["x@example.test"])), ("autre objet", dict(bonne, subject="Bienvenue")),
+                              ("autre période", dict(bonne, created_at=(deb - timedelta(days=3)).isoformat()))):
+            faux.Emails.fiche = mauvaise
+            r = await cl.post(URL_V, headers=A, json={"resend_id": "abcd-1234"})
+            v(f"preuve non conforme ({nom}) : blocage maintenu", r.json()["resolu"] is False and r.json()["motif"] == "preuve_non_conforme", r.text)
+        d = await db[rp.COL_RAPPELS].find_one({"_id": cle1})
+        v("rien n'a bougé après ces refus", d["statut"] == "incertain" and d["idempotency_key"] == cle_avant)
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        for j in (False, True):
+            r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": j})
+            v(f"sans preuve, jamais d'envoi (demande : {j})", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_bloque" and len(faux.Emails.appels) == n_envois, r.text)
+        faux.Emails.fiche = bonne
+        avant = await empreinte_base(db)
+        rs = await asyncio.gather(*[cl.post(URL_V, headers=A, json={"resend_id": "abcd-1234"}) for _ in range(5)])
+        v("preuve conforme, 5 demandes : une seule résolution", sum(1 for x in rs if x.status_code == 200 and x.json().get("resolu") is True) == 1, [x.text for x in rs][:2])
+        d = await db[rp.COL_RAPPELS].find_one({"_id": cle1})
+        v("preuve conforme : confirmé, avec sa date réelle et sa trace", d["statut"] == "envoye" and d["resend_id"] == "abcd-1234" and d["envoye_le"][:19] == cree[:19] and d["resolution"]["par"] == ADMIN and d["resolution"]["source"] == "identifiant" and "erreur" not in d, d)
+        v("la résolution N'ENVOIE RIEN", len(faux.Emails.appels) == n_envois)
+        v("aucune clé réutilisée ni créée", d["idempotency_key"] == cle_avant and d["tentatives"] == 1, d)
+        v("aucune donnée métier modifiée", await empreinte_base(db) == avant)
+        r = await cl.post(URL_V, headers=A, json={"resend_id": "abcd-1234"})
+        v("plus rien à vérifier : 409", r.status_code == 409 and r.json()["detail"]["type"] == "rien_a_verifier", r.text)
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        v("le délai de 7 jours part de l'envoi réel", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "deja_envoye", ap["envoi"])
+        print("── Preuve : journal central, preuve déjà utilisée")
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-case", D(0)), "subscription_id": "s-case", "palier": rp.PALIER_MANUEL, "echeance": D(0), "rang": 1, "statut": "incertain",
+                                             "destinataire": "cliente@example.test", "premier_essai_le": deb.isoformat(), "maj_le": deb.isoformat(), "cree_le": deb.isoformat(), "tentatives": 1})
+        r = await cl.post("/api/rappels-paiement/s-case/verifier-envoi", headers=A, json={"resend_id": "abcd-1234"})
+        v("une preuve ne sert qu'à un rappel", r.json()["resolu"] is False and r.json()["motif"] == "preuve_deja_utilisee", r.text)
+        await db[rc.COL_JOURNAL].insert_one({"reference": rp.cle_envoi("s-case", D(0)), "resend_id": "journal-5678"})
+        faux.Emails.lectures = []
+        r = await cl.post("/api/rappels-paiement/s-case/verifier-envoi", headers=A, json={})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s-case", D(0))})
+        v("le journal central fournit la preuve, le fournisseur la confirme", r.json()["resolu"] is True and faux.Emails.lectures == ["journal-5678"] and d["resolution"]["source"] == "journal", r.text)
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-lea", D(0)), "subscription_id": "s-lea", "coach_id": PARTENAIRE, "palier": rp.PALIER_MANUEL, "echeance": D(0), "rang": 1, "statut": "incertain",
+                                             "destinataire": "client-lea@example.test", "premier_essai_le": deb.isoformat(), "maj_le": deb.isoformat(), "cree_le": deb.isoformat(), "tentatives": 1})
+        ap = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()
+        v("partenaire : statut visible, aucune action de résolution", ap["envoi"]["a_verifier"] is True and ap["envoi"]["verification_admin"] is False, ap["envoi"])
         r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=O)
         v("isolation : un autre coach ne voit toujours rien", r.status_code == 404)
         v("rappel Afroboost : signature officielle", (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["texte"].endswith("Coach Bassi, d'Afroboost"))
@@ -776,6 +898,64 @@ async def principal():
         r = await cl.get("/api/rappels-paiement/simulation", headers=P)
         v("un partenaire ne simule que ses clients", [x["code"] for x in r.json()["lignes"]] == ["CODE-LEA"], r.text)
         v("partenaire sans nom : n'enverrait pas", L["CODE-SANSNOM"]["enverrait"] is False)
+
+        print("── Revue indépendante : remplacer l'abonnement ne vide rien")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        faux.Emails.reponse = TimeoutError()
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        faux.Emails.reponse = None
+        n_envois = len(faux.Emails.appels)
+        await db[rp.COL_RAPPELS].update_one({"subscription_id": "s1"}, {"$set": {"coach_id": ""}})
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"status": "superseded"}})
+        await db.subscriptions.insert_one(abo(id="s1-nouveau"))
+        ap = (await cl.get("/api/rappels-paiement/s1-nouveau/apercu", headers=A)).json()
+        v("nouvel abonnement, même personne : envoi fermé", ap["envoi"]["peut_envoyer"] is False, ap["envoi"])
+        r = await cl.post("/api/rappels-paiement/s1-nouveau/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": True})
+        v("nouvel abonnement : aucun message", r.status_code == 409 and len(faux.Emails.appels) == n_envois, r.text)
+        print("── Revue indépendante : personne ne bloque le client d'un autre coach")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        await db.subscriptions.update_one({"id": "s-tom"}, {"$set": {"email": "client-lea@example.test"}})
+        ap = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()
+        await cl.post("/api/rappels-paiement/s-lea/envoyer", headers=P, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        ap = (await cl.get("/api/rappels-paiement/s-tom/apercu", headers=O)).json()
+        v("même personne chez un autre coach : indépendant, aucune fuite", ap["envoi"]["peut_envoyer"] is True and ap["historique"] == [], ap["envoi"])
+        print("── Revue indépendante : code en double, coach désactivé")
+        await semer(db, flag=True)
+        await db.discount_codes.insert_one({"id": "c2bis", "code": "code-lea", "coach_id": AUTRE, "assignedEmail": ""})
+        r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=O)
+        v("doublon de code chez un autre coach : aucun accès", r.status_code == 404, r.status_code)
+        r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)
+        v("doublon : le propriétaire non plus, à vérifier d'abord", r.status_code == 404, r.status_code)
+        _codes_vus = []
+        for h in (P, O):
+            _codes_vus += [x["code"].upper() for x in (await cl.get("/api/rappels-paiement/liste", headers=h)).json()["lignes"]]
+        v("doublon : absent des listes des deux coachs", "CODE-LEA" not in _codes_vus, _codes_vus)
+        r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=A)
+        v("le super-admin voit le motif", r.status_code == 200 and r.json()["motif"] == "code_ambigu", r.text)
+        await semer(db, flag=True)
+        await db.coaches.update_one({"email": PARTENAIRE}, {"$set": {"is_active": False}})
+        r = await cl.get("/api/rappels-paiement/liste", headers=P)
+        v("coach désactivé : 403", r.status_code == 403, r.status_code)
+        print("── Revue indépendante : l'aperçu couvre le texte, la simulation n'écrit rien")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        ap = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()
+        await db[rp.COL_REGLAGES].update_one({"_id": PARTENAIRE}, {"$set": {"signature.nom": "Autre Nom"}})
+        r = await cl.post("/api/rappels-paiement/s-lea/envoyer", headers=P, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        v("signature changée après l'aperçu : refus", r.status_code == 409 and len(faux.Emails.appels) == 0, r.text)
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"name": "https://evil.example/x"}})
+        v("nom client douteux : « Bonjour, »", (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["texte"].startswith("Bonjour,\n"))
+        await semer(db)
+        vieux = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s1", D(-1)), "subscription_id": "s1", "coach_id": "", "destinataire": "x@example.test", "palier": rp.PALIER_MANUEL, "echeance": D(-1), "rang": 1, "statut": "en_cours", "maj_le": vieux, "premier_essai_le": vieux, "cree_le": vieux})
+        ap = (await cl.get("/api/rappels-paiement/s-case/apercu", headers=A)).json()
+        await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": "x"})
+        v("drapeau éteint : un état interrompu n'est même pas écrit", (await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(-1))}))["statut"] == "en_cours")
+        r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "MANUEL", "delais": [[]]})
+        v("délais illisibles : 400", r.status_code == 400, r.status_code)
 
         print("── Section « Rappels de paiement »")
         await semer(db)
