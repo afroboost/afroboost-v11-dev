@@ -108,8 +108,62 @@ function Participant({ p, coachNom, occurrence }) {
   );
 }
 
-export default function InscritsSession({ courseId, quand }) {
+/**
+ * V647 — le détail d'une séance physique portée par deux fiches (PURE). Une personne inscrite
+ * sur les deux n'apparaît et ne compte qu'une fois (le plus grand de ses deux totaux, comme le
+ * serveur). Une capacité n'est gardée que si les fiches s'accordent : jamais inventée.
+ */
+export function fusionnerDetailsSession(details) {
+  const liste = (details || []).filter(Boolean);
+  if (liste.length <= 1) return liste[0] || null;
+  const parEmail = new Map();
+  const participants = [];
+  let enTrop = 0;
+  liste.forEach((d, fiche) => {
+    const parFiche = new Map();
+    (d.participants || []).forEach((p) => {
+      const e = String(p.email || '').trim().toLowerCase();
+      if (e) parFiche.set(e, (parFiche.get(e) || 0) + (Number(p.places) || 1));
+    });
+    (d.participants || []).forEach((p) => {
+      const e = String(p.email || '').trim().toLowerCase();
+      const connu = e && parEmail.get(e);
+      if (!connu || connu.fiche === fiche) {
+        const copie = { ...p };
+        participants.push(copie);
+        if (e && !connu) parEmail.set(e, { fiche, ligne: copie, places: parFiche.get(e) });
+      }
+    });
+    parFiche.forEach((places, e) => {
+      const connu = parEmail.get(e);
+      if (connu.fiche === fiche) return;
+      enTrop += Math.min(places, connu.places);
+      if (places > connu.places) {
+        connu.ligne.places = (Number(connu.ligne.places) || 1) + (places - connu.places);
+        connu.places = places;
+      }
+    });
+  });
+  const inscrits = liste.reduce((n, d) => n + (Number(d.inscrits) || 0), 0) - enTrop;
+  const capacites = [...new Set(liste.map((d) => d.capacite).filter((c) => Number(c) > 0))];
+  const capacite = capacites.length === 1 ? capacites[0] : null;
+  return {
+    ...liste[0],
+    coach_nom: liste.map((d) => d.coach_nom).find(Boolean) || '',
+    inscrits,
+    capacite,
+    restantes: capacite ? Math.max(0, capacite - inscrits) : null,
+    complet: !!(capacite && inscrits >= capacite),
+    participants,
+    tronque: liste.some((d) => d.tronque),
+    annulations: liste.flatMap((d) => d.annulations || [])
+  };
+}
+
+export default function InscritsSession({ courseId, courseIds = null, quand }) {
   const cle = cleOccurrence(courseId, quand);
+  // V647 : une chaîne, pas un tableau : l'effet ne doit pas se relancer à chaque rendu.
+  const fiches = (Array.isArray(courseIds) && courseIds.length ? courseIds : [courseId]).join('+');
   const [etat, setEtat] = useState({ chargement: true, erreur: '', data: null });
   const [annulOuvert, setAnnulOuvert] = useState(false);
 
@@ -117,8 +171,8 @@ export default function InscritsSession({ courseId, quand }) {
     if (!cle) return undefined;
     let vivant = true;
     setEtat({ chargement: true, erreur: '', data: null });
-    axios.get(`${API}/coach/sessions/detail`, { params: { course_id: cle.split('|')[0], occurrence: cle.split('|')[1] } })
-      .then((r) => { if (vivant) setEtat({ chargement: false, erreur: '', data: r.data }); })
+    Promise.all(fiches.split('+').map((id) => axios.get(`${API}/coach/sessions/detail`, { params: { course_id: id, occurrence: cle.split('|')[1] } })))
+      .then((rs) => { if (vivant) setEtat({ chargement: false, erreur: '', data: fusionnerDetailsSession(rs.map((r) => r.data)) }); })
       .catch((e) => {
         if (!vivant) return;
         const s = e && e.response && e.response.status;
@@ -126,7 +180,7 @@ export default function InscritsSession({ courseId, quand }) {
           erreur: s === 403 || s === 401 ? 'Connecte-toi en coach pour voir les inscrits.' : 'Inscrits indisponibles pour le moment.' });
       });
     return () => { vivant = false; };
-  }, [cle]);
+  }, [cle, fiches]);
 
   if (!cle) return null;
   if (etat.chargement) return <p data-testid="inscrits-chargement" style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>Chargement des inscrits…</p>;

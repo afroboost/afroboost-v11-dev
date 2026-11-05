@@ -3264,6 +3264,27 @@ def t164_v646_bot_reserve_super_admin():
            all(s in (401, 403) for s in statuts.values()) and public == 200, f"{statuts} public={public}")
 
 
+def t165_v647_seance_physique_et_bouton_seo():
+    """LECTURE SEULE. Le serveur signale les paires, l'accueil garde le bouton vu par les robots."""
+    r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
+    m = re.search(r"CACHE_NAME = 'afroboost-v(\d+)", r.text or "")
+    if not m or int(m.group(1)) < 647:
+        skip(165, "V647 séance physique", "V647 pas encore en ligne")
+        return
+    occs = (requests.get(_url("/api/sessions/agenda"), timeout=TIMEOUT).json() or {}).get("occurrences") or []
+    paires = {}
+    for o in occs:
+        if o.get("seance_physique"):
+            paires.setdefault((o["seance_physique"], o.get("datetime")), []).append(o)
+    # Une fiche seule est permise (l'autre peut être annulée ce jour-là) ; jamais trois, ni deux principales.
+    ok_paires = all(len(v) <= 2 and sum(1 for x in v if x.get("seance_principale")) <= 1 for v in paires.values())
+    ok_dates = not any(o.get("seance_physique") and o.get("recurrent") is False for o in occs)
+    accueil = requests.get(_url("/"), timeout=TIMEOUT).text or ""
+    ok_seo = 'href="/cours-essai-gratuit-neuchatel"' in accueil and 'id="af-presentation"' in accueil
+    record(165, "V647 agenda : paires cohérentes, aucun événement daté regroupé, bouton SEO présent",
+           ok_paires and ok_dates and ok_seo, f"paires={ok_paires} dates={ok_dates} seo={ok_seo}")
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3336,7 +3357,7 @@ def main():
                    t158_v646_vitrine_url_inconnue_ou_injection, t159_v646_media_absent,
                    t160_v646_vitrines_actives_bannieres_publiques,
                    t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
-                   t164_v646_bot_reserve_super_admin,
+                   t164_v646_bot_reserve_super_admin, t165_v647_seance_physique_et_bouton_seo,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

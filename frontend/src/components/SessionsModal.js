@@ -126,11 +126,46 @@ export function normaliserAgenda(brut) {
         lieu: o.locationName || '',
         quand,
         ponctuel: o.recurrent === false || o.is_fixed_date === true,
-        offres: Array.isArray(o.offers) ? o.offers : []
+        offres: Array.isArray(o.offers) ? o.offers : [],
+        ...(o.seance_physique ? { seance: o.seance_physique, principale: o.seance_principale === true } : {})
       };
     })
     .filter(Boolean)
     .sort((a, b) => a.quand - b.quand);
+}
+
+/**
+ * V647 — une seule carte par séance physique. Seul le serveur décide que deux fiches sont le
+ * même cours (`seance_physique`) ; ici on ne fait que les présenter ensemble, à l'instant près.
+ * La carte garde le nom de la fiche forfait, l'adresse de la fiche publiée, toutes les offres
+ * (celles de la fiche forfait d'abord : le bouton Réserver ouvre la même offre qu'avant) et
+ * les identifiants des deux fiches pour le détail coach.
+ */
+export function regrouperSeancesPhysiques(occurrences) {
+  const groupes = new Map();
+  const sortie = [];
+  (occurrences || []).forEach((o) => {
+    if (!o || !o.seance) { sortie.push(o); return; }
+    const cle = `${o.seance}|${o.quand.getTime()}`;
+    if (!groupes.has(cle)) { groupes.set(cle, []); sortie.push(cle); }
+    groupes.get(cle).push(o);
+  });
+  return sortie.map((x) => {
+    if (typeof x !== 'string') return x;
+    const fiches = groupes.get(x);
+    const principale = fiches.find((f) => f.principale) || fiches[0];
+    const publiee = fiches.find((f) => f !== principale);
+    const offres = [];
+    [principale, ...fiches.filter((f) => f !== principale)].forEach((f) => (f.offres || []).forEach((of) => {
+      if (!offres.some((d) => d.id === of.id)) offres.push(of);
+    }));
+    return {
+      ...principale,
+      lieu: (publiee && publiee.lieu) || principale.lieu,
+      offres,
+      ids: [principale.id, ...fiches.filter((f) => f !== principale).map((f) => f.id)]
+    };
+  });
 }
 
 /** Le repli local, quand la route n'est pas servie. */
@@ -184,7 +219,16 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
       .catch(() => { if (!annule) setInscriptions({}); });   // pas coach / hors ligne : rien affiché
     return () => { annule = true; };
   }, [modeCoach]);
-  const inscritsDe = (o) => (modeCoach ? inscriptions[cleOccurrence(o.id, o.quand)] : null) || null;
+  const inscritsDe = (o) => {
+    if (!modeCoach) return null;
+    if (!o.seance) return inscriptions[cleOccurrence(o.id, o.quand)] || null;
+    // V647 : le total du serveur, sans doublon. S'il manque, la somme des fiches.
+    const total = inscriptions[cleOccurrence(o.seance, o.quand)];
+    if (total) return total;
+    const parFiche = (o.ids || [o.id]).map((id) => inscriptions[cleOccurrence(id, o.quand)]).filter(Boolean);
+    if (!parFiche.length) return null;
+    return { inscrits: parFiche.reduce((n, s) => n + (s.inscrits || 0), 0), capacite: parFiche[0].capacite };
+  };
 
   // La source est le serveur. Le repli local ne sert que si la route manque :
   // il ne voit pas les activites recurrentes rattachees a un forfait, et
@@ -210,7 +254,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
         const res = await axios.get(`${API}/sessions/agenda`);
         if (annule) return;
         const brut = res && res.data && res.data.occurrences;
-        setOccurrences(normaliserAgenda(brut));
+        setOccurrences(regrouperSeancesPhysiques(normaliserAgenda(brut)));
       } catch (e) {
         if (annule) return;
         setOccurrences(replierSurLesCours(courses));
@@ -384,7 +428,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
               onReserve={() => { const o = detail; fermer(); setTimeout(() => onReserve && onReserve(o), 60); }}
               libelleAction={libelleAction}
               noteAction={noteAction}
-              complementCoach={modeCoach ? <InscritsSession courseId={detail.id} quand={detail.quand} /> : null}
+              complementCoach={modeCoach ? <InscritsSession courseId={detail.id} courseIds={detail.ids} quand={detail.quand} /> : null}
             />
           ) : chargement ? (
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
