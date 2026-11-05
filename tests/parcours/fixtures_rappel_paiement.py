@@ -3,6 +3,7 @@
 
   python3 fixtures_rappel_paiement.py poser     -> codes et abonnements @example.test
   python3 fixtures_rappel_paiement.py envoi on|off -> drapeau d'envoi, base de test seulement
+  python3 fixtures_rappel_paiement.py vieillir <abonnement> -> 8 jours passent sur ses envois
   python3 fixtures_rappel_paiement.py compter   -> rappels écrits (JSON)
   python3 fixtures_rappel_paiement.py nettoyer  -> retire tout ce qui précède
 """
@@ -66,6 +67,9 @@ elif action == "nettoyer":
     nettoyer()
 elif action == "envoi":
     db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_ENVOI_REEL": sys.argv[2] == "on"}}, upsert=True)
+elif action == "vieillir":      # 8 jours passent sur le dernier envoi de cet abonnement
+    _h = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    db.rappels_paiement.update_many({"subscription_id": sys.argv[2], "statut": "envoye"}, {"$set": {"envoye_le": _h, "cree_le": _h}})
 elif action == "compter":
     print(json.dumps({"rappels": db.rappels_paiement.count_documents({}),
                       "statuts": [d.get("statut") for d in db.rappels_paiement.find({})],

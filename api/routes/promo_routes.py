@@ -404,10 +404,7 @@ async def get_echeances_paiement(request: Request):
         raise HTTPException(status_code=403, detail="Authentification coach requise — reconnectez-vous")
     query = {} if _admin else {"coach_id": user_email}      # V618i : SES codes seulement (anti-fuite)
     codes = await _db.discount_codes.find(query, {"_id": 0, "code": 1, "assignedEmail": 1, "coach_id": 1}).to_list(1000)
-    _rappels = await v617_echeances(_db, codes, appelant=user_email, admin=_admin)
-    # V648 : additif. Dit au coach si un rappel peut partir ; une panne laisse la liste intacte.
-    from api.routes.rappels_paiement import enrichir_echeances as _v648
-    return {"rappels": await _v648(_rappels, user_email, _admin)}
+    return {"rappels": await v617_echeances(_db, codes, appelant=user_email, admin=_admin)}
 
 
 @promo_router.post("")

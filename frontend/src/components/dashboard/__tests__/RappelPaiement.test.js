@@ -1,16 +1,22 @@
 /**
- * V648 — interface du rappel de paiement : aperçu obligatoire, confirmation explicite,
- * aucune action sur les lignes exclues, réglage MANUEL par défaut, aucune boucle d'appels.
+ * V648 — section « Rappels de paiement » de la page Paiements : aperçu obligatoire, confirmation
+ * explicite, montant à vérifier, relances, réglages, aucune boucle d'appels.
+ * L'accordéon garde ses 5 sections d'origine et ouvre toujours « Configuration des Paiements ».
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
-import EcheancesPaiement from '../EcheancesPaiement';
+import RappelsPaiementSection from '../RappelPaiement';
+import V199BoutiqueAccordion from '../V199BoutiqueAccordion';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const act = React.act;
 
 jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn() }));
+jest.mock('../ConceptEditor', () => ({ section }) => <div data-testid={`concept-${section}`} />);
+jest.mock('../PaymentConfigTab', () => () => <div data-testid="config-paiements" />);
+jest.mock('../InvoiceGenerator', () => () => <div data-testid="factures" />);
+jest.mock('../../SvgIcon', () => ({ name }) => <i data-icon={name} />);
 
 const $ = (id) => document.querySelector(`[data-testid="${id}"]`);
 const pause = (ms = 0) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
@@ -22,22 +28,29 @@ async function attendre(id) {
   throw new Error(`élément absent : ${id}`);
 }
 const clic = (el) => act(async () => { el.click(); });
+const saisir = (el, v) => act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+});
 
+const ENVOI = { peut_envoyer: true, action: 'nouveau', etape: 'Rappel', confirmation_incertain: false, delai_jours: 7 };
 const ligne = (k = {}) => ({
   subscription_id: 's1', code: 'CODE-1', nom: 'Marie', reste_a_payer: 200, devise: 'CHF', prochaine_echeance: '2026-11-05',
-  en_retard: false, paiement_suivant: '2/2', rappel_envoi: { possible: true, motif: null, message: '', dernier: null }, ...k,
+  en_retard: false, paiement_suivant: '2/2', possible: true, motif: null, message: '', verification_requise: false, envoi: ENVOI, ...k,
 });
 const APERCU = {
   possible: true, envoi_reel: false, empreinte: 'emp1', destinataire: 'marie@example.test', reste: 200, devise: 'CHF',
-  echeance: '2026-11-05', avertissement: '', sujet: 'Rappel : ton deuxième paiement Afroboost',
-  texte: "Bonjour Marie,\n\nCoach Bassi, d'Afroboost", code: 'CODE-1', historique: [],
+  echeance: '2026-11-05', avertissement: '', verification_requise: false, envoi: ENVOI,
+  sujet: 'Rappel : ton deuxième paiement Afroboost', texte: "Bonjour Marie,\n\nCoach Bassi, d'Afroboost", code: 'CODE-1', historique: [],
 };
+const REGLAGES = { mode: 'MANUEL', delais: ['J-3', 'J0', 'J+3'], delai_relance_jours: 7, automatisation_disponible: false, envoi_reel: false };
 
-function brancher({ rappels = [ligne()], apercu = APERCU, reglages } = {}) {
+function brancher({ lignes = [ligne()], apercu = APERCU, reglages = REGLAGES, historique = [] } = {}) {
   axios.get.mockImplementation((url) => {
-    if (url.endsWith('/discount-codes/echeances')) return Promise.resolve({ data: { rappels } });
+    if (url.endsWith('/liste')) return Promise.resolve({ data: { lignes, envoi_reel: false } });
+    if (url.endsWith('/historique')) return Promise.resolve({ data: { historique } });
     if (url.endsWith('/apercu')) return Promise.resolve({ data: apercu });
-    if (url.endsWith('/reglages')) return Promise.resolve({ data: reglages || { mode: 'MANUEL', delais: ['J-3', 'J0', 'J+3'], automatisation_disponible: false, envoi_reel: false } });
+    if (url.endsWith('/reglages')) return Promise.resolve({ data: reglages });
     if (url.endsWith('/simulation')) {
       return Promise.resolve({ data: { simulation: true, aucun_envoi: true, lignes: [
         { code: 'CODE-1', nom: 'Marie', enverrait: true, jalons: [{ palier: 'J0', date: '2026-11-05', etat: 'a_venir' }] },
@@ -50,11 +63,11 @@ function brancher({ rappels = [ligne()], apercu = APERCU, reglages } = {}) {
 
 let racine;
 let hote;
-async function monter() {
+async function monter(element = <RappelsPaiementSection />) {
   hote = document.createElement('div');
   document.body.appendChild(hote);
   racine = createRoot(hote);
-  await act(async () => { racine.render(<EcheancesPaiement />); });
+  await act(async () => { racine.render(element); });
 }
 
 beforeEach(() => { jest.resetAllMocks(); });
@@ -63,21 +76,60 @@ afterEach(async () => {
   hote.remove();
 });
 
-test("une ligne éligible propose le bouton ; rien n'est envoyé à l'ouverture", async () => {
+describe('page Paiements', () => {
+  const ouvrir = (id) => clic($(`v199-accordion-${id}`).querySelector('[role="button"]'));
+
+  test("les 5 sections d'origine sont là, Configuration ouverte, Rappels fermée et sans appel réseau", async () => {
+    brancher();
+    await monter(<V199BoutiqueAccordion coachUser={{ email: 'c@example.test' }} />);
+    ['payments', 'conditions', 'logos', 'invoices', 'landing', 'rappels'].forEach((id) => expect($(`v199-accordion-${id}`)).toBeTruthy());
+    expect($('config-paiements')).toBeTruthy();
+    expect($('v648-section')).toBeNull();
+    expect(axios.get).not.toHaveBeenCalled();
+    expect($('v199-accordion-rappels').textContent).toContain('Rappels de paiement');
+  });
+
+  test("ouvrir « Rappels de paiement » ne ferme pas la configuration", async () => {
+    brancher();
+    await monter(<V199BoutiqueAccordion coachUser={{ email: 'c@example.test' }} />);
+    await ouvrir('rappels');
+    expect(await attendre('v648-section')).toBeTruthy();
+    expect($('config-paiements')).toBeTruthy();
+  });
+});
+
+test('la section contient le choix, la liste, les montants, les dates et les deux boutons', async () => {
   brancher();
   await monter();
-  await clic(await attendre('v648-rappel-CODE-1'));
+  expect((await attendre('v648-mode-MANUEL')).checked).toBe(true);
+  const l = await attendre('v648-ligne-CODE-1');
+  expect(l.textContent).toContain('200.00 CHF');
+  expect(l.textContent).toContain('05.11.2026');
+  expect($('v648-voir-CODE-1').textContent).toBe('Prévisualiser');
+  expect($('v648-rappel-CODE-1').textContent).toBe('Envoyer le rappel');
+  expect($('v648-historique-general')).toBeTruthy();
+  expect($('v648-section-coupe').textContent).toContain('aucun e-mail ne partira');
+});
+
+test("Prévisualiser n'offre aucun envoi tant qu'on ne continue pas", async () => {
+  brancher();
+  await monter();
+  await clic(await attendre('v648-voir-CODE-1'));
   expect((await attendre('v648-texte')).textContent).toContain("Coach Bassi, d'Afroboost");
-  expect($('v648-destinataire').textContent).toBe('marie@example.test');
-  expect($('v648-montant').textContent).toBe('200.00 CHF');
+  expect($('v648-confirmation')).toBeNull();
+  expect($('v648-envoyer')).toBeNull();
+  await clic($('v648-continuer'));
+  expect($('v648-confirmation')).toBeTruthy();
   expect(axios.post).not.toHaveBeenCalled();
 });
 
-test('sans la case cochée, le bouton est inerte', async () => {
+test("Envoyer montre aussi l'aperçu, et le bouton reste inerte sans la case", async () => {
   brancher();
   await monter();
   await clic(await attendre('v648-rappel-CODE-1'));
-  const bouton = await attendre('v648-envoyer');
+  expect((await attendre('v648-texte')).textContent).toContain('Bonjour Marie');
+  expect($('v648-destinataire').textContent).toBe('marie@example.test');
+  const bouton = $('v648-envoyer');
   expect(bouton.disabled).toBe(true);
   await clic(bouton);
   expect(axios.post).not.toHaveBeenCalled();
@@ -97,42 +149,96 @@ test("confirmé : le navigateur n'envoie que l'empreinte et la confirmation", as
   expect((await attendre('v648-resultat')).textContent).toContain('Simulation');
 });
 
-test('envoi réel coupé : le coach le lit avant de confirmer', async () => {
-  brancher();
-  await monter();
-  await clic(await attendre('v648-rappel-CODE-1'));
-  expect((await attendre('v648-envoi-coupe')).textContent).toContain('aucun e-mail ne partira');
+describe('suivi incomplet (case « en plusieurs fois » non cochée)', () => {
+  const INCOMPLET = { ...APERCU, verification_requise: true, avertissement: "Ce solde est un calcul, pas une preuve de non-paiement : vérifie ce qui est réellement dû." };
+  const brancherIncomplet = () => brancher({ lignes: [ligne({ verification_requise: true })], apercu: INCOMPLET });
+
+  test("l'envoi reste bloqué tant que le montant n'est pas saisi, même case cochée", async () => {
+    brancherIncomplet();
+    await monter();
+    expect((await attendre('v648-a-verifier-CODE-1')).textContent).toContain('Montant à vérifier');
+    await clic($('v648-rappel-CODE-1'));
+    expect((await attendre('v648-avertissement')).textContent).toContain('pas une preuve');
+    await clic($('v648-confirmation'));
+    expect($('v648-envoyer').disabled).toBe(true);
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('le montant saisi part au serveur, qui décide', async () => {
+    brancherIncomplet();
+    axios.post.mockResolvedValue({ data: { envoye: false, message: 'Simulation' } });
+    await monter();
+    await clic(await attendre('v648-rappel-CODE-1'));
+    await saisir(await attendre('v648-montant-confirme'), '200,00');
+    await clic($('v648-confirmation'));
+    await clic($('v648-envoyer'));
+    expect(axios.post.mock.calls[0][1].montant_confirme).toBe(200);
+  });
+
+  test('montant différent : message du serveur, confirmation à refaire, rien de modifié', async () => {
+    brancherIncomplet();
+    axios.post.mockRejectedValue({ response: { status: 409, data: { detail: { type: 'montant_different', message: 'Ce montant ne correspond pas au solde calculé.' } } } });
+    await monter();
+    await clic(await attendre('v648-rappel-CODE-1'));
+    await saisir(await attendre('v648-montant-confirme'), '150');
+    await clic($('v648-confirmation'));
+    await clic($('v648-envoyer'));
+    expect((await attendre('v648-erreur')).textContent).toContain('ne correspond pas');
+    expect($('v648-confirmation').checked).toBe(false);
+    expect(axios.put).not.toHaveBeenCalled();
+  });
 });
 
 test('ligne exclue (saison_2x) : motif affiché, aucun bouton', async () => {
-  brancher({ rappels: [ligne({ code: 'CODE-S', rappel_envoi: { possible: false, motif: 'stripe_recurrent', message: 'Abonnement prélevé par Stripe : aucun rappel à envoyer.', dernier: null } })] });
+  brancher({ lignes: [ligne({ code: 'CODE-S', possible: false, motif: 'stripe_recurrent', message: 'Abonnement prélevé par Stripe : aucun rappel à envoyer.', envoi: null })] });
   await monter();
   expect((await attendre('v648-bloque-CODE-S')).textContent).toContain('Stripe');
   expect($('v648-rappel-CODE-S')).toBeNull();
+  expect($('v648-voir-CODE-S')).toBeNull();
 });
 
-test('rappel déjà envoyé pour cette échéance : plus de bouton', async () => {
-  brancher({ rappels: [ligne({ rappel_envoi: { possible: true, dernier: { statut: 'envoye', echeance: '2026-11-05', envoye_le: '2026-11-05T08:00:00+00:00' } } })] });
-  await monter();
-  expect((await attendre('v648-envoye-CODE-1')).textContent).toContain('05.11.2026');
-  expect($('v648-rappel-CODE-1')).toBeNull();
-});
+describe('relances', () => {
+  const BLOQUE = { peut_envoyer: false, action: 'refus', type: 'deja_envoye', etape: 'Rappel', prochaine_le: '2026-11-12T08:00:00+00:00', delai_jours: 7 };
 
-test("un rappel d'une ANCIENNE échéance ne bloque pas la nouvelle", async () => {
-  brancher({ rappels: [ligne({ rappel_envoi: { possible: true, dernier: { statut: 'envoye', echeance: '2026-10-01', envoye_le: '2026-10-01T08:00:00+00:00' } } })] });
-  await monter();
-  expect(await attendre('v648-rappel-CODE-1')).toBeTruthy();
+  test('avant le délai : plus de bouton d\'envoi, date affichée, aperçu toujours possible', async () => {
+    brancher({ lignes: [ligne({ envoi: BLOQUE })], apercu: { ...APERCU, envoi: BLOQUE } });
+    await monter();
+    expect((await attendre('v648-attente-CODE-1')).textContent).toContain('12.11.2026');
+    expect($('v648-rappel-CODE-1')).toBeNull();
+    await clic($('v648-voir-CODE-1'));
+    expect((await attendre('v648-envoi-bloque')).textContent).toContain('12.11.2026');
+    expect($('v648-envoyer')).toBeNull();
+    expect($('v648-continuer')).toBeNull();
+  });
+
+  test('après le délai : « Envoyer la relance », avec confirmation', async () => {
+    const R = { ...ENVOI, etape: 'Relance 1' };
+    brancher({ lignes: [ligne({ envoi: R })], apercu: { ...APERCU, envoi: R } });
+    await monter();
+    const b = await attendre('v648-rappel-CODE-1');
+    expect(b.textContent).toBe('Envoyer la relance');
+    await clic(b);
+    expect((await attendre('v648-envoyer')).disabled).toBe(true);
+    expect($('v648-envoyer').textContent).toContain('Relance 1');
+  });
+
+  test("l'historique général montre date, destinataire, étape, résultat et coach", async () => {
+    brancher({ historique: [{ code: 'CODE-1', palier: 'manuel', rang: 2, etape: 'Relance 1', statut: 'envoye', echeance: '2026-11-05', montant: 200, devise: 'CHF', destinataire: 'marie@example.test', envoye_le: '2026-11-12T08:00:00+00:00', envoye_par: 'coach@example.test' }] });
+    await monter();
+    const h = await attendre('v648-historique-general');
+    await pause(10);
+    ['Relance 1', 'Envoyé', '12.11.2026', 'marie@example.test', 'coach@example.test'].forEach((x) => expect(h.textContent).toContain(x));
+  });
 });
 
 test('envoi incertain : le texte le dit, et la reprise le demande explicitement', async () => {
-  brancher({
-    rappels: [ligne({ rappel_envoi: { possible: true, dernier: { statut: 'incertain', echeance: '2026-11-05' } } })],
-    apercu: { ...APERCU, historique: [{ palier: 'manuel', echeance: '2026-11-05', statut: 'incertain', montant: 200, devise: 'CHF' }] },
-  });
+  const I = { ...ENVOI, action: 'reprise', confirmation_incertain: true };
+  brancher({ lignes: [ligne({ envoi: I })], apercu: { ...APERCU, envoi: I } });
   axios.post.mockResolvedValue({ data: { envoye: true, message: 'Rappel envoyé.' } });
   await monter();
-  expect((await attendre('v648-statut-CODE-1')).textContent).toContain('peut-être parti');
-  await clic($('v648-rappel-CODE-1'));
+  const b = await attendre('v648-rappel-CODE-1');
+  expect(b.textContent).toBe('Vérifier le rappel');
+  await clic(b);
   expect(await attendre('v648-incertain')).toBeTruthy();
   await clic($('v648-confirmation'));
   await clic($('v648-envoyer'));
@@ -150,40 +256,44 @@ test("refus du serveur : le message s'affiche et la confirmation est à refaire"
   expect($('v648-confirmation').checked).toBe(false);
 });
 
-test('aucune boucle : un seul appel à la liste, même dialogue ouvert', async () => {
+test('aucune boucle : un seul appel à chaque route, même dialogue ouvert', async () => {
   brancher();
   await monter();
   await clic(await attendre('v648-rappel-CODE-1'));
   await attendre('v648-texte');
   await pause(50);
-  expect(axios.get.mock.calls.filter(([u]) => u.endsWith('/echeances'))).toHaveLength(1);
-  expect(axios.get.mock.calls.filter(([u]) => u.endsWith('/apercu'))).toHaveLength(1);
+  ['/liste', '/historique', '/reglages', '/apercu'].forEach((u) => {
+    expect(axios.get.mock.calls.filter(([x]) => x.endsWith(u))).toHaveLength(1);
+  });
 });
 
-test("liste vide : l'encadré disparaît, le réglage reste accessible", async () => {
-  brancher({ rappels: [] });
-  await monter();
-  expect(await attendre('v648-reglages-seuls')).toBeTruthy();
-  expect($('v617-echeances')).toBeNull();
-});
-
-test("réglage : MANUEL par défaut, les délais n'apparaissent qu'en Automatique", async () => {
+test('réglage : MANUEL par défaut, les délais automatiques n\'apparaissent qu\'en Automatique', async () => {
   brancher();
   axios.put.mockResolvedValue({ data: {} });
   await monter();
-  await clic(await attendre('v648-ouvrir-reglages'));
   expect((await attendre('v648-mode-MANUEL')).checked).toBe(true);
   expect($('v648-delai-J0')).toBeNull();
   await clic($('v648-mode-AUTOMATIQUE'));
   expect((await attendre('v648-auto-coupe')).textContent).toContain('Aucun rappel ne part tout seul');
-  expect(axios.put).toHaveBeenCalledWith(expect.stringContaining('/reglages'), { mode: 'AUTOMATIQUE', delais: ['J-3', 'J0', 'J+3'] });
+  expect(axios.put).toHaveBeenCalledWith(expect.stringContaining('/reglages'), { mode: 'AUTOMATIQUE', delais: ['J-3', 'J0', 'J+3'], delai_relance_jours: 7 });
   expect(axios.post).not.toHaveBeenCalled();
 });
 
-test('simulation : montre les dates et les exclusions, sans aucun envoi', async () => {
-  brancher({ reglages: { mode: 'AUTOMATIQUE', delais: ['J-3', 'J0', 'J+3'], automatisation_disponible: false, envoi_reel: false } });
+test('délai de relance : 7 par défaut, réglable, refus du serveur affiché et valeur rétablie', async () => {
+  brancher();
+  axios.put.mockRejectedValue({ response: { status: 400, data: { detail: 'Délai de relance : entre 1 et 60 jours.' } } });
   await monter();
-  await clic(await attendre('v648-ouvrir-reglages'));
+  const champ = await attendre('v648-delai-relance');
+  expect(champ.value).toBe('7');
+  await saisir(champ, '99');
+  await act(async () => { champ.focus(); champ.blur(); });
+  expect((await attendre('v648-reglages-erreur')).textContent).toContain('entre 1 et 60');
+  expect(axios.put.mock.calls[0][1].delai_relance_jours).toBe(99);
+});
+
+test('simulation : montre les dates et les exclusions, sans aucun envoi', async () => {
+  brancher({ reglages: { ...REGLAGES, mode: 'AUTOMATIQUE' } });
+  await monter();
   await clic(await attendre('v648-voir-simulation'));
   expect((await attendre('v648-simulation')).textContent).toContain("aucun e-mail n'est envoyé");
   expect($('v648-sim-CODE-1').textContent).toContain('J0 : 05.11.2026');

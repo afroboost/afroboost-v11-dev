@@ -4,6 +4,7 @@ import SvgIcon from '../SvgIcon';
 import ConceptEditor from './ConceptEditor';
 import PaymentConfigTab from './PaymentConfigTab';
 import InvoiceGenerator from './InvoiceGenerator';
+import RappelsPaiementSection from './RappelPaiement'; // V648
 
 const headerStyle = {
   display: 'flex',
@@ -77,6 +78,7 @@ const V199BoutiqueAccordion = ({
   // V199: Seul Configuration des Paiements ouvert par défaut
   const [openMap, setOpenMap] = useState({
     payments: true,
+    rappels: false,
     conditions: false,
     logos: false,
     invoices: false,
@@ -105,6 +107,11 @@ const V199BoutiqueAccordion = ({
           setPaymentConfig={setVendorPaymentConfig}
           coachEmail={coachUser?.email}
         />
+      </AccordionSection>
+
+      {/* V648 : Rappels de paiement. Fermée par défaut, et chargée seulement à l'ouverture. */}
+      <AccordionSection id="rappels" icon={<SvgIcon name="creditCard" size={16} />} label="Rappels de paiement" openMap={openMap} setOpenMap={setOpenMap}>
+        <RappelsPaiementSection />
       </AccordionSection>
 
       {/* 2. Conditions & Avis */}
