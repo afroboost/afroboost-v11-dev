@@ -295,13 +295,13 @@ async def scenario():
     verifier("V608c : une vraie note du coach postérieure le périme toujours",
              S.p3n_contexte_obsolete(br, [{"created_at": "2026-10-11T10:05:00+00:00", "origine": "coach"}]))
 
-    print("\nM. 49 points d'appel → tous par le point unique")
+    print("\nM. 50 points d'appel (V648 : rappel de paiement) → tous par le point unique")
     sortie = subprocess.run(["grep", "-rnE", "--include=*.py", r"\b(resend|_r|resend_lib|_resend_lib)\.Emails\.send\b", os.path.join(RACINE, "api")],
                             capture_output=True, text=True).stdout.strip().split("\n")
     hors = [l for l in sortie if l and "resend_central.py" not in l and "`resend.Emails.send`" not in l]
     via = subprocess.run(["grep", "-rnoE", "--include=*.py", "--exclude=resend_central.py", r"_rc\.emails\(", os.path.join(RACINE, "api")], capture_output=True, text=True).stdout.strip().split("\n")
     verifier("0 appel direct au SDK hors point unique", not hors, hors)
-    verifier("49 appels passent par _rc.emails(...)", len([v for v in via if v]) == 49, len(via))
+    verifier("50 appels passent par _rc.emails(...)", len([v for v in via if v]) == 50, len(via))
 
 asyncio.run(scenario())
 proc.terminate(); proc.wait(timeout=10); shutil.rmtree(dossier, ignore_errors=True)

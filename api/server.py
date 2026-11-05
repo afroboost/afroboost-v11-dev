@@ -2016,6 +2016,7 @@ class FeatureFlags(BaseModel):
     P1E_ESSAI_NON_RESERVE_ENABLED: bool = False
     P1E_ESSAI_NON_RESERVE_ENVOI_REEL: bool = False
     P1E_TEST_CONTROLE: bool = False
+    RAPPEL_PAIEMENT_ENVOI_REEL: bool = False   # V648 : faux = aucun e-mail, aucune écriture (simulation)
     # AUTO-PRESENCE PHASE 1 — l'oubli du scan ne bloque plus l'essai.
     # Meme double garde que P1-b/P1-d, mais le second drapeau ne parle pas
     # d'ENVOI : ce lot n'ecrit pas a des gens, il ECRIT EN BASE. Le nommer
@@ -2099,6 +2100,7 @@ class FeatureFlagsUpdate(BaseModel):
     P3_REPONSE_ENVOI_REEL: Optional[bool] = None  # AI-P4
     P3_RELANCE_ENABLED: Optional[bool] = None     # V584b : P3-R2 n'était pas pilotable par l'API
     P3_RELANCE_ENVOI_REEL: Optional[bool] = None  # V584b
+    RAPPEL_PAIEMENT_ENVOI_REEL: Optional[bool] = None  # V648
     SOCIAL_PROFILE_LINKS: Optional[bool] = None  # F3 FINAL : profils Spordateur des autres comptes liés
     SOCIAL_ACTIVATION_ENABLED: Optional[bool] = None  # F4 : activation volontaire du profil social
     REMINDERS_SUBSCRIBERS_ENABLED: Optional[bool] = None  # RV-AB : rappeler AUSSI les abonnés sans réservation
@@ -23786,6 +23788,7 @@ async def get_feature_flags():
             "P3_REPONSE_ENVOI_REEL": False,    # AI-P4 : défaut OFF (simulation même si activé)
             "P3_RELANCE_ENABLED": False,       # P3-R2 : défaut OFF (aucune relance J+3/J+7)
             "P3_RELANCE_ENVOI_REEL": False,    # P3-R2 : défaut OFF (simulation même si activé)
+            "RAPPEL_PAIEMENT_ENVOI_REEL": False,  # V648 : défaut OFF (aucun e-mail de rappel de paiement)
             "SOCIAL_PROFILE_LINKS": False,     # F3 FINAL : défaut OFF (profils liés dormants)
             "SOCIAL_ACTIVATION_ENABLED": False,  # F4 : défaut OFF (activation dormante)
             "REMINDERS_SUBSCRIBERS_ENABLED": False,  # RV-AB : défaut OFF (aucun envoi nouveau)
@@ -23828,6 +23831,7 @@ async def get_feature_flags():
                          ("P3_REPONSE_ENVOI_REEL", False),
                          ("P3_RELANCE_ENABLED", False),
                          ("P3_RELANCE_ENVOI_REEL", False),
+                         ("RAPPEL_PAIEMENT_ENVOI_REEL", False),
                          ("SOCIAL_PROFILE_LINKS", False),
                          ("SOCIAL_ACTIVATION_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_ENABLED", False),
@@ -57963,6 +57967,10 @@ init_invitation_edition_db(db)
 from api.routes.abonnement_actuel import router as abonnement_actuel_router, init_db as init_abonnement_actuel_db  # noqa: E402
 fastapi_app.include_router(abonnement_actuel_router)
 init_abonnement_actuel_db(db)
+# V648 : RAPPEL DU DEUXIÈME PAIEMENT — manuel, drapeau d'envoi éteint, aucune boucle automatique.
+from api.routes.rappels_paiement import router as rappels_paiement_router, init_db as init_rappels_paiement_db  # noqa: E402
+fastapi_app.include_router(rappels_paiement_router)
+init_rappels_paiement_db(db, refus_email=c3_refus_exprime)
 # V610o : PROGRAMME AMBASSADEUR — Boosts / paliers / récompenses, lus sur la chaîne V607.
 from api.routes.ambassadeur_routes import router as ambassadeur_router, init_db as init_ambassadeur_db, assurer_index as v610o_ambassadeur_index  # noqa: E402
 fastapi_app.include_router(ambassadeur_router)

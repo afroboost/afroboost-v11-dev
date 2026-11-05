@@ -90,9 +90,9 @@ import resend
 EMAILS = os.path.join(ICI, "pw_emails.jsonl")
 
 
-def _faux_send(params):
+def _faux_send(params, options=None):
     with open(EMAILS, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"t": time.time(), "to": params.get("to"), "subject": params.get("subject"), "html": params.get("html", "")[:20000]}, ensure_ascii=False) + "\n")
+        f.write(json.dumps({"t": time.time(), "to": params.get("to"), "subject": params.get("subject"), "html": params.get("html", "")[:20000], "text": params.get("text", ""), "options": options}, ensure_ascii=False) + "\n")
     return {"id": "em_faux_" + uuid.uuid4().hex[:8]}
 
 

@@ -3285,6 +3285,26 @@ def t165_v647_seance_physique_et_bouton_seo():
            ok_paires and ok_dates and ok_seo, f"paires={ok_paires} dates={ok_dates} seo={ok_seo}")
 
 
+def t166_v648_rappel_paiement_ferme():
+    """V648 : identifiant FICTIF. Prouve que les routes refusent l'anonyme et que l'envoi réel est coupé."""
+    r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
+    m = re.search(r"CACHE_NAME = 'afroboost-v(\d+)", r.text or "")
+    if not m or int(m.group(1)) < 648:
+        skip(166, "V648 rappel de paiement", "V648 pas encore en ligne")
+        return
+    base = "/api/rappels-paiement"
+    statuts = {}
+    for nom, h in (("anonyme", {}), ("en-tête admin", {"X-User-Email": ADMIN})):
+        statuts[nom] = [requests.get(_url(base + "/reglages"), headers=h, timeout=TIMEOUT).status_code,
+                        requests.get(_url(base + "/simulation"), headers=h, timeout=TIMEOUT).status_code,
+                        requests.get(_url(base + "/nonregression-v648/apercu"), headers=h, timeout=TIMEOUT).status_code,
+                        requests.post(_url(base + "/nonregression-v648/envoyer"), json={"confirmation": True}, headers=h, timeout=TIMEOUT).status_code]
+    drapeaux = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json() or {}
+    record(166, "V648 rappel de paiement : routes refusées sans jeton, envoi réel coupé",
+           all(s == 403 for l in statuts.values() for s in l) and drapeaux.get("RAPPEL_PAIEMENT_ENVOI_REEL") is False,
+           f"{statuts} envoi_reel={drapeaux.get('RAPPEL_PAIEMENT_ENVOI_REEL')}")
+
+
 def main():
     print(f"=== NON-RÉGRESSION Afroboost — {BASE} ===\n")
     _install_signal_cleanup()          # V311b : nettoyage même en cas d'interruption
@@ -3357,7 +3377,7 @@ def main():
                    t158_v646_vitrine_url_inconnue_ou_injection, t159_v646_media_absent,
                    t160_v646_vitrines_actives_bannieres_publiques,
                    t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
-                   t164_v646_bot_reserve_super_admin, t165_v647_seance_physique_et_bouton_seo,
+                   t164_v646_bot_reserve_super_admin, t165_v647_seance_physique_et_bouton_seo, t166_v648_rappel_paiement_ferme,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:
