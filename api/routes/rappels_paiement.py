@@ -100,8 +100,13 @@ DUREE_JETON_APERCU = 1800             # secondes de validité d'un aperçu
 NOM_PRO_MAX = 60
 # Lettres latines accentuées : un « а » cyrillique ne peut pas imiter « Afroboost ».
 RE_NOM_PRO = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿŒœ0-9][A-Za-zÀ-ÖØ-öø-ÿŒœ0-9 '’&.\-]*$")
-RE_NOM_DOMAINE = re.compile(r"\.[a-z]{2,}(\s|$)|www\.", re.IGNORECASE)
-RE_NOM_CHIFFRES = re.compile(r"\d{5,}")
+RE_NOM_DOMAINE = re.compile(r"\.[a-zà-ÿ]{2,}", re.IGNORECASE)     # « evil.com », « evil.com-pay », « www.x »
+RE_NOM_CHIFFRE_COLLE = re.compile(r"[^\W\d_]\d|\d[^\W\d_]")      # « Afr0boost », « CH93 »
+NOM_CHIFFRES_MAX = 4                  # un numéro de compte, même découpé, n'y tient pas
+# Ces lettres ne se décomposent pas en Unicode : sans cette table, « Afrøboost » passerait.
+NOM_SOSIES = str.maketrans({"ø": "o", "ß": "ss", "œ": "oe", "æ": "ae", "ð": "d", "þ": "th",
+                            "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b"})
+NOM_SOSIES_COURTS = {ord("œ"): "o", ord("æ"): "a", ord("ß"): "s", ord("þ"): "t"}   # l'autre lecture : une seule lettre
 NOMS_TROMPEURS = ("afroboost", "bassi", "stripe", "twint", "paypal", "banque", "support", "administrat", "paiement", "service client")
 
 SIMULATION_MAX = 50
@@ -352,13 +357,17 @@ def nom_pro_valide(nom) -> bool:
     _n = nom.strip()
     if not _n or len(_n) > NOM_PRO_MAX or not RE_NOM_PRO.match(_n):
         return False
-    if RE_NOM_DOMAINE.search(_n) or RE_NOM_CHIFFRES.search(_n):
+    if RE_NOM_DOMAINE.search(_n) or RE_NOM_CHIFFRE_COLLE.search(_n) or sum(c.isdigit() for c in _n) > NOM_CHIFFRES_MAX:
         return False
     # « A.f.r-o b0ost », « Bässi » : on compare le nom réduit à ses lettres, chiffres ressemblants compris.
     _plat = unicodedata.normalize("NFKD", _n.lower())
-    _plat = "".join(c for c in _plat if not unicodedata.combining(c)).translate(str.maketrans("013457", "oieast"))
-    _compact = "".join(c for c in _plat if c.isalpha())
-    return not any(t.replace(" ", "") in _compact for t in NOMS_TROMPEURS)
+    _plat = "".join(c for c in _plat if not unicodedata.combining(c))
+    _lectures = set()
+    for _texte in (_plat.translate(NOM_SOSIES), _plat.translate(NOM_SOSIES_COURTS).translate(NOM_SOSIES)):
+        _compact = "".join(c for c in _texte if c.isalpha())
+        # « l » et « i » se confondent à l'écran : « Bassl » se lit « Bassi ».
+        _lectures.update((_compact, _compact.replace("l", "i")))
+    return not any(t.replace(" ", "") in v for t in NOMS_TROMPEURS for v in _lectures)
 
 
 def nom_professionnel(coach) -> str:

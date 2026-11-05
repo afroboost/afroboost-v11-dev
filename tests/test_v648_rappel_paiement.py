@@ -209,11 +209,12 @@ v("autre coach : refusé", rp.jeton_valide(_j0, _e0, "nouveau|1|0", "x@example.t
 v("empreinte seule, sans signature : refusée", rp.jeton_valide(_e0, _e0, "nouveau|1|0", _c0, _N) == "different")
 v("jeton vide : refusé", rp.jeton_valide("", _e0, "nouveau|1|0", _c0, _N) == "different" and rp.jeton_valide(None, _e0, "nouveau|1|0", _c0, _N) == "different")
 print("── Nom professionnel")
-for _ok in ("Lea", "Studio Lea", "Coach Tom", "Danse & Co", "Marie-Hélène D'Arc", "St. Gall Fitness", "Sébastien"):
+for _ok in ("Lea", "Studio Lea", "Coach Tom", "Danse & Co", "Marie-Hélène D'Arc", "St. Gall Fitness", "Sébastien", "A.B. Coaching", "Studio 54", "Zoé Œuvre"):
     v(f"accepté : {_ok}", rp.nom_pro_valide(_ok) is True)
 for _no in ("", None, 42, "x" * 61, "https://evil.example", "evil.com", "www.evil", "Paie ici evil.ch", "lea@evil.test", "Lea\nPaie ici", "Lea <b>", "Afroboost", "Afroboost Officiel",
             "AFROBOOST", "Afr0boost", "A f r o b o o s t", "A.f.r-o.boost", "Coach Bassi", "Bässi", "B4ssi", "Сoach Bassi", "Аfroboost", "Support Stripe", "TWINT Paiement", "CH93 00762 01162",
-            "Service client", "Ma Banque"):
+            "Service client", "Ma Banque", "Afrøboost", "Afrœboost", "Bæssi", "Bassl", "BASSL", "8assi", "Afro 8oost", "Bass 1", "evil.com-pay", "evil.com&x", "evil .com", "x.ch-y",
+            "CH93 0076 2011 6238 5295 7", "12 34 56", "1 2 3 4 5", "Afr0boost24"):
     v(f"refusé : {_no!r}"[:50], rp.nom_pro_valide(_no) is False)
 v("le défaut « Afroboost » cède au nom du coach", rp.nom_professionnel({"platform_name": "Afroboost", "name": "Lea"}) == "Lea")
 v("un nom de plateforme refusé ne se rattrape pas en silence", rp.nom_professionnel({"platform_name": "Afroboost Officiel", "name": "Lea"}) == "")
