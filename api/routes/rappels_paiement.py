@@ -23,22 +23,26 @@ L'ANTI-DOUBLON EST L'IDENTIFIANT LUI-MÊME. `_id` = abonnement|échéance|palier
 garantit son unicité, sans index à créer. Une seule requête peut insérer un rang ; les autres
 reçoivent une erreur de clé dupliquée et n'appellent pas le fournisseur.
 
-V648b — PLUSIEURS RAPPELS POUR UNE MÊME ÉCHÉANCE. Rang 1 = le rappel, rang 2 et suivants = les
-relances. Une relance n'est possible qu'après un délai réglé par le coach propriétaire du code
-(7 jours par défaut), sans changer la date d'échéance, et chacune repasse par toutes les
-vérifications. Chaque rang garde sa propre ligne : c'est l'historique complet.
+V648b — PLUSIEURS RAPPELS POUR UNE MÊME ÉCHÉANCE. Rang 1 = le rappel, rangs 2 et 3 = les relances :
+3 messages au plus par échéance, et au moins 7 jours entre deux messages réellement partis, même si
+le coach change la date (il peut allonger ce délai, jamais le raccourcir). Chaque rang garde sa ligne.
+
+UN APERÇU NE SERT QU'UNE FOIS. Le jeton d'aperçu est signé, valable 30 minutes et lié au coach, aux
+données et à l'état des envois : tout essai le périme, il faut rouvrir l'aperçu avant chaque message.
 
 LES ÉTATS D'UN ENVOI :
   en_cours  -> réservé, l'appel au fournisseur est en route
-  envoye    -> Resend a accepté (identifiant reçu). Prochain envoi seulement après le délai.
-  echec     -> refus CERTAIN (quota, adresse refusée…) : aucun message parti, on peut réessayer.
-  incertain -> coupure, délai dépassé, erreur serveur : le message est PEUT-ÊTRE parti. Jamais
-               de nouvel essai automatique. Le coach peut réessayer sous 23 h : la même clé
-               d'idempotence fait que Resend ne délivre pas deux fois (il la garde 24 h).
-               Passé 23 h, tout est bloqué jusqu'à la fin du délai de relance : un nouveau
-               message n'est alors plus un doublon, et le coach doit le demander explicitement.
-               Une reprise qui échoue reste `incertain`, quelle que soit l'erreur : l'échec de la
-               reprise ne dit rien du premier essai.
+  envoye    -> Resend a accepté (identifiant reçu). Prochain message seulement après le délai.
+  echec     -> refus CERTAIN (quota, adresse refusée…) : aucun message parti, on peut réessayer, avec
+               une nouvelle clé d'idempotence et une nouvelle date de référence.
+  incertain -> coupure, délai dépassé, erreur serveur : le message est PEUT-ÊTRE parti. Jamais de
+               renvoi immédiat. Le coach peut réessayer entre 15 minutes et 23 heures après, avec la
+               MÊME clé : Resend ne délivre pas deux fois, et c'est la seule résolution fiable.
+               Passé 23 h, Resend a oublié la clé : aucun nouveau message pour cet abonnement, même
+               avec une autre date. Une reprise qui échoue reste `incertain`.
+
+UNE RÉPONSE TARDIVE N'ÉCRASE RIEN. Un succès reste un fait, tant qu'il porte la clé en vigueur. Un
+échec ne compte que si l'essai est toujours celui en cours : sinon, l'état plus prudent reste.
 
 LE SOLDE N'EST PAS UNE PREUVE. Il est calculé depuis des saisies du coach. Si la case « en
 plusieurs fois » n'est pas cochée, rien ne dit qu'un second paiement était prévu : l'envoi reste
@@ -47,10 +51,12 @@ bloqué tant que le coach n'a pas saisi lui-même le montant réellement dû, et
 """
 import asyncio
 import hashlib
+import hmac
 import html as _html
 import logging
 import os
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -87,7 +93,16 @@ SOLDE_MINIMUM = 1.0                   # sous 1 CHF : un arrondi (ex. 199.99 sur 
 FRAIS_EN_COURS = timedelta(minutes=10)  # au-delà, un « en_cours » a perdu son processus
 DUREE_REPRISE = timedelta(hours=23)   # Resend garde une clé d'idempotence 24 h
 DELAI_RELANCE_DEFAUT = 7              # jours entre deux rappels manuels d'une même échéance
-DELAI_RELANCE_MIN, DELAI_RELANCE_MAX = 1, 60
+DELAI_RELANCE_MIN, DELAI_RELANCE_MAX = 7, 60
+MAX_RAPPELS_PAR_ECHEANCE = 3          # le premier rappel compris
+ATTENTE_REPRISE = timedelta(minutes=15)   # jamais de renvoi immédiat après un résultat incertain
+DUREE_JETON_APERCU = 1800             # secondes de validité d'un aperçu
+NOM_PRO_MAX = 60
+# Lettres latines accentuées : un « а » cyrillique ne peut pas imiter « Afroboost ».
+RE_NOM_PRO = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿŒœ0-9][A-Za-zÀ-ÖØ-öø-ÿŒœ0-9 '’&.\-]*$")
+RE_NOM_DOMAINE = re.compile(r"\.[a-z]{2,}(\s|$)|www\.", re.IGNORECASE)
+RE_NOM_CHIFFRES = re.compile(r"\d{5,}")
+NOMS_TROMPEURS = ("afroboost", "bassi", "stripe", "twint", "paypal", "banque", "support", "administrat", "paiement", "service client")
 
 SIMULATION_MAX = 50
 RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -106,7 +121,7 @@ MOTIFS = {
     "sans_email": "Aucune adresse e-mail valide sur l'abonnement.",
     "destinataire_ambigu": "L'adresse du code et celle de l'abonnement sont différentes.",
     "refus_email": "Cette personne a demandé à ne plus recevoir d'e-mails.",
-    "signature_manquante": "Renseigne le nom professionnel du coach : le message ne peut pas être signé.",
+    "signature_manquante": "Nom professionnel du coach absent ou refusé (lien, adresse, nom trompeur ou trop long) : le message ne peut pas être signé.",
 }
 AVERTISSEMENT_CASE = ("La case « paiement en plusieurs fois » n'est pas cochée alors qu'un solde reste affiché. "
                       "Ce solde est un calcul, pas une preuve de non-paiement : vérifie ce qui est réellement dû.")
@@ -223,54 +238,137 @@ def _instant(iso):
     return _d if _d.tzinfo else _d.replace(tzinfo=timezone.utc)
 
 
-def decision_relance(docs, delai_jours, maintenant) -> dict:
-    """PUR. Que permet l'historique de CETTE échéance ? Une seule règle, pour l'écran et pour l'envoi.
+def _refus(type_, doc=None, rang=None, prochaine=None, message="") -> dict:
+    _d = {"action": "refus", "type": type_, "rang": rang or int((doc or {}).get("rang") or 1), "doc": doc, "message": message}
+    if prochaine is not None:
+        _d["prochaine_le"] = prochaine.isoformat()
+    return _d
 
-    action : nouveau | reessai | reprise | nouveau_apres_incertain | refus.
-    `reprise` et `nouveau_apres_incertain` exigent une demande explicite du coach.
+
+MSG_INCERTAIN = "Le dernier envoi n'a pas pu être confirmé : le message est peut-être déjà parti."
+MSG_EN_COURS = "Un envoi est déjà en cours."
+
+
+def _statut_effectif(doc, maintenant) -> str:
+    """PUR. Un « en_cours » trop ancien a perdu son processus : le message est peut-être parti."""
+    _s = (doc or {}).get("statut")
+    if _s == "en_cours":
+        _m = _instant(doc.get("maj_le"))
+        if _m is None or maintenant - _m >= FRAIS_EN_COURS:
+            return "incertain"
+    return _s
+
+
+def _refus_incertain_definitif(doc) -> dict:
+    return _refus("incertain_bloque", doc, message=MSG_INCERTAIN + " Plus aucun essai sûr : aucun nouvel envoi pour cet abonnement, contacte la personne directement.")
+
+
+def decision_relance(docs, delai_jours, maintenant, echeance=None) -> dict:
+    """PUR. Que permet l'historique de CET abonnement ? Une seule règle, pour l'écran et pour l'envoi.
+
+    action : nouveau | reessai | reprise | refus. `reprise` exige une demande explicite du coach.
+    `echeance` : les envois des AUTRES dates comptent aussi : changer la date ne contourne ni un
+    résultat incertain, ni le délai entre deux messages. Le maximum de 3, lui, vaut par échéance.
     Une date illisible bloque : dans le doute, aucun message.
     """
-    if not docs:
-        return {"action": "nouveau", "rang": 1}
-    _der = max(docs, key=lambda d: int(d.get("rang") or 1))
-    _rang = int(_der.get("rang") or 1)
-    _statut = _der.get("statut")
     _delai = timedelta(days=delai_jours)
+    _ici = [d for d in docs if echeance is None or d.get("echeance") == echeance]
+    for _a in [d for d in docs if echeance is not None and d.get("echeance") != echeance]:
+        _s = _statut_effectif(_a, maintenant)
+        if _s == "en_cours":
+            return _refus("en_cours", _a, message=MSG_EN_COURS)
+        if _s == "incertain":
+            return _refus_incertain_definitif(_a)
+        if _s == "envoye":
+            _env = _instant(_a.get("envoye_le"))
+            if _env is None:
+                return _refus_incertain_definitif(_a)
+            if maintenant < _env + _delai:
+                return _refus("deja_envoye", _a, prochaine=_env + _delai,
+                              message="Un rappel vient d'être envoyé. Prochain envoi possible le %s." % _date_ch((_env + _delai).isoformat()))
+    if not _ici:
+        return {"action": "nouveau", "rang": 1}
+    _der = max(_ici, key=lambda d: int(d.get("rang") or 1))
+    _rang = int(_der.get("rang") or 1)
+    _statut = _statut_effectif(_der, maintenant)
     if _statut == "echec":
         return {"action": "reessai", "rang": _rang, "doc": _der}
     if _statut == "en_cours":
-        _maj = _instant(_der.get("maj_le"))
-        if _maj is not None and maintenant - _maj < FRAIS_EN_COURS:
-            return {"action": "refus", "type": "en_cours", "rang": _rang, "doc": _der}
-        _statut = "incertain"                 # le processus a disparu pendant l'appel
+        return _refus("en_cours", _der, message=MSG_EN_COURS)
     if _statut == "envoye":
+        if sum(1 for d in _ici if d.get("statut") == "envoye") >= MAX_RAPPELS_PAR_ECHEANCE or _rang >= MAX_RAPPELS_PAR_ECHEANCE:
+            return _refus("maximum_atteint", _der, message="Maximum de %d rappels atteint pour cette échéance." % MAX_RAPPELS_PAR_ECHEANCE)
         _env = _instant(_der.get("envoye_le"))
         if _env is None:
-            return {"action": "refus", "type": "incertain_attente", "rang": _rang, "doc": _der}
+            return _refus_incertain_definitif(_der)
         if maintenant >= _env + _delai:
             return {"action": "nouveau", "rang": _rang + 1}
-        return {"action": "refus", "type": "deja_envoye", "rang": _rang, "doc": _der,
-                "prochaine_le": (_env + _delai).isoformat()}
+        return _refus("deja_envoye", _der, prochaine=_env + _delai,
+                      message="Déjà envoyé pour cette échéance. Relance possible le %s." % _date_ch((_env + _delai).isoformat()))
     if _statut == "incertain":
-        _deb = _instant(_der.get("premier_essai_le"))
-        if _deb is None:
-            return {"action": "refus", "type": "incertain_attente", "rang": _rang, "doc": _der}
-        if maintenant - _deb < DUREE_REPRISE:
-            return {"action": "reprise", "rang": _rang, "doc": _der}
-        if maintenant >= _deb + _delai:
-            return {"action": "nouveau_apres_incertain", "rang": _rang + 1, "doc": _der}
-        return {"action": "refus", "type": "incertain_attente", "rang": _rang, "doc": _der,
-                "prochaine_le": (_deb + _delai).isoformat()}
-    return {"action": "refus", "type": "en_cours", "rang": _rang, "doc": _der}
+        _deb, _maj = _instant(_der.get("premier_essai_le")), _instant(_der.get("maj_le"))
+        if _deb is None or _maj is None or maintenant - _deb >= DUREE_REPRISE:
+            return _refus_incertain_definitif(_der)
+        if maintenant - _maj < ATTENTE_REPRISE:
+            return _refus("incertain_attente", _der, prochaine=_maj + ATTENTE_REPRISE,
+                          message=MSG_INCERTAIN + " Attends quelques minutes avant de vérifier.")
+        return {"action": "reprise", "rang": _rang, "doc": _der}
+    return _refus("en_cours", _der, message=MSG_EN_COURS)
+
+
+def etat_decision(decision) -> str:
+    """PUR. Résume l'état des envois : tout nouvel essai le change, donc périme les anciens aperçus."""
+    return "%s|%s|%s" % (decision.get("action"), decision.get("rang"), int((decision.get("doc") or {}).get("tentatives") or 0))
+
+
+def _signature_jeton(emp, etat, coach, quand) -> str:
+    _cle = os.environ.get("JWT_SECRET", "").encode("utf-8")
+    return hmac.new(_cle, ("%s|%s|%s|%d" % (emp, etat, coach, quand)).encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+
+def jeton_apercu(emp, etat, coach, maintenant) -> str:
+    """Le jeton remis avec un aperçu. Signé : on ne peut pas envoyer sans l'avoir demandé."""
+    _q = int(maintenant.timestamp())
+    return "%d.%s" % (_q, _signature_jeton(emp, etat, coach, _q))
+
+
+def jeton_valide(jeton, emp, etat, coach, maintenant) -> str:
+    """ok | expire | different."""
+    try:
+        _q, _sig = str(jeton).split(".", 1)
+        _q = int(_q)
+    except (TypeError, ValueError):
+        return "different"
+    if not os.environ.get("JWT_SECRET") or not hmac.compare_digest(_sig, _signature_jeton(emp, etat, coach, _q)):
+        return "different"
+    _age = int(maintenant.timestamp()) - _q
+    return "ok" if 0 <= _age <= DUREE_JETON_APERCU else "expire"
+
+
+def nom_pro_valide(nom) -> bool:
+    """PUR. Ce nom peut-il signer un e-mail parti de l'adresse Afroboost ? Au moindre doute, non."""
+    if not isinstance(nom, str):
+        return False
+    _n = nom.strip()
+    if not _n or len(_n) > NOM_PRO_MAX or not RE_NOM_PRO.match(_n):
+        return False
+    if RE_NOM_DOMAINE.search(_n) or RE_NOM_CHIFFRES.search(_n):
+        return False
+    # « A.f.r-o b0ost », « Bässi » : on compare le nom réduit à ses lettres, chiffres ressemblants compris.
+    _plat = unicodedata.normalize("NFKD", _n.lower())
+    _plat = "".join(c for c in _plat if not unicodedata.combining(c)).translate(str.maketrans("013457", "oieast"))
+    _compact = "".join(c for c in _plat if c.isalpha())
+    return not any(t.replace(" ", "") in _compact for t in NOMS_TROMPEURS)
 
 
 def nom_professionnel(coach) -> str:
-    """PUR. Le nom sous lequel un partenaire exerce. Jamais « Afroboost » : c'est le défaut de la plateforme."""
+    """PUR. Le nom sous lequel un partenaire exerce, s'il est acceptable ; sinon chaîne vide.
+    « Afroboost » seul est le défaut de la plateforme : le nom du coach prend alors le relais.
+    Un autre nom refusé ne se rattrape pas en silence : le coach doit le corriger."""
     _c = coach or {}
     _plateforme = str(_c.get("platform_name") or "").strip()
-    if _plateforme and _plateforme.lower() != "afroboost":
-        return _plateforme
-    return str(_c.get("name") or "").strip()
+    _nom = _plateforme if _plateforme and _plateforme.lower() != "afroboost" else str(_c.get("name") or "").strip()
+    return _nom if nom_pro_valide(_nom) else ""
 
 
 def cle_idempotence(cle, tentative=1) -> str:
@@ -436,8 +534,8 @@ async def _delai_relance(ctx: dict) -> int:
     return _delai_valide(_r.get("delai_relance_jours"))
 
 
-async def _docs_echeance(sub_id: str, echeance: str) -> list:
-    return await db[COL_RAPPELS].find({"subscription_id": sub_id, "echeance": echeance, "palier": PALIER_MANUEL}).to_list(200)
+async def _docs_abonnement(sub_id: str) -> list:
+    return await db[COL_RAPPELS].find({"subscription_id": sub_id, "palier": PALIER_MANUEL}).to_list(200)
 
 
 def _vue_envoi(decision: dict, delai: int) -> dict:
@@ -445,7 +543,7 @@ def _vue_envoi(decision: dict, delai: int) -> dict:
     _a = decision["action"]
     return {"peut_envoyer": _a != "refus", "action": _a, "type": decision.get("type"),
             "etape": etape_du_rang(decision.get("rang")), "prochaine_le": decision.get("prochaine_le"),
-            "confirmation_incertain": _a in ("reprise", "nouveau_apres_incertain"), "delai_jours": delai}
+            "message": decision.get("message", ""), "confirmation_incertain": _a == "reprise", "delai_jours": delai}
 
 
 def _ligne_historique(doc) -> dict:
@@ -477,41 +575,47 @@ async def _ligne_liste(ctx: dict, maintenant: datetime) -> dict:
               "verification_requise": bool(_v.get("verification_requise")), "envoi": None}
     if _v["ok"]:
         _delai = await _delai_relance(ctx)
-        _ligne["envoi"] = _vue_envoi(decision_relance(await _docs_echeance(_sid, _v["echeance"]), _delai, maintenant), _delai)
+        _ligne["envoi"] = _vue_envoi(decision_relance(await _docs_abonnement(_sid), _delai, maintenant, _v["echeance"]), _delai)
     return _ligne
 
 
 # ═══════════════════════════ ENVOI ═══════════════════════════
 
+def _exiger_permis(decision: dict, reprise: bool) -> None:
+    """Lève 409 si l'historique interdit ce message. Une seule traduction, pour l'envoi et la réservation."""
+    if decision["action"] == "refus":
+        _detail = {"type": decision["type"], "message": decision.get("message", ""), "reprise_possible": False}
+        if decision.get("prochaine_le"):
+            _detail["prochaine_le"] = decision["prochaine_le"]
+        if decision["type"] == "deja_envoye":
+            _detail["envoye_le"] = (decision.get("doc") or {}).get("envoye_le")
+        raise HTTPException(status_code=409, detail=_detail)
+    if decision["action"] == "reprise" and not reprise:
+        raise HTTPException(status_code=409, detail={"type": "incertain", "reprise_possible": True, "message": MSG_INCERTAIN})
+
+
+async def _docs_interrompus_inscrits(sub_id: str, maintenant: datetime) -> list:
+    """Un processus disparu pendant l'appel : on l'écrit, l'historique doit dire la vérité."""
+    _docs = await _docs_abonnement(sub_id)
+    _marques = False
+    for _x in _docs:
+        if _x.get("statut") == "en_cours" and _statut_effectif(_x, maintenant) == "incertain":
+            await db[COL_RAPPELS].update_one({"_id": _x["_id"], "statut": "en_cours", "maj_le": _x.get("maj_le")},
+                                             {"$set": {"statut": "incertain", "erreur": "interrompu", "maj_le": maintenant.isoformat()}})
+            _marques = True
+    return await _docs_abonnement(sub_id) if _marques else _docs
+
+
 async def _reserver(sub_id: str, base: dict, reprise: bool, maintenant: datetime, delai: int) -> dict:
     """La SEULE porte vers le fournisseur. Rend le document réservé, ou lève 409. Atomique."""
     _iso = maintenant.isoformat()
-    _en_cours = {"type": "en_cours", "message": "Un envoi est déjà en cours."}
-    _msg_incertain = "L'envoi précédent n'a pas pu être confirmé : le message est peut-être déjà parti."
-    _d = decision_relance(await _docs_echeance(sub_id, base["echeance"]), delai, maintenant)
+    _occupe = {"type": "en_cours", "message": MSG_EN_COURS}
+    _d = decision_relance(await _docs_interrompus_inscrits(sub_id, maintenant), delai, maintenant, base["echeance"])
+    _exiger_permis(_d, reprise)
     _ex = _d.get("doc") or {}
-    if _ex.get("statut") == "en_cours" and _d.get("type") != "en_cours":
-        # Le processus a disparu pendant l'appel : on l'écrit, l'historique doit dire la vérité.
-        await db[COL_RAPPELS].update_one({"_id": _ex["_id"], "statut": "en_cours", "maj_le": _ex.get("maj_le")},
-                                         {"$set": {"statut": "incertain", "erreur": "interrompu", "maj_le": _iso}})
-        _d = decision_relance(await _docs_echeance(sub_id, base["echeance"]), delai, maintenant)
-        _ex = _d.get("doc") or {}
-
     _action = _d["action"]
-    if _action == "refus":
-        if _d["type"] == "deja_envoye":
-            raise HTTPException(status_code=409, detail={
-                "type": "deja_envoye", "envoye_le": _ex.get("envoye_le"), "prochaine_le": _d.get("prochaine_le"),
-                "message": "Un rappel a déjà été envoyé. Une relance sera possible après le délai."})
-        if _d["type"] == "incertain_attente":
-            raise HTTPException(status_code=409, detail={
-                "type": "incertain_attente", "reprise_possible": False, "prochaine_le": _d.get("prochaine_le"),
-                "message": _msg_incertain + " Nouvel essai possible seulement après le délai de relance."})
-        raise HTTPException(status_code=409, detail=_en_cours)
-    if _action in ("reprise", "nouveau_apres_incertain") and not reprise:
-        raise HTTPException(status_code=409, detail={"type": "incertain", "reprise_possible": True, "message": _msg_incertain})
 
-    if _action in ("nouveau", "nouveau_apres_incertain"):
+    if _action == "nouveau":
         _rang = _d["rang"]
         _cle = cle_envoi(sub_id, base["echeance"], _rang)
         _doc = dict(base, _id=_cle, rang=_rang, statut="en_cours", tentatives=1, idempotency_key=cle_idempotence(_cle, 1),
@@ -519,7 +623,7 @@ async def _reserver(sub_id: str, base: dict, reprise: bool, maintenant: datetime
         try:
             await db[COL_RAPPELS].insert_one(_doc)     # une seule requête gagne ce rang
         except DuplicateKeyError:
-            raise HTTPException(status_code=409, detail=_en_cours)
+            raise HTTPException(status_code=409, detail=_occupe)
         return _doc
 
     if _action == "reprise":
@@ -527,18 +631,25 @@ async def _reserver(sub_id: str, base: dict, reprise: bool, maintenant: datetime
         if _ex.get("empreinte") != base.get("empreinte"):
             raise HTTPException(status_code=409, detail={
                 "type": "incertain_attente", "reprise_possible": False,
-                "message": _msg_incertain + " Les données ont changé : même message impossible, attends le délai de relance."})
+                "message": MSG_INCERTAIN + " Les données ont changé : le même message n'est plus possible."})
         _maj = {"$set": {"statut": "en_cours", "maj_le": _iso, "envoye_par": base.get("envoye_par")}, "$inc": {"tentatives": 1}}
-    else:    # reessai : refus certain, rien n'est parti, donc nouvelle clé (Resend garde aussi les refus)
-        _maj = {"$set": dict(base, statut="en_cours", maj_le=_iso,
+    else:    # reessai : refus certain, rien n'est parti. Nouvelle clé (Resend garde aussi les refus), donc nouvelle date.
+        _maj = {"$set": dict(base, statut="en_cours", maj_le=_iso, premier_essai_le=_iso,
                              idempotency_key=cle_idempotence(_ex["_id"], int(_ex.get("tentatives") or 1) + 1)),
                 "$inc": {"tentatives": 1}}
     _pris = await db[COL_RAPPELS].find_one_and_update(
         {"_id": _ex["_id"], "statut": _ex.get("statut"), "maj_le": _ex.get("maj_le")}, _maj, return_document=True)
     if not _pris:
-        raise HTTPException(status_code=409, detail=_en_cours)
+        raise HTTPException(status_code=409, detail=_occupe)
     _pris["_reprise"] = _action == "reprise"
     return _pris
+
+
+async def _clore_sans_succes(doc: dict, statut: str, erreur: str) -> bool:
+    """Échec ou incertitude : seulement si CET essai est toujours celui en cours. Réponse tardive = sans effet."""
+    _r = await db[COL_RAPPELS].update_one({"_id": doc["_id"], "statut": "en_cours", "tentatives": doc.get("tentatives")},
+                                          {"$set": {"statut": statut, "erreur": erreur, "maj_le": datetime.now(timezone.utc).isoformat()}})
+    return bool(getattr(_r, "modified_count", 0))
 
 
 async def _appel_fournisseur(cle: str, params: dict, options: dict):
@@ -668,8 +779,11 @@ async def apercu_rappel(sub_id: str, request: Request):
         return {"possible": False, "motif": _v["motif"], "message": _v["message"], "historique": _hist, "envoi_reel": _reel}
     _msg = _message_de(_ctx, _v)
     _delai = await _delai_relance(_ctx)
-    _envoi = _vue_envoi(decision_relance(await _docs_echeance(sub_id, _v["echeance"]), _delai, datetime.now(timezone.utc)), _delai)
-    return {"possible": True, "envoi_reel": _reel, "empreinte": empreinte(sub_id, _v), "destinataire": _v["destinataire"],
+    _maintenant = datetime.now(timezone.utc)
+    _dec = decision_relance(await _docs_abonnement(sub_id), _delai, _maintenant, _v["echeance"])
+    _envoi = _vue_envoi(_dec, _delai)
+    return {"possible": True, "envoi_reel": _reel, "empreinte": jeton_apercu(empreinte(sub_id, _v), etat_decision(_dec), _email, _maintenant),
+            "destinataire": _v["destinataire"],
             "reste": _v["reste"], "devise": _v["devise"], "echeance": _v["echeance"], "avertissement": _v.get("avertissement", ""),
             "verification_requise": bool(_v.get("verification_requise")), "envoi": _envoi,
             "sujet": _msg["sujet"], "texte": _msg["texte"], "code": _ctx["sub"].get("code"), "historique": _hist}
@@ -689,9 +803,16 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     if not _v["ok"]:
         raise HTTPException(status_code=409, detail={"type": _v["motif"], "message": _v["message"]})
     _emp = empreinte(sub_id, _v)
-    if corps.empreinte != _emp:
+    _delai = await _delai_relance(_ctx)
+    _instant_envoi = datetime.now(timezone.utc)
+    _dec = decision_relance(await _docs_interrompus_inscrits(sub_id, _instant_envoi), _delai, _instant_envoi, _v["echeance"])
+    _exiger_permis(_dec, corps.reprise_incertain)
+    _jeton = jeton_valide(corps.empreinte, _emp, etat_decision(_dec), _email, _instant_envoi)
+    if _jeton == "expire":
+        raise HTTPException(status_code=409, detail={"type": "apercu_expire", "message": "Cet aperçu est trop ancien. Rouvre l'aperçu."})
+    if _jeton != "ok":
         raise HTTPException(status_code=409, detail={
-            "type": "donnees_changees", "message": "Le montant ou l'échéance a changé depuis l'aperçu. Rouvre l'aperçu."})
+            "type": "donnees_changees", "message": "Le montant, l'échéance ou les envois ont changé depuis l'aperçu. Rouvre l'aperçu."})
     # Suivi incomplet : le solde calculé ne suffit pas, le coach dit lui-même ce qui est dû.
     # Rien n'est corrigé ici : s'il ne correspond pas, c'est au coach de reprendre son suivi.
     _confirme = None
@@ -715,7 +836,7 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     _base = {"subscription_id": sub_id, "code": _ctx["sub"].get("code"), "coach_id": _ctx.get("proprio", ""),
              "palier": PALIER_MANUEL, "echeance": _v["echeance"], "montant": _v["reste"], "devise": _v["devise"],
              "destinataire": _v["destinataire"], "empreinte": _emp, "envoye_par": _email, "montant_confirme": _confirme}
-    _doc = await _reserver(sub_id, _base, corps.reprise_incertain, datetime.now(timezone.utc), await _delai_relance(_ctx))
+    _doc = await _reserver(sub_id, _base, corps.reprise_incertain, datetime.now(timezone.utc), _delai)
     _cle = _doc["_id"]
     _reprise = bool(_doc.get("_reprise"))
     # L'échec d'une reprise ne dit rien du premier essai : le message est toujours peut-être parti.
@@ -725,37 +846,32 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     _ctx2 = await _contexte(sub_id)
     _v2 = await _verdict(_ctx2) if _ctx2 else {"ok": False, "motif": "aucun_abonnement_actuel", "message": ""}
     if not _v2["ok"] or empreinte(sub_id, _v2) != _emp:
-        await db[COL_RAPPELS].update_one({"_id": _cle}, {"$set": {
-            "statut": _si_refus, "erreur": "donnees_changees", "maj_le": datetime.now(timezone.utc).isoformat()}})
+        await _clore_sans_succes(_doc, _si_refus, "donnees_changees")
         raise HTTPException(status_code=409, detail={"type": "donnees_changees", "message": "Les données ont changé : rien n'a été envoyé."})
 
     _params = {"from": "Afroboost <notifications@afroboost.com>", "to": [_v["destinataire"]],
                "subject": _msg["sujet"], "html": _msg["html"], "text": _msg["texte"]}
     if _base["coach_id"] not in COACHS_BASSI:
         _params["reply_to"] = _base["coach_id"]   # le client d'un partenaire répond à son coach
-    _maintenant = lambda: datetime.now(timezone.utc).isoformat()  # noqa: E731
+    _msg_incertain = {"type": "incertain", "reprise_possible": True,
+                      "message": "Envoi non confirmé : le message est peut-être parti. Vérifie avant de réessayer."}
     try:
         _brut = await _appel_fournisseur(_cle, _params, {"idempotency_key": _doc["idempotency_key"]})
     except Exception as _err:  # noqa: BLE001
         _issue = "incertain" if _reprise else classer_erreur(_err)
         logger.warning("[V648] envoi %s : %s", _issue, type(_err).__name__)
-        await db[COL_RAPPELS].update_one({"_id": _cle}, {"$set": {
-            "statut": _issue, "erreur": type(_err).__name__, "maj_le": _maintenant()}})
-        if _issue == "incertain":
-            raise HTTPException(status_code=502, detail={
-                "type": "incertain", "reprise_possible": True,
-                "message": "Envoi non confirmé : le message est peut-être parti. Vérifie avant de réessayer."})
+        _ecrit = await _clore_sans_succes(_doc, _issue, type(_err).__name__)
+        if _issue == "incertain" or not _ecrit:
+            raise HTTPException(status_code=502, detail=_msg_incertain)
         raise HTTPException(status_code=502, detail={"type": "echec", "message": "L'envoi a été refusé : aucun message n'est parti."})
 
     _rid = _brut.get("id") if isinstance(_brut, dict) else getattr(_brut, "id", None)
     if not _rid:
-        await db[COL_RAPPELS].update_one({"_id": _cle}, {"$set": {
-            "statut": "incertain", "erreur": "sans_identifiant", "maj_le": _maintenant()}})
-        raise HTTPException(status_code=502, detail={
-            "type": "incertain", "reprise_possible": True,
-            "message": "Envoi non confirmé : le message est peut-être parti. Vérifie avant de réessayer."})
-    _fin = _maintenant()
-    await db[COL_RAPPELS].update_one({"_id": _cle}, {"$set": {
-        "statut": "envoye", "resend_id": _rid, "envoye_le": _fin, "maj_le": _fin}, "$unset": {"erreur": ""}})
+        await _clore_sans_succes(_doc, "incertain", "sans_identifiant")
+        raise HTTPException(status_code=502, detail=_msg_incertain)
+    # Un succès reste un fait, même tardif : seule la clé compte, et un envoi déjà confirmé ne bouge plus.
+    _fin = datetime.now(timezone.utc).isoformat()
+    await db[COL_RAPPELS].update_one({"_id": _cle, "idempotency_key": _doc["idempotency_key"], "statut": {"$ne": "envoye"}}, {
+        "$set": {"statut": "envoye", "resend_id": _rid, "envoye_le": _fin, "maj_le": _fin}, "$unset": {"erreur": ""}})
     logger.info("[V648] rappel de paiement envoyé (échéance %s)", _v["echeance"])
     return {"issue": "envoye", "envoye": True, "envoye_le": _fin, "message": "Rappel envoyé."}

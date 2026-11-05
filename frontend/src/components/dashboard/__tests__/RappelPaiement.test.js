@@ -198,7 +198,7 @@ test('ligne exclue (saison_2x) : motif affiché, aucun bouton', async () => {
 });
 
 describe('relances', () => {
-  const BLOQUE = { peut_envoyer: false, action: 'refus', type: 'deja_envoye', etape: 'Rappel', prochaine_le: '2026-11-12T08:00:00+00:00', delai_jours: 7 };
+  const BLOQUE = { peut_envoyer: false, action: 'refus', type: 'deja_envoye', etape: 'Rappel', prochaine_le: '2026-11-12T08:00:00+00:00', message: 'Déjà envoyé pour cette échéance. Relance possible le 12.11.2026.', delai_jours: 7 };
 
   test('avant le délai : plus de bouton d\'envoi, date affichée, aperçu toujours possible', async () => {
     brancher({ lignes: [ligne({ envoi: BLOQUE })], apercu: { ...APERCU, envoi: BLOQUE } });
@@ -209,6 +209,18 @@ describe('relances', () => {
     expect((await attendre('v648-envoi-bloque')).textContent).toContain('12.11.2026');
     expect($('v648-envoyer')).toBeNull();
     expect($('v648-continuer')).toBeNull();
+  });
+
+  test('maximum atteint ou incertain sans issue : aucun envoi, le motif du serveur est affiché', async () => {
+    const M = { peut_envoyer: false, action: 'refus', type: 'maximum_atteint', etape: 'Relance 2', message: 'Maximum de 3 rappels atteint pour cette échéance.', delai_jours: 7 };
+    brancher({ lignes: [ligne({ envoi: M })], apercu: { ...APERCU, envoi: M } });
+    await monter();
+    expect((await attendre('v648-attente-CODE-1')).textContent).toContain('Maximum de 3 rappels');
+    expect($('v648-rappel-CODE-1')).toBeNull();
+    await clic($('v648-voir-CODE-1'));
+    expect((await attendre('v648-envoi-bloque')).textContent).toContain('Maximum de 3 rappels');
+    expect($('v648-continuer')).toBeNull();
+    expect($('v648-envoyer')).toBeNull();
   });
 
   test('après le délai : « Envoyer la relance », avec confirmation', async () => {

@@ -151,9 +151,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
 
             {etat && !etat.peut_envoyer && (
               <p className="text-sm text-white font-semibold" data-testid="v648-envoi-bloque">
-                {etat.type === 'deja_envoye' && `Déjà envoyé pour cette échéance. Relance possible le ${dateCH(etat.prochaine_le)}.`}
-                {etat.type === 'incertain_attente' && `Le dernier envoi n'a pas pu être confirmé. Nouvel essai possible${etat.prochaine_le ? ` le ${dateCH(etat.prochaine_le)}` : ' après le délai'}.`}
-                {etat.type === 'en_cours' && 'Un envoi est déjà en cours.'}
+                {etat.message}
               </p>
             )}
 
@@ -168,9 +166,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
               <>
                 {incertain && (
                   <p className="text-xs text-white" data-testid="v648-incertain">
-                    {etat.action === 'nouveau_apres_incertain'
-                      ? "Le dernier envoi n'a pas pu être confirmé : ce client l'a peut-être reçu. Le délai de relance est passé, un nouveau message est possible."
-                      : "Le dernier envoi n'a pas pu être confirmé. Réessayer ne crée pas de doublon pendant 23 heures."}
+                    Le dernier envoi n'a pas pu être confirmé. Réessayer utilise la même clé : le service d'e-mail ne le délivre pas deux fois.
                   </p>
                 )}
                 {verification && (
@@ -251,8 +247,8 @@ function ReglagesRappels({ enregistrer, reglages, erreur, enregistre }) {
       ))}
 
       <label className="block text-xs text-white/80">
-        Délai avant une nouvelle relance manuelle (jours)
-        <input type="number" min="1" max="60" value={delaiSaisi} onChange={(e) => setDelaiSaisi(e.target.value)} onBlur={validerDelai}
+        Délai avant une nouvelle relance manuelle (7 à 60 jours, 3 rappels au plus par échéance)
+        <input type="number" min="7" max="60" value={delaiSaisi} onChange={(e) => setDelaiSaisi(e.target.value)} onBlur={validerDelai}
           className="block w-20 mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-delai-relance" />
       </label>
 
@@ -339,7 +335,7 @@ function LigneRappel({ ligne, onOuvrir }) {
           )}
           {etat && !etat.peut_envoyer && (
             <span className="text-white/70" data-testid={`v648-attente-${ligne.code}`}>
-              {etat.prochaine_le ? `Prochain envoi possible le ${dateCH(etat.prochaine_le)}` : 'Envoi indisponible pour le moment'}
+              {etat.type === 'deja_envoye' && etat.prochaine_le ? `Prochain envoi possible le ${dateCH(etat.prochaine_le)}` : etat.message}
             </span>
           )}
           {ligne.verification_requise && (
