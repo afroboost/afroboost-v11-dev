@@ -27,6 +27,7 @@ export const LIBELLES_STATUT = {
   envoye: 'Envoyé',
   echec: 'Refusé : aucun message parti',
   incertain: 'Envoi à vérifier : le message est peut-être parti',
+  non_parti: 'Non parti : absence prouvée',
   en_cours: 'Envoi en cours',
 };
 
@@ -71,14 +72,13 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
   const [montantSaisi, setMontantSaisi] = useState('');
   const [envoi, setEnvoi] = useState(false);
   const [resultat, setResultat] = useState(null);
-  const [repriseOfferte, setRepriseOfferte] = useState(false);
   const [resendId, setResendId] = useState('');
   const [preuve, setPreuve] = useState(null);
 
-  const verifier = async () => {
+  const verifier = async (absence) => {
     setErreur(''); setPreuve(null);
     try {
-      const r = await axios.post(`${API}/${encodeURIComponent(subId)}/verifier-envoi`, { resend_id: resendId.trim() });
+      const r = await axios.post(`${API}/${encodeURIComponent(subId)}/verifier-envoi`, absence ? { verifier_absence: true } : { resend_id: resendId.trim() });
       setPreuve(r.data);
       onEnvoye?.();
     } catch (e) {
@@ -89,7 +89,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
   useEffect(() => {
     if (!ouvert || !subId) return undefined;
     let vivant = true;
-    setApercu(null); setErreur(''); setConfirme(false); setMontantSaisi(''); setResultat(null); setRepriseOfferte(false);
+    setApercu(null); setErreur(''); setConfirme(false); setMontantSaisi(''); setResultat(null);
     setModeEnvoi(!!envoiDemande);
     setChargement(true);
     axios.get(`${API}/${encodeURIComponent(subId)}/apercu`)
@@ -100,7 +100,6 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
   }, [ouvert, subId, envoiDemande]);
 
   const etat = apercu?.envoi;
-  const incertain = !!etat?.confirmation_incertain || repriseOfferte;
   const verification = !!apercu?.verification_requise;
   const pret = confirme && !envoi && (!verification || String(montantSaisi).trim() !== '');
 
@@ -108,7 +107,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
     if (!pret || !apercu?.empreinte) return;
     setEnvoi(true); setErreur('');
     try {
-      const corps = { empreinte: apercu.empreinte, confirmation: true, reprise_incertain: incertain };
+      const corps = { empreinte: apercu.empreinte, confirmation: true };
       if (verification) corps.montant_confirme = Number(String(montantSaisi).replace(',', '.'));
       const r = await axios.post(`${API}/${encodeURIComponent(subId)}/envoyer`, corps);
       setResultat(r.data);
@@ -116,7 +115,6 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
     } catch (e) {
       const d = detailErreur(e, "Résultat inconnu : le message est peut-être parti. Rouvre l'aperçu avant toute autre action.");
       setErreur(d.message);
-      if (d.reprise_possible) setRepriseOfferte(true);
       setConfirme(false);
       onEnvoye?.();                      // la liste doit refléter l'état réel, même après un refus
     } finally {
@@ -175,9 +173,13 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
                   <input type="text" value={resendId} onChange={(e) => setResendId(e.target.value)}
                     className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-resend-id" />
                 </label>
-                <button type="button" onClick={verifier} data-testid="v648-verifier"
+                <button type="button" onClick={() => verifier(false)} data-testid="v648-verifier"
                   className="w-full py-2 rounded-md text-sm font-semibold" style={STYLE_BORD}>
-                  Vérifier chez le fournisseur
+                  Vérifier que l'e-mail est parti
+                </button>
+                <button type="button" onClick={() => verifier(true)} data-testid="v648-verifier-absence"
+                  className="w-full py-2 rounded-md text-sm font-semibold text-white/80" style={{ border: '1px solid rgba(255,255,255,0.25)' }}>
+                  Vérifier qu'il n'est pas parti
                 </button>
                 <p className="text-[11px] text-white/60">N'envoie rien. Sans preuve, le blocage reste.</p>
               </div>
@@ -193,11 +195,6 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
 
             {etat?.peut_envoyer && modeEnvoi && (
               <>
-                {incertain && (
-                  <p className="text-xs text-white" data-testid="v648-incertain">
-                    Le dernier envoi n'a pas pu être confirmé. Réessayer réutilise la même clé d'envoi, prévue pour éviter un doublon.
-                  </p>
-                )}
                 {verification && (
                   <label className="block text-xs text-white">
                     Montant réellement dû, vérifié par toi ({apercu.devise || 'CHF'})
@@ -213,7 +210,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
                 <button type="button" disabled={!pret} onClick={envoyer} data-testid="v648-envoyer"
                   className="w-full py-2 rounded-md text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                   style={STYLE_ACTION}>
-                  {envoi ? 'Envoi…' : (incertain ? 'Réessayer' : `Envoyer : ${etat.etape}`)}
+                  {envoi ? 'Envoi…' : `Envoyer : ${etat.etape}`}
                 </button>
               </>
             )}
@@ -317,7 +314,7 @@ function ReglagesRappels({ enregistrer, reglages, erreur, enregistre }) {
       ))}
 
       <label className="block text-xs text-white/80">
-        Délai avant une nouvelle relance manuelle (7 à 60 jours, 3 rappels au plus par échéance)
+        Délai avant une nouvelle relance manuelle (7 à 60 jours, 3 rappels au plus par paiement)
         <input type="number" min="7" max="60" value={delaiSaisi} onChange={(e) => setDelaiSaisi(e.target.value)} onBlur={validerDelai}
           className="block w-20 mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-delai-relance" />
       </label>
@@ -369,7 +366,6 @@ function ReglagesRappels({ enregistrer, reglages, erreur, enregistre }) {
 }
 
 function libelleEnvoi(etat) {
-  if (etat.confirmation_incertain) return 'Vérifier le rappel';
   return etat.etape === 'Rappel' ? 'Envoyer le rappel' : 'Envoyer la relance';
 }
 

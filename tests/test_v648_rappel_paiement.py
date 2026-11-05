@@ -79,6 +79,7 @@ class FauxEmails:
     def __init__(self):
         self.appels, self.reponse, self.delai = [], None, 0
         self.lectures, self.fiche = [], ErreurResend(404)
+        self.listes, self.pages = [], []
 
     def send(self, params, options=None):
         self.appels.append((params, options))
@@ -96,6 +97,13 @@ class FauxEmails:
         if isinstance(self.fiche, Exception):
             raise self.fiche
         return self.fiche
+
+
+    def list(self, params=None):
+        self.listes.append(params)
+        if isinstance(self.pages, Exception):
+            raise self.pages
+        return self.pages[len(self.listes) - 1] if len(self.listes) <= len(self.pages) else {"data": [], "has_more": False}
 
 
 class FauxResend:
@@ -179,33 +187,68 @@ v("aucune mention de prélèvement ou de Stripe dans les appels du module",
   "stripe." not in _src and "Subscription.modify" not in _src)
 v("le module n'écrit jamais sur subscriptions ni discount_codes",
   not re.search(r"db\.(subscriptions|discount_codes)\.(update|insert|delete|find_one_and|replace)", _src))
-v("l'identifiant = abonnement + échéance + palier + rang", rp.cle_envoi("s1", "2026-11-05", 2) == "s1|2026-11-05|manuel|2")
+v("l'identifiant = abonnement + échéance + palier + rang", rp.cle_envoi("s1", 2) == "s1|manuel|2")
 print("── Décision de relance")
 _N = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
 _il_y_a = lambda **k: (_N - timedelta(**k)).isoformat()  # noqa: E731
 _dr = rp.decision_relance
-v("aucun envoi : rang 1", _dr([], 7, _N) == {"action": "nouveau", "rang": 1})
+v("aucun envoi : rang 1, rappel 1", _dr([], 7, _N) == {"action": "nouveau", "rang": 1, "numero": 1})
 v("envoyé il y a 6 j : refus, date de relance donnée",
   (lambda r: r["action"] == "refus" and r["type"] == "deja_envoye" and r["prochaine_le"][:10] == "2026-11-21")(_dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=6)}], 7, _N)))
-v("envoyé il y a 7 j : relance, rang 2", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=7)}], 7, _N) == {"action": "nouveau", "rang": 2})
+v("envoyé il y a 7 j : relance, rang 2", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=7)}], 7, _N) == {"action": "nouveau", "rang": 2, "numero": 2})
 v("le délai vient du réglage", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=8)}], 14, _N)["type"] == "deja_envoye")
-v("le dernier rang décide", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=30)}, {"rang": 2, "statut": "envoye", "envoye_le": _il_y_a(days=1)}], 7, _N)["type"] == "deja_envoye")
+v("le dernier envoi décide", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=30)}, {"rang": 2, "statut": "envoye", "envoye_le": _il_y_a(days=1)}], 7, _N)["type"] == "deja_envoye")
 v("date d'envoi illisible : refus", _dr([{"rang": 1, "statut": "envoye", "envoye_le": "?"}], 7, _N)["action"] == "refus")
-_inc = lambda deb, maj: {"rang": 1, "statut": "incertain", "premier_essai_le": deb, "maj_le": maj}  # noqa: E731
-v("incertain à l'instant : aucun renvoi immédiat", _dr([_inc(_il_y_a(seconds=5), _il_y_a(seconds=5))], 7, _N)["type"] == "incertain_attente")
-v("incertain depuis 14 min : toujours en attente", _dr([_inc(_il_y_a(minutes=14), _il_y_a(minutes=14))], 7, _N)["type"] == "incertain_attente")
-v("incertain depuis 2 h : reprise, même clé", _dr([_inc(_il_y_a(hours=2), _il_y_a(hours=2))], 7, _N)["action"] == "reprise")
-v("reprise ratée à l'instant : l'attente repart", _dr([_inc(_il_y_a(hours=2), _il_y_a(seconds=5))], 7, _N)["type"] == "incertain_attente")
-v("incertain de 24 h : plus aucun essai", _dr([_inc(_il_y_a(hours=24), _il_y_a(hours=24))], 7, _N)["type"] == "incertain_bloque")
-v("incertain de 8 j : toujours aucun nouveau message", _dr([_inc(_il_y_a(days=8), _il_y_a(days=8))], 7, _N)["type"] == "incertain_bloque")
-v("en cours interrompu : traité comme incertain", _dr([{"rang": 1, "statut": "en_cours", "premier_essai_le": _il_y_a(minutes=30), "maj_le": _il_y_a(minutes=30)}], 7, _N)["action"] == "reprise")
-v("incertain sur une AUTRE date : bloque aussi", _dr([dict(_inc(_il_y_a(hours=1), _il_y_a(hours=1)), echeance="A")], 7, _N, "B")["type"] == "incertain_bloque")
-v("envoi récent sur une AUTRE date : le délai s'applique", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=1), "echeance": "A"}], 7, _N, "B")["type"] == "deja_envoye")
-v("envoi ancien sur une AUTRE date : nouveau rappel, rang 1", _dr([{"rang": 1, "statut": "envoye", "envoye_le": _il_y_a(days=8), "echeance": "A"}], 7, _N, "B") == {"action": "nouveau", "rang": 1})
+_inc = lambda deb: {"rang": 1, "statut": "incertain", "premier_essai_le": deb, "maj_le": deb}  # noqa: E731
+for _nom, _k in (("à l'instant", {"seconds": 5}), ("20 min", {"minutes": 20}), ("2 h", {"hours": 2}), ("24 h", {"hours": 24}), ("8 j", {"days": 8}), ("1 an", {"days": 365})):
+    v(f"incertain depuis {_nom} : bloqué, aucun délai ne débloque", _dr([_inc(_il_y_a(**_k))], 7, _N)["type"] == "incertain_bloque")
+v("en cours interrompu : traité comme incertain", _dr([{"rang": 1, "statut": "en_cours", "premier_essai_le": _il_y_a(minutes=30), "maj_le": _il_y_a(minutes=30)}], 7, _N)["type"] == "incertain_bloque")
+v("incertain sur un autre abonnement de la personne : bloque aussi", _dr([dict(_inc(_il_y_a(hours=1)), subscription_id="A")], 7, _N, {"sub": "B", "encaisse": 200, "total": 400, "numero": 2})["type"] == "incertain_bloque")
 _trois = [{"rang": r, "statut": "envoye", "envoye_le": _il_y_a(days=30)} for r in (1, 2, 3)]
 v("3 rappels envoyés : le 4e est refusé, même après 30 j", _dr(_trois, 7, _N)["type"] == "maximum_atteint")
-v("le maximum compte par échéance", _dr([dict(x, echeance="A") for x in _trois], 7, _N, "B")["action"] == "nouveau")
-v("un refus certain n'use pas un rang", _dr(_trois[:2] + [{"rang": 3, "statut": "echec"}], 7, _N)["action"] == "reessai")
+v("un refus certain n'use pas un rappel", (lambda r: r["action"] == "reessai" and r["numero"] == 3)(_dr(_trois[:2] + [{"rang": 3, "statut": "echec"}], 7, _N)))
+v("une absence prouvée n'use pas un rappel, mais un nouveau rang", _dr(_trois[:1] + [{"rang": 2, "statut": "non_parti"}], 7, _N) == {"action": "nouveau", "rang": 3, "numero": 2})
+print("── Identité du paiement")
+_p = lambda **k: dict({"sub": "S", "numero": 2, "encaisse": 200.0, "total": 400.0}, **k)  # noqa: E731
+_d = lambda **k: dict({"subscription_id": "S", "paiement_numero": 2, "nb_au_rappel": 3, "encaisse_au_rappel": 200, "total_au_rappel": 400}, **k)  # noqa: E731
+_cp = rp.classer_paiement
+v("rien n'a changé : même paiement", _cp(_d(), _p()) == "meme")
+v("total corrigé : même paiement", _cp(_d(), _p(total=450.0)) == "meme")
+v("encaissé corrigé à la baisse : même paiement", _cp(_d(), _p(encaisse=150.0)) == "meme")
+v("acompte, même rang : même paiement", _cp(_d(), _p(encaisse=250.0)) == "meme")
+v("case décochée, rien d'encaissé : même paiement", _cp(_d(), _p(numero=None)) == "meme")
+v("case cochée, rien d'encaissé : même paiement", _cp(_d(paiement_numero=None), _p()) == "meme")
+v("rang suivant ET encaissement : paiement distinct", _cp(_d(), _p(numero=3, encaisse=300.0)) == "distinct")
+v("rang suivant sans encaissement : incertain", _cp(_d(), _p(numero=3)) == "ambigu")
+v("rang précédent : incertain", _cp(_d(), _p(numero=1, encaisse=300.0)) == "ambigu")
+v("sans rang, encaissement : incertain", _cp(_d(paiement_numero=None), _p(numero=None, encaisse=300.0)) == "ambigu")
+v("case changée ET encaissement : incertain", _cp(_d(), _p(numero=None, encaisse=300.0)) == "ambigu" and _cp(_d(paiement_numero=None), _p(encaisse=300.0)) == "ambigu")
+v("montant encaissé illisible : incertain", _cp(_d(encaisse_au_rappel=None), _p()) == "ambigu" and _cp(_d(), _p(encaisse=None)) == "ambigu")
+v("autre abonnement, même dette : même paiement", _cp(_d(subscription_id="X"), _p()) == "meme")
+v("autre abonnement, autres montants : incertain", _cp(_d(subscription_id="X"), _p(total=600.0)) == "ambigu")
+v("autre abonnement, 1 centime d'écart : incertain", _cp(_d(subscription_id="X"), _p(total=400.01)) == "ambigu" and _cp(_d(subscription_id="X"), _p(encaisse=200.01)) == "ambigu")
+v("ancien abonnement clos et soldé : distinct", _cp(_d(subscription_id="X", _abonnement_solde=True), _p(total=600.0)) == "distinct" and _cp(_d(subscription_id="X", _abonnement_solde=True), _p()) == "distinct")
+v("rang +1 et 1 centime : incertain", _cp(_d(), _p(numero=3, encaisse=200.01)) == "ambigu")
+v("rang +1, total et encaissé montés d'autant : incertain", _cp(_d(), _p(numero=3, encaisse=250.0, total=450.0)) == "ambigu")
+v("rang +2, une seule part encaissée : incertain", _cp(_d(nb_au_rappel=5), _p(numero=4, encaisse=250.0)) == "ambigu")
+v("rang +2, deux parts encaissées : distinct", _cp(_d(nb_au_rappel=5), _p(numero=4, encaisse=300.0)) == "distinct")
+v("total baissé et 1 centime : incertain", _cp(_d(total_au_rappel=600), _p(numero=3, encaisse=200.01, total=400.0)) == "ambigu")
+v("rang au-delà du nombre de paiements : incertain", _cp(_d(nb_au_rappel=3), _p(numero=4, encaisse=400.0)) == "ambigu")
+v("nombre de paiements extrême : incertain", _cp(_d(nb_au_rappel=10 ** 6), _p(numero=3, encaisse=200.3)) == "ambigu")
+v("sans nombre de paiements : incertain", _cp(_d(nb_au_rappel=None), _p(numero=3, encaisse=300.0)) == "ambigu")
+_cycle, _enc, _tot, _rang, _ouverts = _d(), 200.0, 400.0, 2, 0
+for _ in range(33):
+    _enc, _tot, _rang = _enc + 0.01, _tot + 0.01, _rang + 1
+    _ouverts += _cp(dict(_cycle, paiement_numero=_rang - 1, encaisse_au_rappel=_enc - 0.01, total_au_rappel=_tot - 0.01, nb_au_rappel=99), _p(numero=_rang, encaisse=_enc, total=_tot)) == "distinct"
+v("33 cycles au centime : aucun nouveau compteur", _ouverts == 0, _ouverts)
+print("── Fiches du fournisseur illisibles")
+for _nom, _f in (("sans destinataire", {}), ("destinataire vide", {"to": []}), ("destinataire objet", {"to": [{"email": "a@example.test"}]})):
+    v(f"{_nom} : illisible", rp.adresses_fiche(_f) is None)
+v("adresse avec un nom : lue", rp.adresses_fiche({"to": ["Anne <A@Example.test>"]}) == ["a@example.test"])
+v("objet avec espace : lu", rp.objet_fiche({"subject": " x "}) == "x" and rp.objet_fiche({}) is None)
+v("identité incertaine : bloque, ne remet pas à zéro", _dr([dict(_d(), rang=1, statut="envoye", envoye_le=_il_y_a(days=30))], 7, _N, _p(numero=3))["type"] == "paiement_ambigu")
+v("un paiement distinct repart au rappel 1", (lambda r: r["action"] == "nouveau" and r["numero"] == 1 and r["rang"] == 4)(_dr([dict(_d(), rang=i, statut="envoye", envoye_le=_il_y_a(days=30)) for i in (1, 2, 3)], 7, _N, _p(numero=3, encaisse=300.0))))
+v("le délai vaut aussi pour un paiement distinct", _dr([dict(_d(), rang=1, statut="envoye", envoye_le=_il_y_a(days=1))], 7, _N, _p(numero=3, encaisse=300.0))["type"] == "deja_envoye")
 print("── Aperçu à usage unique")
 _e0, _c0 = "emp", "coach@example.test"
 _j0 = rp.jeton_apercu(_e0, "nouveau|1|0", _c0, _N)
@@ -424,13 +467,13 @@ async def principal():
         v("expéditeur Afroboost", params["from"] == "Afroboost <notifications@afroboost.com>")
         v("clé d'idempotence transmise", bool(opts.get("idempotency_key")))
         v("message construit par le serveur", params["subject"] == ap["sujet"] and params["text"] == ap["texte"])
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(0))})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
         v("historique : envoyé, identifiant Resend, auteur", d["statut"] == "envoye" and d["resend_id"] and d["envoye_par"] == ADMIN, d)
         v("abonnements et codes inchangés", await empreinte_base(db) == avant)
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
         v("deuxième clic : 409 deja_envoye", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye", r.text)
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": True})
-        v("même une « reprise » ne double pas un envoi confirmé", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye", r.text)
+        v("un ancien champ « reprise » ne change rien", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye", r.text)
         v("toujours un seul appel", len(faux.Emails.appels) == 1)
         hist = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["historique"]
         v("l'historique apparaît dans l'aperçu", len(hist) == 1 and hist[0]["statut"] == "envoye", hist)
@@ -438,10 +481,10 @@ async def principal():
         ap2 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap2["empreinte"]})
         v("changer la date ne contourne pas les 7 jours", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye" and len(faux.Emails.appels) == 1, r.text)
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0), 1)}, {"$set": {"envoye_le": (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()}})
+        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", 1)}, {"$set": {"envoye_le": (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()}})
         ap2 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap2["empreinte"]})
-        v("après le délai, une NOUVELLE échéance ouvre un nouveau rappel", r.status_code == 200 and len(faux.Emails.appels) == 2, r.text)
+        v("après le délai, ce rappel compte comme le 2e du même paiement", r.status_code == 200 and len(faux.Emails.appels) == 2 and (await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", 2)}))["numero"] == 2, r.text)
         await db.subscriptions.update_one({"id": "s1"}, {"$set": {"suivi_paiement.prochaine_echeance": D(0)}})
         v("code de Bassi : l'adresse de réponse reste celle par défaut", faux.Emails.appels[0][0].get("reply_to") == rc.reply_to_defaut(), faux.Emails.appels[0][0].get("reply_to"))
         ap_l = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()
@@ -462,7 +505,7 @@ async def principal():
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
         v("avant 7 jours : refus, un seul message", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye" and len(faux.Emails.appels) == 1, r.text)
         il_y_a_8 = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0), 1)}, {"$set": {"envoye_le": il_y_a_8, "cree_le": il_y_a_8}})
+        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", 1)}, {"$set": {"envoye_le": il_y_a_8, "cree_le": il_y_a_8}})
         await db.subscriptions.update_one({"id": "s1"}, {"$set": {"montant_encaisse": 400}})
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
         v("dette réglée depuis : aucune relance", r.status_code == 409 and r.json()["detail"]["type"] == "solde_nul" and len(faux.Emails.appels) == 1, r.text)
@@ -487,7 +530,7 @@ async def principal():
         h = hist[0]
         v("historique : date, destinataire, étape, résultat et coach", h["envoye_le"] and h["destinataire"] == "cliente@example.test" and h["statut"] == "envoye" and h["envoye_par"] == ADMIN, h)
         await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "MANUEL", "delai_relance_jours": 30})
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0), 2)}, {"$set": {"envoye_le": il_y_a_8}})
+        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", 2)}, {"$set": {"envoye_le": il_y_a_8}})
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
         v("le délai réglé par le coach s'applique (30 j)", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye", r.text)
         r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "MANUEL", "delai_relance_jours": 1})
@@ -501,7 +544,7 @@ async def principal():
         rs = await asyncio.gather(*[cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps) for _ in range(5)])
         v("3e rappel, 5 demandes simultanées : un seul message", len(faux.Emails.appels) == 3 and sorted(x.status_code for x in rs) == [200] + [409] * 4, [x.status_code for x in rs])
         print("── Quatrième rappel")
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0), 3)}, {"$set": {"envoye_le": il_y_a_8}})
+        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", 3)}, {"$set": {"envoye_le": il_y_a_8}})
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         v("aperçu : maximum annoncé, envoi fermé", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "maximum_atteint", ap["envoi"])
         rs = await asyncio.gather(*[cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]}) for _ in range(5)])
@@ -515,7 +558,7 @@ async def principal():
         v("le super-admin voit le client du partenaire signé par lui", "Lea Martin, Studio Lea" in ap_l["texte"])
         r = await cl.post("/api/rappels-paiement/s-lea/envoyer", headers=A, json={"confirmation": True, "empreinte": ap_l["empreinte"]})
         v("les réponses vont au coach propriétaire", r.status_code == 200 and faux.Emails.appels[-1][0].get("reply_to") == PARTENAIRE, r.text)
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s-lea", D(0), 1)})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s-lea", 1)})
         await db[rp.COL_RAPPELS].update_one({"_id": d["_id"]}, {"$set": {"envoye_le": il_y_a_8}})
         r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=A)
         v("le délai de 30 j du partenaire s'applique au super-admin", r.json()["envoi"]["peut_envoyer"] is False, r.json()["envoi"])
@@ -553,7 +596,7 @@ async def principal():
         corps = {"confirmation": True, "empreinte": ap["empreinte"]}
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
         v("422 : échec annoncé", r.status_code == 502 and r.json()["detail"]["type"] == "echec", r.text)
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(0))})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
         v("historique : échec", d["statut"] == "echec")
         k1 = faux.Emails.appels[0][1]["idempotency_key"]
         faux.Emails.reponse = None
@@ -563,7 +606,7 @@ async def principal():
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
         v("nouvel essai réussi", r.status_code == 200, r.text)
         v("nouvelle clé (la précédente garde le refus chez Resend)", faux.Emails.appels[1][1]["idempotency_key"] != k1)
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(0))})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
         v("historique : envoyé, 2 tentatives, erreur effacée", d["statut"] == "envoye" and d["tentatives"] == 2 and "erreur" not in d, d)
 
         print("── Quota atteint")
@@ -579,43 +622,26 @@ async def principal():
         faux.Emails.reponse = TimeoutError()
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
         v("coupure : annoncée incertaine", r.status_code == 502 and r.json()["detail"]["type"] == "incertain", r.text)
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(0))})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
         v("historique : incertain", d["statut"] == "incertain")
-        k1 = faux.Emails.appels[0][1]["idempotency_key"]
         faux.Emails.reponse = None
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
-        v("aperçu : envoi fermé juste après l'incertitude", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "incertain_attente", ap["envoi"])
-        for j in (False, True):
-            r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": j})
-            v(f"aucun renvoi immédiat (reprise demandée : {j})", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_attente" and len(faux.Emails.appels) == 1, r.text)
-        il_y_a_20 = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0))}, {"$set": {"maj_le": il_y_a_20}})
-        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
-        r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
-        v("clic simple : refus, aucun appel", r.status_code == 409 and r.json()["detail"]["type"] == "incertain" and len(faux.Emails.appels) == 1, r.text)
-        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"montant_encaisse": 250}})
-        ap3 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
-        r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap3["empreinte"], "reprise_incertain": True})
-        v("reprise avec un AUTRE montant : refusée (même clé = même message)", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_attente" and len(faux.Emails.appels) == 1, r.text)
-        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"montant_encaisse": 200}})
-        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
-        v("aperçu : reprise proposée, avec demande explicite", ap["envoi"]["confirmation_incertain"] is True, ap["envoi"])
-        rs = await asyncio.gather(*[cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": True}) for _ in range(5)])
-        v("reprise, 5 demandes simultanées : une seule passe", sorted(x.status_code for x in rs) == [200] + [409] * 4 and len(faux.Emails.appels) == 2, [x.status_code for x in rs])
-        v("MÊME clé d'idempotence (Resend ne délivre pas deux fois)", faux.Emails.appels[1][1]["idempotency_key"] == k1)
+        v("aperçu : envoi fermé juste après l'incertitude", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "incertain_bloque", ap["envoi"])
+        rs = await asyncio.gather(*[cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]}) for _ in range(5)])
+        v("double clic sur un envoi à vérifier : aucun appel", all(x.status_code == 409 for x in rs) and len(faux.Emails.appels) == 1, [x.status_code for x in rs])
 
         await semer(db, flag=True)
         faux.Emails.__init__()
         faux.Emails.reponse = ErreurResend(500)
         await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
         vieux = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0))}, {"$set": {"premier_essai_le": vieux}})
+        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1")}, {"$set": {"premier_essai_le": vieux}})
         faux.Emails.reponse = None
         n = len(faux.Emails.appels)
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=dict(corps, reprise_incertain=True))
         v("après 24 h : plus aucune reprise (Resend a oublié la clé)", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_bloque" and len(faux.Emails.appels) == n, r.text)
         vieux = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
-        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0))}, {"$set": {"premier_essai_le": vieux, "maj_le": vieux}})
+        await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1")}, {"$set": {"premier_essai_le": vieux, "maj_le": vieux}})
         for j in (False, True):
             r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=dict(corps, reprise_incertain=j))
             v(f"après 8 j, sans résolution fiable : toujours aucun envoi (demande : {j})", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_bloque" and len(faux.Emails.appels) == n, r.text)
@@ -623,7 +649,7 @@ async def principal():
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": True})
         v("changer la date ne contourne pas l'incertitude", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_bloque" and len(faux.Emails.appels) == n, r.text)
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(0), 1)})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", 1)})
         v("la ligne incertaine reste dans l'historique", d["statut"] == "incertain", d)
 
         print("── Le problème signalé : un refus ancien, puis une incertitude")
@@ -632,7 +658,7 @@ async def principal():
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         faux.Emails.reponse = ErreurResend(422)
         await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
-        cle1 = rp.cle_envoi("s1", D(0))
+        cle1 = rp.cle_envoi("s1")
         vieux = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
         await db[rp.COL_RAPPELS].update_one({"_id": cle1}, {"$set": {"premier_essai_le": vieux, "maj_le": vieux}})
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
@@ -644,7 +670,7 @@ async def principal():
         faux.Emails.reponse = None
         n = len(faux.Emails.appels)
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
-        v("le vieux refus n'ouvre aucun renvoi", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "incertain_attente", ap["envoi"])
+        v("le vieux refus n'ouvre aucun renvoi", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "incertain_bloque", ap["envoi"])
         for j in (False, True):
             r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": j})
             v(f"aucun message de plus (demande : {j})", r.status_code == 409 and len(faux.Emails.appels) == n, r.text)
@@ -742,7 +768,7 @@ async def principal():
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
         faux.Emails.reponse = None
-        cle1 = rp.cle_envoi("s1", D(0))
+        cle1 = rp.cle_envoi("s1")
         deb = datetime.now(timezone.utc) - timedelta(hours=24)
         await db[rp.COL_RAPPELS].update_one({"_id": cle1}, {"$set": {"premier_essai_le": deb.isoformat(), "maj_le": deb.isoformat()}})
         cle_avant = (await db[rp.COL_RAPPELS].find_one({"_id": cle1}))["idempotency_key"]
@@ -788,36 +814,22 @@ async def principal():
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         v("le délai de 7 jours part de l'envoi réel", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "deja_envoye", ap["envoi"])
         print("── Preuve : journal central, preuve déjà utilisée")
-        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-case", D(0)), "subscription_id": "s-case", "palier": rp.PALIER_MANUEL, "echeance": D(0), "rang": 1, "statut": "incertain",
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-case"), "subscription_id": "s-case", "palier": rp.PALIER_MANUEL, "echeance": D(0), "rang": 1, "statut": "incertain",
                                              "destinataire": "cliente@example.test", "premier_essai_le": deb.isoformat(), "maj_le": deb.isoformat(), "cree_le": deb.isoformat(), "tentatives": 1})
         r = await cl.post("/api/rappels-paiement/s-case/verifier-envoi", headers=A, json={"resend_id": "abcd-1234"})
         v("une preuve ne sert qu'à un rappel", r.json()["resolu"] is False and r.json()["motif"] == "preuve_deja_utilisee", r.text)
-        await db[rc.COL_JOURNAL].insert_one({"reference": rp.cle_envoi("s-case", D(0)), "resend_id": "journal-5678"})
+        await db[rc.COL_JOURNAL].insert_one({"reference": rp.cle_envoi("s-case"), "resend_id": "journal-5678"})
         faux.Emails.lectures = []
         r = await cl.post("/api/rappels-paiement/s-case/verifier-envoi", headers=A, json={})
-        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s-case", D(0))})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s-case")})
         v("le journal central fournit la preuve, le fournisseur la confirme", r.json()["resolu"] is True and faux.Emails.lectures == ["journal-5678"] and d["resolution"]["source"] == "journal", r.text)
-        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-lea", D(0)), "subscription_id": "s-lea", "coach_id": PARTENAIRE, "palier": rp.PALIER_MANUEL, "echeance": D(0), "rang": 1, "statut": "incertain",
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-lea"), "subscription_id": "s-lea", "coach_id": PARTENAIRE, "palier": rp.PALIER_MANUEL, "echeance": D(0), "rang": 1, "statut": "incertain",
                                              "destinataire": "client-lea@example.test", "premier_essai_le": deb.isoformat(), "maj_le": deb.isoformat(), "cree_le": deb.isoformat(), "tentatives": 1})
         ap = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()
         v("partenaire : statut visible, aucune action de résolution", ap["envoi"]["a_verifier"] is True and ap["envoi"]["verification_admin"] is False, ap["envoi"])
         r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=O)
         v("isolation : un autre coach ne voit toujours rien", r.status_code == 404)
         v("rappel Afroboost : signature officielle", (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["texte"].endswith("Coach Bassi, d'Afroboost"))
-
-        print("── Une reprise qui échoue reste incertaine")
-        for nom, err in (("quota", rc.QuotaResendAtteint(95, 95, False)), ("refus 422", ErreurResend(422))):
-            await semer(db, flag=True)
-            faux.Emails.__init__()
-            faux.Emails.reponse = TimeoutError()
-            await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
-            k1 = faux.Emails.appels[0][1]["idempotency_key"]
-            await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1", D(0))}, {"$set": {"maj_le": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()}})
-            faux.Emails.reponse = err
-            ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
-            await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": True})
-            d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(0))})
-            v(f"reprise + {nom} : toujours incertain, jamais une nouvelle clé", d["statut"] == "incertain" and d["idempotency_key"] == k1, d)
 
         await semer(db, flag=True)
         faux.Emails.__init__()
@@ -828,7 +840,7 @@ async def principal():
         await semer(db, flag=True)
         faux.Emails.__init__()
         faux.Emails.reponse = None
-        cle = rp.cle_envoi("s1", D(0))
+        cle = rp.cle_envoi("s1")
         recent = datetime.now(timezone.utc).isoformat()
         await db[rp.COL_RAPPELS].insert_one({"_id": cle, "rang": 1, "statut": "en_cours", "maj_le": recent, "premier_essai_le": recent, "subscription_id": "s1", "echeance": D(0), "palier": rp.PALIER_MANUEL, "cree_le": recent})
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
@@ -836,7 +848,7 @@ async def principal():
         vieux = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
         await db[rp.COL_RAPPELS].update_one({"_id": cle}, {"$set": {"maj_le": vieux}})
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
-        v("processus disparu : traité comme incertain, attente imposée, aucun appel", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_attente" and len(faux.Emails.appels) == 0, r.text)
+        v("processus disparu : envoi à vérifier, aucun appel", r.status_code == 409 and r.json()["detail"]["type"] == "incertain_bloque" and len(faux.Emails.appels) == 0, r.text)
         d = await db[rp.COL_RAPPELS].find_one({"_id": cle})
         v("et l'historique le dit", d["statut"] == "incertain" and d["erreur"] == "interrompu", d)
 
@@ -950,12 +962,271 @@ async def principal():
         v("nom client douteux : « Bonjour, »", (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["texte"].startswith("Bonjour,\n"))
         await semer(db)
         vieux = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
-        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s1", D(-1)), "subscription_id": "s1", "coach_id": "", "destinataire": "x@example.test", "palier": rp.PALIER_MANUEL, "echeance": D(-1), "rang": 1, "statut": "en_cours", "maj_le": vieux, "premier_essai_le": vieux, "cree_le": vieux})
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s1"), "subscription_id": "s1", "coach_id": "", "destinataire": "x@example.test", "palier": rp.PALIER_MANUEL, "echeance": D(-1), "rang": 1, "statut": "en_cours", "maj_le": vieux, "premier_essai_le": vieux, "cree_le": vieux})
         ap = (await cl.get("/api/rappels-paiement/s-case/apercu", headers=A)).json()
         await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": "x"})
-        v("drapeau éteint : un état interrompu n'est même pas écrit", (await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", D(-1))}))["statut"] == "en_cours")
+        v("drapeau éteint : un état interrompu n'est même pas écrit", (await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")}))["statut"] == "en_cours")
         r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "MANUEL", "delais": [[]]})
         v("délais illisibles : 400", r.status_code == 400, r.status_code)
+
+        print("── DÉCISION 1 : un envoi incertain n'est plus jamais repris")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        faux.Emails.reponse = TimeoutError()
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        faux.Emails.reponse = None
+        n = len(faux.Emails.appels)
+        for nom, age in (("20 min", timedelta(minutes=20)), ("2 h", timedelta(hours=2)), ("24 h", timedelta(hours=24)), ("30 j", timedelta(days=30))):
+            quand = (datetime.now(timezone.utc) - age).isoformat()
+            await db[rp.COL_RAPPELS].update_many({"subscription_id": "s1"}, {"$set": {"maj_le": quand, "premier_essai_le": quand}})
+            ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+            v(f"après {nom} : « Envoi à vérifier », envoi fermé", ap["envoi"]["a_verifier"] is True and ap["envoi"]["peut_envoyer"] is False and "Envoi à vérifier" in ap["envoi"]["message"], ap["envoi"])
+            for j in (False, True):
+                r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"], "reprise_incertain": j})
+                v(f"après {nom}, reprise demandée {j} : aucun appel au fournisseur", r.status_code == 409 and len(faux.Emails.appels) == n, r.text)
+
+        print("── DÉCISION 1 : résolution par le super-admin seulement")
+        URL_V = "/api/rappels-paiement/s1/verifier-envoi"
+        deb = datetime.now(timezone.utc) - timedelta(hours=30)
+
+        async def _incertain_ancien(heures=30):
+            await semer(db, flag=True)
+            faux.Emails.__init__()
+            faux.Emails.reponse = TimeoutError()
+            ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+            await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+            faux.Emails.reponse = None
+            q = (datetime.now(timezone.utc) - timedelta(hours=heures)).isoformat()
+            await db[rp.COL_RAPPELS].update_one({"_id": rp.cle_envoi("s1")}, {"$set": {"premier_essai_le": q, "maj_le": q}})
+            return ap["empreinte"]
+
+        def _mail(heures, a="autre@example.test", objet="Autre sujet", i="m-000001"):
+            return {"id": i, "to": [a], "subject": objet, "created_at": (datetime.now(timezone.utc) - timedelta(hours=heures)).isoformat(), "from": "Afroboost <notifications@afroboost.com>"}
+        await _incertain_ancien(2)
+        r = await cl.post(URL_V, headers=A, json={"verifier_absence": True})
+        v("moins de 24 h : trop tôt, blocage maintenu", r.json()["resolu"] is False and r.json()["motif"] == "trop_tot" and faux.Emails.listes == [], r.text)
+        jeton_ancien = await _incertain_ancien()
+        n = len(faux.Emails.appels)
+        for nom, pages in (("fournisseur en panne", ErreurResend(500)), ("liste vide", [{"data": [], "has_more": False}]),
+                           ("liste qui s'arrête avant la période", [{"data": [_mail(29)], "has_more": False}]),
+                           ("date illisible", [{"data": [dict(_mail(29), created_at="?"), _mail(40)], "has_more": False}]),
+                           ("ordre inattendu", [{"data": [_mail(40), _mail(29), _mail(50)], "has_more": False}]),
+                           ("réponse illisible", ["n'importe quoi"]),
+                           ("fiche sans destinataire", [{"data": [{k: x for k, x in _mail(29).items() if k != "to"}, _mail(40)], "has_more": False}]),
+                           ("destinataire en objet", [{"data": [dict(_mail(29), to=[{"email": "cliente@example.test"}]), _mail(40)], "has_more": False}]),
+                           ("fiche sans objet", [{"data": [{k: x for k, x in _mail(29).items() if k != "subject"}, _mail(40)], "has_more": False}]),
+                           ("objet ressemblant pour cette personne", [{"data": [_mail(29, a="cliente@example.test", objet="Rappel : ton paiement"), _mail(40)], "has_more": False}]),
+                           ("objet « Re: Rappel »", [{"data": [_mail(29, a="cliente@example.test", objet="Re: Rappel : ton deuxième"), _mail(40)], "has_more": False}]),
+                           ("objet encodé", [{"data": [_mail(29, a="cliente@example.test", objet="=?UTF-8?Q?xx?="), _mail(40)], "has_more": False}]),
+                           ("objet « ton paiement »", [{"data": [_mail(29, a="cliente@example.test", objet="Ton paiement Afroboost"), _mail(40)], "has_more": False}])):
+            faux.Emails.listes, faux.Emails.pages = [], pages
+            r = await cl.post(URL_V, headers=A, json={"verifier_absence": True})
+            d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
+            v(f"{nom} : preuve insuffisante, blocage maintenu", r.json()["resolu"] is False and r.json()["motif"] == "preuve_insuffisante" and "hors du système" in r.json()["message"] and d["statut"] == "incertain", r.text)
+        faux.Emails.listes = []
+        faux.Emails.pages = [{"data": [_mail(29, a="cliente@example.test", objet=rp.OBJETS_RAPPEL[0], i="m-111111"), _mail(29.5, a="CLIENTE@example.test", objet=rp.OBJETS_RAPPEL[1], i="m-222222"), _mail(40)], "has_more": False}]
+        r = await cl.post(URL_V, headers=A, json={"verifier_absence": True})
+        v("deux e-mails possibles : impossible de trancher, blocage maintenu", r.json()["resolu"] is False and r.json()["motif"] == "preuve_insuffisante", r.text)
+        for nom, h in (("sans jeton", {}), ("partenaire", P), ("autre coach", O)):
+            r = await cl.post(URL_V, headers=h, json={"verifier_absence": True})
+            v(f"absence, {nom} : 403", r.status_code == 403, r.status_code)
+        print("── Absence prouvée : tentative distincte, règles normales")
+        faux.Emails.listes = []
+        faux.Emails.pages = [{"data": [_mail(5), _mail(29)], "has_more": True}, {"data": [_mail(29.5, a="autre@example.test", objet=rp.OBJETS_RAPPEL[0]), _mail(40)], "has_more": True}]
+        avant = await empreinte_base(db)
+        r = await cl.post(URL_V, headers=A, json={"verifier_absence": True})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
+        v("toute la période lue, aucun e-mail pour cette personne : absence prouvée", r.json()["resolu"] is True and r.json()["non_parti"] is True and d["statut"] == "non_parti" and d["resolution"]["source"] == "historique_fournisseur" and d["resolution"]["par"] == ADMIN, r.text)
+        v("les pages ont été suivies", faux.Emails.listes[1].get("after") == "m-000001", faux.Emails.listes)
+        v("la vérification n'envoie rien", len(faux.Emails.appels) == n)
+        v("aucune donnée métier modifiée", await empreinte_base(db) == avant)
+        ancienne_cle = d["idempotency_key"]
+        r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": jeton_ancien})
+        v("l'ancienne confirmation ne sert plus", r.status_code == 409 and r.json()["detail"]["type"] == "donnees_changees" and len(faux.Emails.appels) == n, r.text)
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        v("aperçu : nouvelle tentative possible, toujours le 1er rappel", ap["envoi"]["peut_envoyer"] is True and ap["envoi"]["etape"] == "Rappel" and ap["envoi"]["a_verifier"] is False, ap["envoi"])
+        r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        d2 = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", 2)})
+        v("tentative distincte : nouveau rang, nouvelle clé", r.status_code == 200 and d2["statut"] == "envoye" and d2["numero"] == 1 and d2["idempotency_key"] != ancienne_cle and faux.Emails.appels[-1][1]["idempotency_key"] != ancienne_cle, d2)
+        hist = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["historique"]
+        v("l'historique garde les deux lignes", sorted(h["statut"] for h in hist) == ["envoye", "non_parti"], hist)
+        print("── Envoi prouvé par l'historique : il compte")
+        await _incertain_ancien()
+        faux.Emails.listes = []
+        faux.Emails.pages = [{"data": [_mail(29, a="cliente@example.test", objet=rp.OBJETS_RAPPEL[0], i="m-333333"), _mail(40)], "has_more": False}]
+        faux.Emails.fiche = _mail(29, a="cliente@example.test", objet=rp.OBJETS_RAPPEL[0], i="m-333333")
+        r = await cl.post(URL_V, headers=A, json={"verifier_absence": True})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
+        v("l'e-mail existait : l'envoi est confirmé et compté, jamais « non parti »", r.json()["resolu"] is True and not r.json().get("non_parti") and d["statut"] == "envoye" and d["numero"] == 1 and d["resend_id"] == "m-333333", r.text)
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        v("il compte : relance 1 à venir, délai en cours selon sa date réelle", ap["envoi"]["peut_envoyer"] is False and ap["envoi"]["type"] == "deja_envoye", ap["envoi"])
+        await _incertain_ancien()
+        await db[rc.COL_JOURNAL].insert_one({"reference": rp.cle_envoi("s1"), "resend_id": "journal-9999"})
+        faux.Emails.listes = []
+        faux.Emails.fiche = ErreurResend(404)
+        r = await cl.post(URL_V, headers=A, json={"verifier_absence": True})
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
+        v("le journal connaît un identifiant : aucune absence possible", r.json()["resolu"] is False and d["statut"] == "incertain" and faux.Emails.listes == [], r.text)
+
+        print("── DÉCISION 2 : trois rappels par paiement attendu, quoi que fasse le coach")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        vieux = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+
+        async def _un_rappel(modif):
+            await db[rp.COL_RAPPELS].update_many({"subscription_id": "s1", "statut": "envoye"}, {"$set": {"envoye_le": vieux}})
+            await db.subscriptions.update_one({"id": "s1"}, {"$set": modif})
+            ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+            return await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap.get("empreinte", "")})
+        r = await _un_rappel({"suivi_paiement.prochaine_echeance": D(0)})
+        v("1er rappel", r.status_code == 200 and len(faux.Emails.appels) == 1, r.text)
+        r = await _un_rappel({"suivi_paiement.prochaine_echeance": D(1)})
+        v("2e rappel, date changée : il compte", r.status_code == 200 and len(faux.Emails.appels) == 2, r.text)
+        r = await _un_rappel({"suivi_paiement.note_interne": "note"})
+        v("3e rappel, note changée : il compte", r.status_code == 200 and len(faux.Emails.appels) == 3, r.text)
+        for nom, modif in (("date changée", {"suivi_paiement.prochaine_echeance": D(2)}), ("note changée", {"suivi_paiement.note_interne": "autre"}),
+                           ("total corrigé", {"suivi_paiement.montant_total": 450}), ("nouvelle date, encore", {"suivi_paiement.prochaine_echeance": D(-1)})):
+            r = await _un_rappel(modif)
+            v(f"4e rappel, {nom} : refusé", r.status_code == 409 and r.json()["detail"]["type"] == "maximum_atteint" and len(faux.Emails.appels) == 3, r.text)
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        rs = await asyncio.gather(*[cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]}) for _ in range(5)])
+        v("4e rappel, demandes simultanées : aucun message", all(x.status_code == 409 for x in rs) and len(faux.Emails.appels) == 3, [x.status_code for x in rs])
+        A2 = {"Authorization": "Bearer " + jwt.encode({"email": ADMIN, "sub": ADMIN, "iat": 1}, os.environ["JWT_SECRET"], algorithm="HS256")}
+        r = await cl.get("/api/rappels-paiement/s1/apercu", headers=A2)
+        v("nouvelle session : le compteur reste", r.json()["envoi"]["type"] == "maximum_atteint", r.text)
+        await db.subscriptions.update_one({"id": "s1"}, {"$unset": {"suivi_paiement.plusieurs_fois": "", "suivi_paiement.nb_paiements": "", "suivi_paiement.paiement_actuel": ""}})
+        r = await cl.get("/api/rappels-paiement/s1/apercu", headers=A)
+        v("case décochée : le compteur reste", r.json()["envoi"]["type"] == "maximum_atteint", r.text)
+        hist = r.json()["historique"]
+        v("historique : Relance 2, Relance 1, Rappel", [h["etape"] for h in hist] == ["Relance 2", "Relance 1", "Rappel"], [h["etape"] for h in hist])
+        print("── DÉCISION 2 : un paiement réellement distinct, identifié sans ambiguïté")
+
+        async def _sequence(modif_avant=None):
+            await semer(db, flag=True)
+            faux.Emails.__init__()
+            await db.subscriptions.update_one({"id": "s1"}, {"$set": {"suivi_paiement": suivi(montant_total=600, nb_paiements=3, paiement_actuel=1)}})
+            for _ in range(3):
+                await _un_rappel({})
+        await _sequence()
+        v("échéancier en 3 fois : 3 rappels pour le 2e paiement", len(faux.Emails.appels) == 3)
+        r = await _un_rappel({"montant_encaisse": 300})
+        v("un acompte ne change pas le paiement : refus", r.status_code == 409 and r.json()["detail"]["type"] == "maximum_atteint", r.text)
+        await _sequence()
+        r = await _un_rappel({"suivi_paiement.paiement_actuel": 2})
+        v("rang avancé sans encaissement : identité incertaine, bloqué", r.status_code == 409 and r.json()["detail"]["type"] == "paiement_ambigu" and len(faux.Emails.appels) == 3, r.text)
+        r = await cl.get("/api/rappels-paiement/s1/apercu", headers=A)
+        v("le motif est affiché", r.json()["envoi"]["peut_envoyer"] is False and "même paiement" in r.json()["envoi"]["message"], r.text)
+        await _sequence()
+        r = await _un_rappel({"suivi_paiement.paiement_actuel": 2, "suivi_paiement.montant_total": 400, "montant_encaisse": 200.01})
+        v("rang avancé, total baissé, 1 centime : bloqué", r.status_code == 409 and r.json()["detail"]["type"] == "paiement_ambigu" and len(faux.Emails.appels) == 3, r.text)
+        await _sequence()
+        r = await _un_rappel({"suivi_paiement.paiement_actuel": 2, "montant_encaisse": 400})
+        v("rang avancé ET encaissement : nouveau paiement, nouveau compteur", r.status_code == 200 and len(faux.Emails.appels) == 4, r.text)
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", 4)})
+        v("il repart au 1er rappel de ce paiement", d["numero"] == 1 and d["paiement_numero"] == 3, d)
+        r = await _un_rappel({})
+        v("et son compteur tourne normalement", r.status_code == 200 and (await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1", 5)}))["numero"] == 2, r.text)
+        print("── DÉCISION 2 : échéancier en 4 fois, chaque part payée")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"montant_encaisse": 100, "suivi_paiement": suivi(montant_total=400, nb_paiements=4, paiement_actuel=1)}})
+        for nom, modif in (("2/4", {}), ("3/4", {"suivi_paiement.paiement_actuel": 2, "montant_encaisse": 200}), ("4/4", {"suivi_paiement.paiement_actuel": 3, "montant_encaisse": 300})):
+            r = await _un_rappel(modif)
+            v(f"rappel pour {nom} : parti, jamais de faux blocage", r.status_code == 200, r.text)
+        print("── DÉCISION 2 : le délai de 7 jours et les abonnements remplacés")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"suivi_paiement.prochaine_echeance": D(1)}})
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        v("date changée : les 7 jours restent", r.status_code == 409 and r.json()["detail"]["type"] == "deja_envoye" and len(faux.Emails.appels) == 1, r.text)
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        for _ in range(3):
+            await _un_rappel({})
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"status": "superseded"}})
+        await db.subscriptions.insert_one(abo(id="s1-copie"))
+        await db[rp.COL_RAPPELS].update_many({"subscription_id": "s1"}, {"$set": {"envoye_le": vieux}})
+        r = await cl.get("/api/rappels-paiement/s1-copie/apercu", headers=A)
+        v("abonnement recopié, même dette : le compteur suit la personne", r.json()["envoi"]["type"] == "maximum_atteint", r.text)
+        await db.subscriptions.update_one({"id": "s1-copie"}, {"$set": {"suivi_paiement.montant_total": 400.01}})
+        r = await cl.get("/api/rappels-paiement/s1-copie/apercu", headers=A)
+        v("recopié avec 1 centime d'écart : identité incertaine, bloqué", r.json()["envoi"]["type"] == "paiement_ambigu", r.text)
+        await db.subscriptions.update_one({"id": "s1-copie"}, {"$set": {"suivi_paiement.montant_total": 800, "montant_encaisse": 400}})
+        r = await cl.get("/api/rappels-paiement/s1-copie/apercu", headers=A)
+        v("autres montants, ancienne dette non soldée : bloqué", r.json()["envoi"]["type"] == "paiement_ambigu", r.text)
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"suivi_paiement.montant_total": 200}})
+        r = await cl.get("/api/rappels-paiement/s1-copie/apercu", headers=A)
+        v("baisser le total de l'ancien ne solde pas la dette : bloqué", r.json()["envoi"]["type"] == "paiement_ambigu", r.text)
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"status": "ACTIVE", "montant_encaisse": 400}})
+        r = await cl.get("/api/rappels-paiement/s1-copie/apercu", headers=A)
+        v("ancien abonnement soldé mais encore actif : bloqué", r.json()["possible"] is False and r.json()["motif"] == "plusieurs_abonnements", r.text)
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"status": "superseded", "montant_encaisse": 400}})
+        r = await cl.get("/api/rappels-paiement/s1-copie/apercu", headers=A)
+        v("ancien abonnement clos et soldé : paiement distinct", r.json()["envoi"]["peut_envoyer"] is True and r.json()["envoi"]["etape"] == "Rappel", r.text)
+        print("── Revue : l'historique suit le code et la plateforme")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        faux.Emails.reponse = TimeoutError()
+        ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        faux.Emails.reponse = None
+        n = len(faux.Emails.appels)
+        await db.discount_codes.insert_one({"id": "c-neuf", "code": "CODE-NEUF", "coach_id": ADMIN, "assignedEmail": ""})
+        await db.subscriptions.insert_one(abo(id="s-neuf", code="CODE-NEUF", coach_id=ADMIN))
+        ap = (await cl.get("/api/rappels-paiement/s-neuf/apercu", headers=A)).json()
+        v("nouveau code du super-admin, ancienne fiche sans propriétaire : toujours bloqué", ap["envoi"]["type"] == "incertain_bloque", ap["envoi"])
+        await db.subscriptions.update_one({"id": "s1"}, {"$set": {"status": "superseded"}})
+        await db.discount_codes.update_one({"id": "c1"}, {"$set": {"assignedEmail": ""}})
+        await db.subscriptions.insert_one(abo(id="s-autre-adresse", email="alias@example.test"))
+        ap = (await cl.get("/api/rappels-paiement/s-autre-adresse/apercu", headers=A)).json()
+        v("même code, nouvelle adresse : toujours bloqué", ap["envoi"]["type"] == "incertain_bloque", ap["envoi"])
+        print("── Revue : deux abonnements de la même personne, en même temps")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        faux.Emails.delai = 0.2
+        await db.discount_codes.insert_one({"id": "c-bis", "code": "CODE-BIS", "coach_id": "", "assignedEmail": ""})
+        await db.subscriptions.insert_one(abo(id="s-bis", code="CODE-BIS"))
+        a1 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        a2 = (await cl.get("/api/rappels-paiement/s-bis/apercu", headers=A)).json()
+        rs = await asyncio.gather(cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": a1["empreinte"]}),
+                                  cl.post("/api/rappels-paiement/s-bis/envoyer", headers=A, json={"confirmation": True, "empreinte": a2["empreinte"]}))
+        faux.Emails.delai = 0
+        v("au plus un message pour cette personne", len(faux.Emails.appels) <= 1, [x.status_code for x in rs])
+        v("aucune ligne ne reste « en cours »", await db[rp.COL_RAPPELS].count_documents({"statut": "en_cours"}) == 0)
+        print("── Contre-revue : un envoi tout juste terminé fait renoncer")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        _ctx_v = await rp._contexte("s1")
+        _pa = rp.paiement_attendu("s1", _ctx_v["sub"])
+        _ici = datetime.now(timezone.utc).isoformat()
+        await db[rp.COL_RAPPELS].insert_one({"_id": rp.cle_envoi("s-bis-x"), "subscription_id": "s-bis-x", "coach_id": "", "destinataire": "cliente@example.test", "palier": rp.PALIER_MANUEL, "rang": 1, "numero": 1, "statut": "envoye", "envoye_le": _ici, "encaisse_au_rappel": 200, "total_au_rappel": 400, "cree_le": _ici, "maj_le": _ici})
+        _mien = {"_id": rp.cle_envoi("s1"), "subscription_id": "s1", "coach_id": "", "destinataire": "cliente@example.test", "palier": rp.PALIER_MANUEL, "rang": 1, "statut": "en_cours", "tentatives": 1, "maj_le": _ici, "cree_le": _ici}
+        await db[rp.COL_RAPPELS].insert_one(_mien)
+        try:
+            await rp._seul_en_cours("s1", _mien, _ctx_v, datetime.now(timezone.utc), {"type": "en_cours", "message": "x"}, 7, _pa)
+            _renonce = False
+        except Exception as _x:
+            _renonce = getattr(_x, "status_code", 0) == 409
+        d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
+        v("renoncement, aucun appel, l'essai reste un échec", _renonce and d["statut"] == "echec" and d["erreur"] == "envoi_concurrent" and len(faux.Emails.appels) == 0, d)
+        print("── DÉCISION 2 : droits des partenaires")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        for _ in range(3):
+            await db[rp.COL_RAPPELS].update_many({"subscription_id": "s-lea", "statut": "envoye"}, {"$set": {"envoye_le": vieux}})
+            ap = (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()
+            await cl.post("/api/rappels-paiement/s-lea/envoyer", headers=P, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        await db[rp.COL_RAPPELS].update_many({"subscription_id": "s-lea", "statut": "envoye"}, {"$set": {"envoye_le": vieux}})
+        r = await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)
+        v("partenaire : 3 rappels, puis maximum", r.json()["envoi"]["type"] == "maximum_atteint" and len(faux.Emails.appels) == 3, r.text)
+        v("un autre coach ne voit ni le client ni le compteur", (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=O)).status_code == 404)
+        v("son propre client n'est pas touché", (await cl.get("/api/rappels-paiement/s-tom/apercu", headers=O)).json()["envoi"]["etape"] == "Rappel")
+        v("son historique reste vide", (await cl.get("/api/rappels-paiement/historique", headers=O)).json()["historique"] == [])
+
 
         print("── Section « Rappels de paiement »")
         await semer(db)

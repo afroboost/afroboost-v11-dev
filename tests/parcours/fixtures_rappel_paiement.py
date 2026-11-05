@@ -52,6 +52,7 @@ def nettoyer():
 
 def poser():
     nettoyer()
+    db.resend_quota.delete_many({})     # le quota simulé de la base de test : le banc se rejoue plusieurs fois par jour
     db.discount_codes.insert_many([_code("V648-NORMAL", "marie.fictive@example.test"), _code("V648-RETARD"), _code("V648-CASE"),
                                    _code("V648-STRIPE"), _code("V648-SANSMAIL")])
     db.subscriptions.insert_many([

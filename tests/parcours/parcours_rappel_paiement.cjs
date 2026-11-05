@@ -272,6 +272,9 @@ async function ouvrirSection(p) {
     await p.click(id('v648-verifier'));
     await p.waitForSelector(id('v648-preuve'));
     v('sans preuve : le blocage reste', /blocage reste/.test(await p.locator(id('v648-preuve')).textContent()));
+    await p.click(id('v648-verifier-absence'));
+    await p.waitForFunction(() => /couvre pas|Aucune trace|joignable/.test(document.querySelector('[data-testid="v648-preuve"]')?.textContent || ''), null, { timeout: 15000 });
+    v('absence non prouvable : le blocage reste', /blocage reste/.test(await p.locator(id('v648-preuve')).textContent()));
     v('vérifier n\'envoie aucun e-mail', rappelsEmails().length === avantV);
     await fermer(p);
     await ctx.close();

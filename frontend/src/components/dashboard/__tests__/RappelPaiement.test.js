@@ -33,7 +33,7 @@ const saisir = (el, v) => act(async () => {
   el.dispatchEvent(new Event('input', { bubbles: true }));
 });
 
-const ENVOI = { peut_envoyer: true, action: 'nouveau', etape: 'Rappel', confirmation_incertain: false, delai_jours: 7 };
+const ENVOI = { peut_envoyer: true, action: 'nouveau', etape: 'Rappel', delai_jours: 7 };
 const ligne = (k = {}) => ({
   subscription_id: 's1', code: 'CODE-1', nom: 'Marie', reste_a_payer: 200, devise: 'CHF', prochaine_echeance: '2026-11-05',
   en_retard: false, paiement_suivant: '2/2', possible: true, motif: null, message: '', verification_requise: false, envoi: ENVOI, ...k,
@@ -145,7 +145,7 @@ test("confirmé : le navigateur n'envoie que l'empreinte et la confirmation", as
   expect(axios.post).toHaveBeenCalledTimes(1);
   const [url, corps] = axios.post.mock.calls[0];
   expect(url).toContain('/rappels-paiement/s1/envoyer');
-  expect(corps).toEqual({ empreinte: 'emp1', confirmation: true, reprise_incertain: false });
+  expect(corps).toEqual({ empreinte: 'emp1', confirmation: true });
   expect((await attendre('v648-resultat')).textContent).toContain('Simulation');
 });
 
@@ -270,6 +270,26 @@ describe('envoi à vérifier', () => {
     expect((await attendre('v648-preuve')).textContent).toContain('Le blocage reste');
     expect($('v648-envoyer')).toBeNull();
   });
+
+  test('super-admin : la vérification d\'absence ne passe pas non plus par la route d\'envoi', async () => {
+    const A = { ...B, verification_admin: true };
+    brancher({ lignes: [ligne({ envoi: A })], apercu: { ...APERCU, envoi: A } });
+    axios.post.mockResolvedValue({ data: { resolu: false, message: 'Le blocage reste.' } });
+    await monter();
+    await clic(await attendre('v648-voir-CODE-1'));
+    await clic(await attendre('v648-verifier-absence'));
+    expect(axios.post.mock.calls[0][0]).toContain('/s1/verifier-envoi');
+    expect(axios.post.mock.calls[0][1]).toEqual({ verifier_absence: true });
+    expect($('v648-envoyer')).toBeNull();
+  });
+
+  test('aucune reprise proposée : la ligne n\'a que « Prévisualiser »', async () => {
+    brancher({ lignes: [ligne({ envoi: B })], apercu: { ...APERCU, envoi: B } });
+    await monter();
+    await attendre('v648-a-verifier-envoi-CODE-1');
+    expect($('v648-rappel-CODE-1')).toBeNull();
+    expect($('v648-voir-CODE-1')).toBeTruthy();
+  });
 });
 
 describe('signature du partenaire', () => {
@@ -299,20 +319,6 @@ describe('signature du partenaire', () => {
     await clic($('v648-signature-enregistrer'));
     expect((await attendre('v648-signature-apercu')).textContent).toContain('Coach partenaire');
   });
-});
-
-test('envoi incertain : le texte le dit, et la reprise le demande explicitement', async () => {
-  const I = { ...ENVOI, action: 'reprise', confirmation_incertain: true };
-  brancher({ lignes: [ligne({ envoi: I })], apercu: { ...APERCU, envoi: I } });
-  axios.post.mockResolvedValue({ data: { envoye: true, message: 'Rappel envoyé.' } });
-  await monter();
-  const b = await attendre('v648-rappel-CODE-1');
-  expect(b.textContent).toBe('Vérifier le rappel');
-  await clic(b);
-  expect(await attendre('v648-incertain')).toBeTruthy();
-  await clic($('v648-confirmation'));
-  await clic($('v648-envoyer'));
-  expect(axios.post.mock.calls[0][1].reprise_incertain).toBe(true);
 });
 
 test("refus du serveur : le message s'affiche et la confirmation est à refaire", async () => {
