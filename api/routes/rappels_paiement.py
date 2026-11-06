@@ -1270,6 +1270,15 @@ async def effacer_modele(request: Request):
 _appels_ia = {}
 
 
+def nettoyer_proposition(sujet, corps, sujet_coach) -> dict:
+    """PUR. Deux écarts sans risque, réparés plutôt que refusés : un objet vide garde celui du coach, et une
+    devise écrite après {montant} est retirée (le serveur l'y met déjà). Le reste passe par le contrôle habituel."""
+    _s = sujet.strip() if isinstance(sujet, str) else ""
+    _c = corps.strip() if isinstance(corps, str) else ""
+    _c = re.sub(r"(\{montant\})\s*(?:chf|eur|euros?|€|francs?(?:\s+suisses?)?|frs?\.?)(?!\w)", r"\1", _c, flags=re.IGNORECASE)
+    return {"sujet": _s or sujet_coach, "corps": _c}
+
+
 async def appeler_ia(systeme: str, texte: str) -> str:
     """Le même client OpenAI que le reste du site. Remplacé par un faux dans les tests."""
     from openai import OpenAI
@@ -1297,21 +1306,34 @@ async def aide_ia(demande: DemandeIA, request: Request):
     if len(_recents) >= IA_LIMITE_HEURE:
         raise HTTPException(status_code=429, detail={"type": "ia_limite", "message": "Trop de demandes : réessaie dans une heure."})
     _appels_ia[_email] = _recents + [datetime.now(timezone.utc).timestamp()]
+    # V653 : la consigne dit tout ce que le contrôle refuse, sinon l'IA écrit un texte normal que le contrôle rejette.
     _sys = ("Tu reformules en français un e-mail de rappel de paiement d'un coach de fitness à son membre. Ton : %s. Reste court et humain. "
             "Le solde peut déjà être réglé : n'accuse jamais, ne menace jamais, n'affirme pas que la personne n'a pas payé. "
-            "Garde exactement les variables {bonjour}, {montant} et {echeance}, sans les modifier ni en ajouter. N'écris aucun montant, date, lien, "
-            "numéro ou adresse. Pas de signature ni de formule de fin : elles sont ajoutées automatiquement. "
+            "OBJET : une seule ligne de texte simple, sans aucune variable ni accolade, sans chiffre. "
+            "MESSAGE : garde exactement {bonjour}, {montant} et {echeance}, une fois chacune, sans en ajouter. "
+            "{montant} contient déjà la devise : n'écris jamais CHF, francs ou un autre mot de devise. {echeance} contient déjà la date. "
+            "N'écris aucun chiffre, aucun nom de mois, aucun lien, aucun numéro, aucune adresse. "
+            "Pas de signature ni de formule de fin : elles sont ajoutées automatiquement. "
             'Réponds uniquement en JSON : {"sujet": "...", "corps": "..."}.' % TONS_IA[demande.ton])
-    try:
-        _brut = json.loads(await appeler_ia(_sys, json.dumps(_m, ensure_ascii=False)))
-        _prop = {"sujet": _brut.get("sujet"), "corps": _brut.get("corps")}
-    except Exception as _err:  # noqa: BLE001
-        logger.warning("[V650] aide IA : %s", type(_err).__name__)
-        raise HTTPException(status_code=502, detail={"type": "ia_erreur", "message": "L'aide IA n'a pas répondu. Ton texte n'a pas changé."})
-    _motif = motif_modele_refuse(_prop["sujet"], _prop["corps"])
-    if _motif:
-        raise HTTPException(status_code=502, detail={"type": "ia_refusee", "message": "La proposition n'a pas passé le contrôle. Ton texte n'a pas changé. (%s)" % _motif})
-    return {"proposition": {"sujet": _prop["sujet"].strip(), "corps": _prop["corps"].strip()}, "ton": demande.ton}
+    # L'objet RÉEL : `_modele_saisi` vide l'objet d'origine pour l'enregistrement, l'IA doit quand même le lire.
+    _sujet_reel = demande.sujet.strip()
+    _texte = json.dumps({"sujet": _sujet_reel, "corps": _m["corps"]}, ensure_ascii=False)
+    _motif = ""
+    for _essai in (1, 2):
+        _demande = _texte if not _motif else _texte + "\n\nTa proposition précédente a été refusée : " + _motif
+        try:
+            _brut = json.loads(await appeler_ia(_sys, _demande))
+            _prop = nettoyer_proposition(_brut.get("sujet"), _brut.get("corps"), _sujet_reel)
+        except Exception as _err:  # noqa: BLE001
+            # Le type et le code d'erreur seulement : jamais le texte, ni la réponse du fournisseur.
+            logger.warning("[V653] aide IA : erreur %s (statut %s, code %s, essai %d)", type(_err).__name__, getattr(_err, "status_code", "-"), getattr(_err, "code", "-"), _essai)
+            raise HTTPException(status_code=503, detail={"type": "ia_erreur", "message": "L'aide IA n'a pas répondu. Ton texte n'a pas changé."})
+        _motif = motif_modele_refuse(_prop["sujet"], _prop["corps"])
+        if not _motif:
+            return {"proposition": _prop, "ton": demande.ton}
+        # Le motif vient de nos règles : il ne contient aucun texte du coach.
+        logger.warning("[V653] aide IA : proposition refusée (essai %d) : %s", _essai, _motif)
+    raise HTTPException(status_code=422, detail={"type": "ia_refusee", "message": "La proposition n'a pas passé le contrôle. Ton texte n'a pas changé. (%s)" % _motif})
 
 
 @router.put("/api/rappels-paiement/signature")
@@ -1773,16 +1795,17 @@ async def _executer_envoi(sub_id: str, _ctx: dict, _v: dict, _msg: dict, _emp: s
         _issue = classer_erreur(_err)
         logger.warning("[V648] envoi %s : %s", _issue, type(_err).__name__)
         _ecrit = await _clore_sans_succes(_doc, _issue, type(_err).__name__)
+        # V653 : 503 et non 502, que Cloudflare remplace par sa page, sans le message du serveur.
         if _issue == "incertain" or not _ecrit:
-            raise HTTPException(status_code=502, detail=_msg_incertain)
+            raise HTTPException(status_code=503, detail=_msg_incertain)
         # Quota, clé refusée, trop de demandes : tous les clients suivants échoueraient aussi.
-        raise HTTPException(status_code=502, detail={"type": "echec", "message": "L'envoi a été refusé : aucun message n'est parti.",
+        raise HTTPException(status_code=503, detail={"type": "echec", "message": "L'envoi a été refusé : aucun message n'est parti.",
                                                      "general": isinstance(_err, _rc.QuotaResendAtteint) or str(getattr(_err, "code", "")) in ("401", "403", "429")})
 
     _rid = _brut.get("id") if isinstance(_brut, dict) else getattr(_brut, "id", None)
     if not _rid:
         await _clore_sans_succes(_doc, "incertain", "sans_identifiant")
-        raise HTTPException(status_code=502, detail=_msg_incertain)
+        raise HTTPException(status_code=503, detail=_msg_incertain)
     # Un succès reste un fait, même tardif : seule la clé compte, et un envoi déjà confirmé ne bouge plus.
     _fin = datetime.now(timezone.utc).isoformat()
     await db[COL_RAPPELS].update_one({"_id": _cle, "idempotency_key": _doc["idempotency_key"], "statut": {"$ne": "envoye"}}, {
