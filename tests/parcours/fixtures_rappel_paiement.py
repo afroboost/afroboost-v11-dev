@@ -79,6 +79,9 @@ elif action == "envoi":
     db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_ENVOI_REEL": sys.argv[2] == "on"}}, upsert=True)
 elif action == "auto":
     db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_AUTO_ACTIF": sys.argv[2] == "on"}}, upsert=True)
+elif action == "abo":          # V654 : l'état financier d'un abonnement, pour prouver qu'il ne bouge pas
+    _d = db.subscriptions.find_one({"code": sys.argv[2]}, {"_id": 0, "status": 1, "montant_encaisse": 1, "suivi_paiement": 1})
+    print(json.dumps(_d, sort_keys=True))
 elif action == "inactif":      # V652 : un abonnement résilié, avec un solde
     db.discount_codes.insert_one(_code("V652-RESILIE"))
     db.subscriptions.insert_one(_abo("V652-RESILIE", "Rita Fictive", "rita.fictive@example.test", status="cancelled"))

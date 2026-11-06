@@ -113,7 +113,7 @@ COL_EXCLUSIONS = "rappels_paiement_exclusions"     # V652 : un membre exclu, par
 # V652 : un abonnement remplacé ou archivé n'est plus une dette à suivre. Tout autre statut non actif suspend les rappels.
 STATUTS_SANS_SUSPENSION = ("active", "superseded", "archived", "")
 MOTIF_ACTION_MAX = 200
-STATUTS_TRACE = ("annule_tous", "annule_tous_leve", "reprise")     # des décisions du coach, sans rang d'envoi
+STATUTS_TRACE = ("annule_tous", "annule_tous_leve", "reprise", "supprime")     # des décisions du coach, sans rang d'envoi
 DRAPEAU_ENVOI_REEL = "RAPPEL_PAIEMENT_ENVOI_REEL"
 DRAPEAU_AUTO = "RAPPEL_PAIEMENT_AUTO_ACTIF"
 DRAPEAU_TEST = "RAPPEL_PAIEMENT_TEST_CONTROLE"
@@ -188,6 +188,7 @@ MOTIFS = {
     "sans_email": "Aucune adresse e-mail valide sur l'abonnement.",
     "destinataire_ambigu": "L'adresse du code et celle de l'abonnement sont différentes.",
     "refus_email": "Cette personne a demandé à ne plus recevoir d'e-mails.",
+    "rappel_supprime": "Ce rappel a été supprimé : il ne sera plus envoyé pour ce paiement.",
     "membre_exclu": "Ce membre est exclu des rappels : aucun envoi manuel ni automatique.",
     "abonnement_suspendu": "Abonnement inactif : rappels suspendus. Le solde reste à traiter par le coach.",
     "signature_manquante": "Renseigne ta signature (nom et activité) dans « Rappels de paiement » : le message ne peut pas être signé.",
@@ -842,7 +843,24 @@ async def _jour_de_reprise(ctx: dict) -> str:
     return max(_jours)
 
 
+async def _suppression(ctx: dict) -> dict:
+    """V654 : ce rappel a-t-il été supprimé ? Vaut pour cet abonnement et son code, jamais pour les autres paiements
+    du membre : seul un paiement distinct prouvé rouvre une ligne. Relu à chaque appel, donc avant chaque envoi."""
+    _sub = ctx.get("sub") or {}
+    _ou = [{"subscription_id": _sub.get("id")}]
+    _code = str(_sub.get("code") or "").strip()
+    if _code:
+        _ou.append({"code": {"$regex": "^%s$" % re.escape(_code), "$options": "i"}, "coach_id": ctx.get("proprio", "")})
+    _paiement = paiement_attendu(_sub.get("id"), _sub)
+    async for _d in db[COL_RAPPELS].find({"statut": "supprime", "$or": _ou}):
+        if classer_paiement(_d, _paiement) != "distinct":
+            return _d
+    return None
+
+
 async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
+    if await _suppression(ctx):
+        return {"ok": False, "motif": "rappel_supprime", "message": MOTIFS["rappel_supprime"]}
     if (await _exclusion(ctx) or {}).get("actif") is True:
         return {"ok": False, "motif": "membre_exclu", "message": MOTIFS["membre_exclu"]}
     if abonnement_suspendu(ctx.get("sub")) and not ctx.get("actif_sur_code"):
@@ -1004,7 +1022,7 @@ async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> 
     _exclu = _v.get("motif") == "membre_exclu"
     _ligne["actions"] = {"annuler_un": bool(_dec) and (_dec["action"] != "refus" or (_dec.get("type") == "deja_envoye" and (_dec.get("numero_suivant") or 9) <= MAX_RAPPELS_PAR_ECHEANCE)),
                          "annuler_tous": bool(_dec) and _dec.get("type") != "annule_tous", "reprendre": bool(_dec) and _dec.get("type") == "annule_tous",
-                         "exclure": not _exclu, "reactiver": _exclu}
+                         "exclure": not _exclu, "reactiver": _exclu, "supprimer": True}
     return _ligne
 
 
@@ -1360,7 +1378,9 @@ async def liste_rappels(request: Request):
         # V652 : un abonnement inactif garde sa ligne, sauf si le même code a déjà un abonnement actif.
         if str(_ctx["sub"].get("status") or "").strip().lower() != "active" and (not abonnement_suspendu(_ctx["sub"]) or _ctx.get("actif_sur_code")):
             continue
-        _lignes.append(await _ligne_liste(_ctx, _maintenant, _admin))
+        _ligne = await _ligne_liste(_ctx, _maintenant, _admin)
+        if _ligne.get("motif") != "rappel_supprime":     # V654 : décision du serveur, durable, pas un masquage de l'écran
+            _lignes.append(_ligne)
     _lignes.sort(key=lambda x: (x.get("motif") == "abonnement_suspendu", x.get("prochaine_echeance") or "9999"))
     return {"lignes": _lignes[:SIMULATION_MAX], "envoi_reel": await _envoi_reel_autorise()}
 
@@ -1386,6 +1406,8 @@ async def simuler_automatique(request: Request):
         if not _acces(_ctx, _email, _admin):
             continue
         _v = await _verdict(_ctx, ignorer_fenetre=True)
+        if _v.get("motif") == "rappel_supprime":
+            continue
         _vue = suivi_paiement_lire(_ctx["sub"])
         _ech = _vue.get("prochaine_echeance")
         _exclu = _v.get("motif") if not _v["ok"] else ("suivi_incomplet" if _v.get("incomplet") else None)
@@ -1653,6 +1675,29 @@ async def reprendre_rappels(sub_id: str, corps: ActionRappel, request: Request):
         raise HTTPException(status_code=409, detail={"type": "pas_annule", "message": "Les rappels de ce paiement ne sont pas annulés."})
     _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), await _delai_relance(_ctx), _maintenant, _paiement)
     return {"repris": True, "message": "Rappels repris. Rien n'a été envoyé. " + (_dec.get("message") if _dec["action"] == "refus" else "Le prochain rappel suivra les règles habituelles.")}
+
+
+@router.post("/api/rappels-paiement/{sub_id}/supprimer")
+async def supprimer_rappel(sub_id: str, corps: ActionRappel, request: Request):
+    """Retire ce rappel de la liste et interdit qu'il soit recréé ou envoyé. Sans retour arrière à l'écran. N'envoie rien, et ne
+    touche ni à l'abonnement, ni au solde, ni aux transactions, ni aux preuves d'envoi. La décision reste à l'historique."""
+    _email, _admin, _ctx, _motif = await _contexte_action(sub_id, corps, request)
+    _maintenant = datetime.now(timezone.utc)
+    _iso = _maintenant.isoformat()
+    _deja = {"supprime": True, "deja": True, "message": "Ce rappel était déjà supprimé."}
+    if await _suppression(_ctx):
+        return _deja
+    _paiement = paiement_attendu(sub_id, _ctx["sub"])
+    _cle = "%s|supprime|%s|%s" % (sub_id, _paiement["numero"], _paiement["encaisse"])
+    try:
+        await db[COL_RAPPELS].insert_one(dict(_champs_annulation(sub_id, _ctx, _paiement, _email, _motif, _iso, "supprime"), _id=_cle, rang=0, cree_le=_iso))
+    except DuplicateKeyError:
+        return _deja
+    # Écrit D'ABORD, relu ENSUITE : un envoi qui n'a pas fait sa dernière vérification s'arrêtera. Celui qui l'a passée peut partir, et on le dit.
+    _engage = any(_statut_effectif(d, _maintenant) in ("en_cours", "incertain") for d in await _docs_abonnement(sub_id, _ctx))
+    return {"supprime": True, "envoi_engage": _engage,
+            "message": ("Rappel supprimé. Un envoi était déjà engagé : il a pu partir, vérifie l'historique." if _engage
+                        else "Rappel supprimé. L'abonnement et le solde ne changent pas.")}
 
 
 @router.post("/api/rappels-paiement/{sub_id}/exclure")
