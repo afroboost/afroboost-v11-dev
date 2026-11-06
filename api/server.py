@@ -2017,7 +2017,7 @@ class FeatureFlags(BaseModel):
     P1E_ESSAI_NON_RESERVE_ENVOI_REEL: bool = False
     P1E_TEST_CONTROLE: bool = False
     RAPPEL_PAIEMENT_ENVOI_REEL: bool = False   # V648 : faux = aucun e-mail, aucune écriture (simulation)
-    RAPPEL_PAIEMENT_TEST_CONTROLE: bool = False  # V650 : envoi réel vers les seules plus-adresses du super-admin
+    RAPPEL_PAIEMENT_TEST_CONTROLE: bool = False  # V651 : envoi réel vers une seule adresse, rangée en base
     RAPPEL_PAIEMENT_AUTO_ACTIF: bool = False   # V650 : faux = la boucle automatique ne fait rien
     # AUTO-PRESENCE PHASE 1 — l'oubli du scan ne bloque plus l'essai.
     # Meme double garde que P1-b/P1-d, mais le second drapeau ne parle pas

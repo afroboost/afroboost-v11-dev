@@ -507,11 +507,11 @@ async def tests_v650(db, cl, faux, A, P):
     v("aucun délai : fermé", rp.auto_doit_envoyer("2026-11-10", [], "2026-11-10") is False)
     v("après J+30 : fermé", rp.auto_doit_envoyer("2026-11-10", A3, "2026-12-11") is False)
     v("date illisible : fermé", rp.auto_doit_envoyer("x", A3, "2026-11-10") is False)
-    S = rp.SUPER_ADMIN_EMAIL.lower()
-    al, ad = S.split("@")
-    v("plus-adresse du super-admin : test", rp.adresse_de_test("%s+t@%s" % (al, ad)) is True)
-    for mauvais in (S, "%s+@%s" % (al, ad), "%s+t@evil.test" % al, "x+%s@%s" % (al, ad), "", None):
-        v(f"pas une adresse de test : {mauvais}", rp.adresse_de_test(mauvais) is False)
+    T1 = "testeur@example.test"
+    v("adresse exacte : acceptée", rp.adresse_de_test(T1, T1) is True)
+    v("casse et espaces sans effet", rp.adresse_de_test(" Testeur@Example.test ", T1) is True)
+    for mauvais, aut in (("testeur+x@example.test", T1), ("autre@example.test", T1), ("", T1), (None, T1), (T1, ""), (T1, None), ("", ""), ("x", "x")):
+        v(f"refusé : {mauvais} / {aut}", rp.adresse_de_test(mauvais, aut) is False)
 
     print("── V650 : passage automatique")
     _ouvert = rp.auto_heure_ouvree
@@ -524,12 +524,22 @@ async def tests_v650(db, cl, faux, A, P):
     await _drapeaux(db, DRAPEAU_AUTO=True, DRAPEAU_ENVOI_REEL=False)
     b = await rp.passage_automatique()
     v("automatique ouvert, envoi réel fermé : rien", b["envoyes"] == 0 and not faux.Emails.appels, b)
-    plus = "%s+rappel@%s" % (al, ad)
+    plus = T1
     await db.subscriptions.update_one({"id": "s1"}, {"$set": {"email": plus}})
     await db.discount_codes.update_one({"id": "c1"}, {"$set": {"assignedEmail": plus}})
     await _drapeaux(db, DRAPEAU_TEST=True)
     b = await rp.passage_automatique()
-    v("mode test : seule la plus-adresse reçoit", b["envoyes"] == 1 and [x[0]["to"] for x in faux.Emails.appels] == [[plus]], faux.Emails.appels)
+    v("mode test sans adresse rangée : personne", b["envoyes"] == 0 and not faux.Emails.appels, b)
+    await db[rp.COL_REGLAGES].insert_one({"_id": rp.ID_TEST_ADRESSE, "adresse": "autre@example.test"})
+    b = await rp.passage_automatique()
+    v("mode test, autre adresse rangée : personne", b["envoyes"] == 0 and not faux.Emails.appels, b)
+    _a = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+    r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": _a["empreinte"]})
+    v("mode test, envoi manuel vers une autre adresse : simulation", r.json().get("issue") == "simulation" and not faux.Emails.appels, r.text)
+    await db[rp.COL_REGLAGES].update_one({"_id": rp.ID_TEST_ADRESSE}, {"$set": {"adresse": T1}})
+    v("l'adresse de test n'apparaît pas dans les drapeaux publics", T1 not in json.dumps(await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0})))
+    b = await rp.passage_automatique()
+    v("mode test : seule l'adresse rangée reçoit", b["envoyes"] == 1 and [x[0]["to"] for x in faux.Emails.appels] == [[plus]], faux.Emails.appels)
     b = await rp.passage_automatique()
     v("mode test, second passage : aucun doublon", b["envoyes"] == 0 and len(faux.Emails.appels) == 1, b)
 
