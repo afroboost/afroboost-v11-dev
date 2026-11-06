@@ -48,6 +48,7 @@ def nettoyer():
     db.coach_sessions.delete_many({"_origine": ORIGINE})
     db.rappels_paiement.delete_many({})
     db.rappels_paiement_reglages.delete_many({})
+    db.rappels_paiement_exclusions.delete_many({})
     db.resend_envois.delete_many({"type_email": "rappel_paiement"})
     db.feature_flags.update_one({"id": "feature_flags"}, {"$unset": {"RAPPEL_PAIEMENT_ENVOI_REEL": "", "RAPPEL_PAIEMENT_AUTO_ACTIF": ""}})
 
@@ -78,6 +79,9 @@ elif action == "envoi":
     db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_ENVOI_REEL": sys.argv[2] == "on"}}, upsert=True)
 elif action == "auto":
     db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_AUTO_ACTIF": sys.argv[2] == "on"}}, upsert=True)
+elif action == "inactif":      # V652 : un abonnement résilié, avec un solde
+    db.discount_codes.insert_one(_code("V652-RESILIE"))
+    db.subscriptions.insert_one(_abo("V652-RESILIE", "Rita Fictive", "rita.fictive@example.test", status="cancelled"))
 elif action == "cible_auto":
     db.discount_codes.insert_one(_code("V650-AUTO"))
     db.subscriptions.insert_one(_abo("V650-AUTO", "Eva Fictive", "eva.auto@example.test"))

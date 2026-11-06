@@ -11,6 +11,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -29,6 +30,8 @@ export const LIBELLES_STATUT = {
   incertain: 'Envoi à vérifier : le message est peut-être parti',
   non_parti: 'Non parti : absence prouvée',
   en_cours: 'Envoi en cours',
+  annule: 'Annulé',
+  annule_tous: 'Rappels futurs annulés',
 };
 
 const STYLE_FENETRE = { background: 'var(--background-color, #0a0a0a)', borderColor: 'rgba(var(--primary-rgb, 217, 28, 210), 0.35)' };
@@ -47,7 +50,7 @@ function HistoriqueLignes({ lignes, avecCode = false }) {
   return (
     <ul className="space-y-2">
       {lignes.map((h) => (
-        <li key={`${h.code || ''}-${h.echeance}-${h.palier}-${h.rang}`} className="rounded-md px-3 py-2 text-xs text-white/80" style={STYLE_CARTE}>
+        <li key={`${h.code || ''}-${h.echeance}-${h.palier}-${h.rang}-${h.statut}`} className="rounded-md px-3 py-2 text-xs text-white/80" style={STYLE_CARTE}>
           <span className="font-semibold text-white">{h.etape}</span>
           {h.mode_envoi === 'automatique' && <span className="text-white/70" data-testid="v650-histo-auto"> · Automatique</span>}
           {avecCode && h.code && <span className="text-white/40 font-mono"> {h.code}</span>}
@@ -57,6 +60,7 @@ function HistoriqueLignes({ lignes, avecCode = false }) {
           {' · '}{montant(h.montant, h.devise)} · échéance {dateCH(h.echeance)}
           <br />
           <span className="text-white/50 break-all">Par {h.envoye_par}</span>
+          {h.motif_action && <span className="text-white/50 break-words" data-testid="v652-histo-motif"> · {h.motif_action}</span>}
         </li>
       ))}
     </ul>
@@ -569,8 +573,105 @@ function libelleEnvoi(etat) {
   return etat.etape === 'Rappel' ? 'Envoyer le rappel' : 'Envoyer la relance';
 }
 
-function LigneRappel({ ligne, onOuvrir }) {
+/** V652 : ce que le coach peut décider sur une ligne. Le serveur redécide à chaque action. */
+const ACTIONS_MEMBRE = {
+  annuler_un: {
+    titre: 'Annuler ce rappel', url: 'annuler', portee: 'un', confirmer: 'Annuler ce rappel',
+    texte: "Ce rappel ne partira pas et ne sera pas recréé. Le suivant reste possible après le délai. Le solde ne change pas.",
+  },
+  annuler_tous: {
+    titre: 'Annuler les rappels futurs', url: 'annuler', portee: 'tous', confirmer: 'Annuler les rappels futurs',
+    texte: "Plus aucun rappel pour ce paiement, ni manuel ni automatique. Le solde ne change pas. Cette annulation n'est pas réversible.",
+  },
+  exclure: {
+    titre: 'Exclure ce membre', url: 'exclure', confirmer: 'Exclure ce membre',
+    texte: "Plus aucun rappel pour ce membre, ni manuel ni automatique, même si un solde reste affiché. Son compte, son abonnement et son solde ne changent pas.",
+  },
+  reactiver: {
+    titre: 'Réactiver les rappels', url: 'reactiver', confirmer: 'Réactiver les rappels',
+    texte: "Rien n'est renvoyé maintenant. L'automatique reprend seulement aux échéances à partir d'aujourd'hui.",
+  },
+};
+
+function MenuLigne({ ligne, onAction }) {
+  const [ouvert, setOuvert] = useState(false);
+  const permis = Object.keys(ACTIONS_MEMBRE).filter((k) => ligne.actions?.[k]);
+  if (!permis.length) return null;
+  return (
+    <PopoverPrimitive.Root open={ouvert} onOpenChange={setOuvert}>
+      <PopoverPrimitive.Trigger asChild>
+        <button type="button" aria-label={`Plus d'actions pour ${ligne.nom || ligne.code}`} data-testid={`v652-menu-${ligne.code}`}
+          className="ml-auto w-8 h-8 inline-flex items-center justify-center rounded-md text-white/60 hover:text-white">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
+          </svg>
+        </button>
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content align="end" sideOffset={4} data-testid={`v652-menu-contenu-${ligne.code}`}
+          className="z-50 min-w-[220px] rounded-md p-1 outline-none" style={{ ...STYLE_FENETRE, border: '1px solid rgba(255,255,255,0.15)' }}>
+          {permis.map((k) => (
+            <button key={k} type="button" data-testid={`v652-action-${k}-${ligne.code}`}
+              onClick={() => { setOuvert(false); onAction(ligne, k); }}
+              className="block w-full text-left px-3 py-2 rounded text-xs text-white/90 hover:bg-white/10">
+              {ACTIONS_MEMBRE[k].titre}
+            </button>
+          ))}
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
+  );
+}
+
+function ConfirmerAction({ cible, onFermer, onFait }) {
+  const action = cible ? ACTIONS_MEMBRE[cible.action] : null;
+  const [motif, setMotif] = useState('');
+  const [attente, setAttente] = useState(false);
+  const [erreur, setErreur] = useState('');
+
+  useEffect(() => { setMotif(''); setErreur(''); setAttente(false); }, [cible]);
+
+  const confirmer = async () => {
+    setAttente(true); setErreur('');
+    try {
+      const corps = { confirmation: true };
+      if (action.portee) corps.portee = action.portee;
+      if (action.portee === 'un') corps.numero = cible.ligne.envoi?.numero ?? cible.ligne.numero_rappel;
+      if (motif.trim()) corps.motif = motif.trim();
+      const r = await axios.post(`${API}/${encodeURIComponent(cible.ligne.subscription_id)}/${action.url}`, corps);
+      onFait(r.data?.message || 'Enregistré.');
+    } catch (e) {
+      setErreur(detailErreur(e, "L'action n'a pas été enregistrée.").message);
+      setAttente(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!cible} onOpenChange={(o) => { if (!o) onFermer(); }}>
+      <DialogContent className={CLASSE_FENETRE} style={STYLE_FENETRE} data-testid="v652-confirmer">
+        <DialogHeader>
+          <DialogTitle className="text-left">{action?.titre}</DialogTitle>
+          <DialogDescription className="text-left text-white/60">{cible?.ligne.nom || cible?.ligne.code}</DialogDescription>
+        </DialogHeader>
+        <p className="text-sm text-white/90">{action?.texte}</p>
+        <label className="block text-xs text-white/80">
+          Motif (facultatif)
+          <input type="text" maxLength={200} value={motif} onChange={(e) => setMotif(e.target.value)}
+            className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v652-motif" />
+        </label>
+        {erreur && <p className="text-sm text-red-400" data-testid="v652-erreur">{erreur}</p>}
+        <button type="button" disabled={attente} onClick={confirmer} data-testid="v652-confirmer-action"
+          className="w-full py-2 rounded-md text-sm font-semibold disabled:opacity-40" style={STYLE_BORD}>
+          {attente ? 'Enregistrement…' : action?.confirmer}
+        </button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LigneRappel({ ligne, onOuvrir, onAction }) {
   const etat = ligne.envoi;
+  const statut = ligne.statut_rappel;
   return (
     <li data-testid={`v648-ligne-${ligne.code}`} className="text-xs rounded-md px-3 py-2" style={STYLE_CARTE}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -584,6 +685,13 @@ function LigneRappel({ ligne, onOuvrir }) {
           {ligne.en_retard ? 'En retard — échéance ' : 'Échéance : '}{dateCH(ligne.prochaine_echeance)}
         </span>
         <span className="text-white/40 font-mono">{ligne.code}</span>
+        {statut && (
+          <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold text-white" data-testid={`v652-statut-${ligne.code}`}
+            style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.2)' }}>
+            {statut.libelle}{statut.date ? ` ${dateCH(statut.date)}` : ''}
+          </span>
+        )}
+        <MenuLigne ligne={ligne} onAction={onAction} />
       </div>
       {!ligne.possible && (
         <p className="text-white/60 mt-2" data-testid={`v648-bloque-${ligne.code}`}>{ligne.message}</p>
@@ -627,6 +735,8 @@ export default function RappelsPaiementSection() {
   const [enregistre, setEnregistre] = useState(false);
   const [cible, setCible] = useState(null);
   const [envoiDemande, setEnvoiDemande] = useState(false);
+  const [action, setAction] = useState(null);
+  const [noteAction, setNoteAction] = useState('');
 
   const relire = useCallback(() => {
     axios.get(`${API}/liste`)
@@ -697,10 +807,12 @@ export default function RappelsPaiementSection() {
           <ul className="space-y-2" data-testid="v648-liste">
             {lignes.map((l) => (
               <LigneRappel key={l.subscription_id} ligne={l}
-                onOuvrir={(ligne, envoi) => { setEnvoiDemande(envoi); setCible(ligne); }} />
+                onOuvrir={(ligne, envoi) => { setEnvoiDemande(envoi); setCible(ligne); }}
+                onAction={(ligne, nom) => { setNoteAction(''); setAction({ ligne, action: nom }); }} />
             ))}
           </ul>
         )}
+        {noteAction && <p className="text-xs text-white mt-2" data-testid="v652-note">{noteAction}</p>}
         <p className="text-white/40 text-[11px] mt-2">
           Solde calculé depuis tes saisies, ce n'est pas une preuve de non-paiement. Rien n'est prélevé.
         </p>
@@ -717,6 +829,8 @@ export default function RappelsPaiementSection() {
 
       <RappelPaiementDialog rappel={cible} envoiDemande={envoiDemande} ouvert={!!cible}
         onFermer={() => setCible(null)} onEnvoye={relire} />
+      <ConfirmerAction cible={action} onFermer={() => setAction(null)}
+        onFait={(message) => { setAction(null); setNoteAction(message); relire(); }} />
     </div>
   );
 }

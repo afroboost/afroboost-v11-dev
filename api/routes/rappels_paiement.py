@@ -109,6 +109,10 @@ _refus_email = None
 
 COL_RAPPELS = "rappels_paiement"
 COL_REGLAGES = "rappels_paiement_reglages"
+COL_EXCLUSIONS = "rappels_paiement_exclusions"     # V652 : un membre exclu, par coach. Jamais supprimé, seulement réactivé
+# V652 : un abonnement remplacé ou archivé n'est plus une dette à suivre. Tout autre statut non actif suspend les rappels.
+STATUTS_SANS_SUSPENSION = ("active", "superseded", "archived", "")
+MOTIF_ACTION_MAX = 200
 DRAPEAU_ENVOI_REEL = "RAPPEL_PAIEMENT_ENVOI_REEL"
 DRAPEAU_AUTO = "RAPPEL_PAIEMENT_AUTO_ACTIF"
 DRAPEAU_TEST = "RAPPEL_PAIEMENT_TEST_CONTROLE"
@@ -183,6 +187,8 @@ MOTIFS = {
     "sans_email": "Aucune adresse e-mail valide sur l'abonnement.",
     "destinataire_ambigu": "L'adresse du code et celle de l'abonnement sont différentes.",
     "refus_email": "Cette personne a demandé à ne plus recevoir d'e-mails.",
+    "membre_exclu": "Ce membre est exclu des rappels : aucun envoi manuel ni automatique.",
+    "abonnement_suspendu": "Abonnement inactif : rappels suspendus. Le solde reste à traiter par le coach.",
     "signature_manquante": "Renseigne ta signature (nom et activité) dans « Rappels de paiement » : le message ne peut pas être signé.",
 }
 AVERTISSEMENT_CASE = ("La case « paiement en plusieurs fois » n'est pas cochée alors qu'un solde reste affiché. "
@@ -390,6 +396,11 @@ def classer_paiement(doc, paiement) -> str:
     return "distinct" if _e - _e0 >= (_n - _n0) * _part - 0.005 else "ambigu"
 
 
+def _date_effet(doc):
+    """PUR. La date qui fait courir le délai : l'envoi réel, ou la date retenue pour un rappel annulé."""
+    return _instant(doc.get("envoye_le") or doc.get("effet_le"))
+
+
 def decision_relance(docs, delai_jours, maintenant, paiement=None) -> dict:
     """PUR. Que permet l'historique de cette personne chez ce coach ? Une seule règle, pour l'écran et l'envoi.
 
@@ -403,27 +414,36 @@ def decision_relance(docs, delai_jours, maintenant, paiement=None) -> dict:
     for _d in docs:
         if _statut_effectif(_d, maintenant) == "en_cours":
             return _refus("en_cours", _d, message=MSG_EN_COURS)
-    _partis = [d for d in docs if d.get("statut") == "envoye"]
+    # V652 : « annuler les rappels futurs » tient tant qu'un paiement distinct n'est pas prouvé. Le doute garde le blocage.
+    for _d in docs:
+        if _d.get("statut") == "annule_tous" and (not paiement or classer_paiement(_d, paiement) != "distinct"):
+            return _refus("annule_tous", _d, message="Rappels annulés pour ce paiement.")
+    # V652 : un rappel annulé consomme sa place : il ne revient pas, et le suivant attend le délai à partir de sa date.
+    _partis = [d for d in docs if d.get("statut") in ("envoye", "annule")]
     _compte = 0
     for _d in _partis:
         _c = classer_paiement(_d, paiement) if paiement else "meme"
         if _c == "ambigu":
-            return _refus("paiement_ambigu", _d, message="Impossible de savoir s'il s'agit du même paiement : vérifie l'échéancier et le montant encaissé. Le compteur n'est pas remis à zéro.")
+            return _refus("paiement_ambigu", _d, message="Impossible de savoir s'il s'agit du même paiement : vérifie l'échéancier et le montant encaissé. Aucun rappel possible.")
         if _c == "meme":
             _compte += 1
     if _compte >= MAX_RAPPELS_PAR_ECHEANCE:
         return _refus("maximum_atteint", _partis[-1], message="Maximum de %d rappels atteint pour ce paiement." % MAX_RAPPELS_PAR_ECHEANCE)
-    _dates = [_instant(d.get("envoye_le")) for d in _partis]
+    _dates = [_date_effet(d) for d in _partis]
     if any(x is None for x in _dates):
-        return _refus_incertain(next(d for d in _partis if _instant(d.get("envoye_le")) is None))
+        return _refus_incertain(next(d for d in _partis if _date_effet(d) is None))
+    _ici = [d for d in docs if d.get("statut") != "annule_tous" and (not paiement or d.get("subscription_id") == paiement.get("sub"))]
+    _der = max(_ici, key=lambda d: int(d.get("rang") or 1)) if _ici else None
+    _rang_suivant = int((_der or {}).get("rang") or 0) + 1
     if _dates and maintenant < max(_dates) + _delai:
         _proch = max(_dates) + _delai
-        return _refus("deja_envoye", _partis[_dates.index(max(_dates))], prochaine=_proch, message="Déjà envoyé. Relance possible le %s." % _date_ch(_proch.isoformat()))
-    _ici = [d for d in docs if not paiement or d.get("subscription_id") == paiement.get("sub")]
-    _der = max(_ici, key=lambda d: int(d.get("rang") or 1)) if _ici else None
+        _dernier = _partis[_dates.index(max(_dates))]
+        _texte = "Rappel annulé. Prochain rappel possible le %s." if _dernier.get("statut") == "annule" else "Déjà envoyé. Relance possible le %s."
+        return dict(_refus("deja_envoye", _dernier, prochaine=_proch, message=_texte % _date_ch(_proch.isoformat())),
+                    numero_suivant=_compte + 1, rang_suivant=_rang_suivant)
     if _der is not None and _der.get("statut") == "echec":
         return {"action": "reessai", "rang": int(_der.get("rang") or 1), "numero": _compte + 1, "doc": _der}
-    return {"action": "nouveau", "rang": int((_der or {}).get("rang") or 0) + 1, "numero": _compte + 1}
+    return {"action": "nouveau", "rang": _rang_suivant, "numero": _compte + 1}
 
 
 def etat_decision(decision) -> str:
@@ -789,10 +809,36 @@ async def _contexte(sub_id: str) -> dict:
     _proprio = str((_code or {}).get("coach_id") or "").strip().lower()
     _reg = await db[COL_REGLAGES].find_one({"_id": _cle_reglages(_proprio)}, {"signature": 1, "modele": 1}) or {}
     return {"sub": _sub, "code": _code, "motif_abo": _motif, "codes_trouves": len(_codes), "codes": _codes,
+            "actif_sur_code": any(str(x.get("status") or "").strip().lower() == "active" for x in _tous),
             "proprio": _proprio, "signature": None if _proprio in COACHS_BASSI else _reg.get("signature"), "modele": _reg.get("modele")}
 
 
+def cle_membre(proprio, sub, code_doc=None) -> list:
+    """PUR. Les clés d'exclusion de ce membre chez ce coach : ses adresses, sinon son code."""
+    _coach = _cle_reglages(str(proprio or "").strip().lower())
+    _mails = [str(x or "").strip().lower() for x in ((sub or {}).get("email"), (code_doc or {}).get("assignedEmail"))]
+    _mails = [m for m in dict.fromkeys(_mails) if m]
+    _qui = _mails or ["code:%s" % str((sub or {}).get("code") or "").strip().upper()]
+    return ["%s|%s" % (_coach, q) for q in _qui]
+
+
+def abonnement_suspendu(sub) -> bool:
+    """PUR. Inactif, résilié, expiré ou épuisé : les rappels s'arrêtent, le solde reste."""
+    return str((sub or {}).get("status") or "").strip().lower() not in STATUTS_SANS_SUSPENSION
+
+
+async def _exclusion(ctx: dict) -> dict:
+    """La fiche d'exclusion de ce membre chez ce coach, active ou réactivée. Relue à chaque appel."""
+    _cles = cle_membre(ctx.get("proprio"), ctx.get("sub"), ctx.get("code"))
+    _docs = await db[COL_EXCLUSIONS].find({"_id": {"$in": _cles}}).to_list(5)
+    return next((d for d in _docs if d.get("actif") is True), None) or (_docs[0] if _docs else None)
+
+
 async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
+    if (await _exclusion(ctx) or {}).get("actif") is True:
+        return {"ok": False, "motif": "membre_exclu", "message": MOTIFS["membre_exclu"]}
+    if abonnement_suspendu(ctx.get("sub")) and not ctx.get("actif_sur_code"):
+        return {"ok": False, "motif": "abonnement_suspendu", "message": MOTIFS["abonnement_suspendu"]}
     if ctx.get("codes_trouves", 0) > 1:
         return {"ok": False, "motif": "code_ambigu", "message": MOTIFS["code_ambigu"]}
     _v = eligibilite(ctx.get("sub"), ctx.get("code"), ctx.get("motif_abo"),
@@ -876,6 +922,7 @@ def _vue_envoi(decision: dict, delai: int, admin: bool = False) -> dict:
     _verif = decision.get("type") == "incertain_bloque"
     return {"peut_envoyer": _a != "refus", "action": _a, "type": decision.get("type"),
             "etape": etape_du_rang(decision.get("numero") or decision.get("rang")), "prochaine_le": decision.get("prochaine_le"),
+            "numero": decision.get("numero") or decision.get("numero_suivant"),
             "message": decision.get("message", ""), "delai_jours": delai, "a_verifier": _verif, "verification_admin": _verif and admin}
 
 
@@ -885,12 +932,31 @@ def _ligne_historique(doc) -> dict:
             "devise": doc.get("devise"), "destinataire": doc.get("destinataire"), "envoye_le": doc.get("envoye_le"),
             "maj_le": doc.get("maj_le"), "envoye_par": doc.get("envoye_par"), "tentatives": doc.get("tentatives"),
             "mode_envoi": doc.get("mode_envoi") or "manuel", "sujet": doc.get("sujet"),
-            "montant_confirme": doc.get("montant_confirme")}
+            "montant_confirme": doc.get("montant_confirme"), "motif_action": doc.get("motif_action"), "annule_le": doc.get("annule_le")}
 
 
 async def _historique(sub_id: str) -> list:
     _docs = await db[COL_RAPPELS].find({"subscription_id": sub_id}).sort([("cree_le", -1), ("rang", -1)]).to_list(100)
     return [_ligne_historique(d) for d in _docs]
+
+
+def statut_affiche(verdict, decision, programme_le=None):
+    """PUR. Programmé, Envoyé, Annulé, Suspendu ou Exclu ; rien si la ligne attend simplement le coach."""
+    _m = (verdict or {}).get("motif")
+    if _m == "membre_exclu":
+        return {"code": "exclu", "libelle": "Exclu"}
+    if _m == "abonnement_suspendu":
+        return {"code": "suspendu", "libelle": "Suspendu"}
+    _d = decision or {}
+    if _d.get("type") == "annule_tous":
+        return {"code": "annule", "libelle": "Annulé"}
+    if _d.get("type") in ("deja_envoye", "maximum_atteint"):
+        if (_d.get("doc") or {}).get("statut") == "annule":
+            return {"code": "annule", "libelle": "Annulé"}
+        return {"code": "envoye", "libelle": "Envoyé"}
+    if programme_le:
+        return {"code": "programme", "libelle": "Programmé", "date": programme_le}
+    return None
 
 
 async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> dict:
@@ -907,9 +973,29 @@ async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> 
               "paiement_suivant": ("%d/%d" % (_act + 1, _nb)) if _nb and _act and _act < _nb else None,
               "mode_paiement": classer_mode_paiement(_sub)["libelle"], "possible": bool(_v["ok"]), "motif": _v.get("motif"), "message": _v.get("message", ""),
               "verification_requise": bool(_v.get("verification_requise")), "envoi": None}
-    if _v["ok"]:
+    _dec = None
+    # Une échéance lointaine n'est pas encore envoyable à la main, mais son rappel automatique peut déjà être annulé.
+    _va = await _verdict(ctx, maintenant, ignorer_fenetre=True) if _v.get("motif") == "hors_fenetre" else _v
+    if _va["ok"]:
         _delai = await _delai_relance(ctx)
-        _ligne["envoi"] = _vue_envoi(decision_relance(await _docs_abonnement(_sid, ctx), _delai, maintenant, paiement_attendu(_sid, _sub)), _delai, admin)
+        _dec = decision_relance(await _docs_abonnement(_sid, ctx), _delai, maintenant, paiement_attendu(_sid, _sub))
+    if _v["ok"]:
+        _ligne["envoi"] = _vue_envoi(_dec, _delai, admin)
+    # V652 : le statut affiché et ce que le menu « ⋯ » peut proposer. Les routes redécident de toute façon.
+    _reg = await db[COL_REGLAGES].find_one({"_id": _cle_reglages(ctx.get("proprio"))}, {"mode": 1, "delais": 1, "auto_actif_depuis": 1}) or {}
+    _auto = _reg.get("mode") == MODE_AUTOMATIQUE and await _drapeau(DRAPEAU_AUTO)
+    _jalons = []
+    _reprise = str((await _exclusion(ctx) or {}).get("reprise_jour") or "")
+    if _auto and _dec and _dec["action"] != "refus" and not _va.get("incomplet") and _ech and _ech >= max(str(_reg.get("auto_actif_depuis") or "9999"), _reprise):
+        try:
+            _jalons = jalons_simulation(_ech, delais_du_reglage(_reg), maintenant, _delai)
+        except ValueError:
+            _jalons = []
+    _ligne["numero_rappel"] = (_dec or {}).get("numero") or (_dec or {}).get("numero_suivant")
+    _ligne["statut_rappel"] = statut_affiche(_va, _dec, _jalons[0]["date"] if _jalons else None)
+    _exclu = _v.get("motif") == "membre_exclu"
+    _ligne["actions"] = {"annuler_un": bool(_dec) and (_dec["action"] != "refus" or (_dec.get("type") == "deja_envoye" and (_dec.get("numero_suivant") or 9) <= MAX_RAPPELS_PAR_ECHEANCE)),
+                         "annuler_tous": bool(_dec) and _dec.get("type") != "annule_tous", "exclure": not _exclu, "reactiver": _exclu}
     return _ligne
 
 
@@ -1256,14 +1342,17 @@ async def liste_rappels(request: Request):
     _email, _admin = await _exiger_coach(request)
     _maintenant = datetime.now(timezone.utc)
     _lignes = []
-    async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": "active"}, {"_id": 0, "id": 1}):
+    async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": {"$nin": ["superseded", "archived"]}}, {"_id": 0, "id": 1}):
         _ctx = await _contexte(_s.get("id"))
         if not _acces(_ctx, _email, _admin):
             continue
         if (suivi_paiement_lire(_ctx["sub"]).get("reste_a_payer") or 0) <= 0:
             continue
+        # V652 : un abonnement inactif garde sa ligne, sauf si le même code a déjà un abonnement actif.
+        if str(_ctx["sub"].get("status") or "").strip().lower() != "active" and (not abonnement_suspendu(_ctx["sub"]) or _ctx.get("actif_sur_code")):
+            continue
         _lignes.append(await _ligne_liste(_ctx, _maintenant, _admin))
-    _lignes.sort(key=lambda x: x.get("prochaine_echeance") or "9999")
+    _lignes.sort(key=lambda x: (x.get("motif") == "abonnement_suspendu", x.get("prochaine_echeance") or "9999"))
     return {"lignes": _lignes[:SIMULATION_MAX], "envoi_reel": await _envoi_reel_autorise()}
 
 
@@ -1292,7 +1381,8 @@ async def simuler_automatique(request: Request):
         _ech = _vue.get("prochaine_echeance")
         _exclu = _v.get("motif") if not _v["ok"] else ("suivi_incomplet" if _v.get("incomplet") else None)
         _depuis = _reg.get("auto_actif_depuis")
-        if _exclu is None and _depuis and _ech and _ech < _depuis:
+        _reprise = str((await _exclusion(_ctx) or {}).get("reprise_jour") or "")
+        if _exclu is None and _ech and ((_depuis and _ech < _depuis) or _ech < _reprise):
             _exclu = "echeance_ancienne"
         _jalons, _msg_dec = [], ""
         if _ech and (_v["ok"] or _v.get("motif") != "suivi_incoherent"):
@@ -1304,7 +1394,7 @@ async def simuler_automatique(request: Request):
             else:
                 try:
                     _jalons = jalons_simulation(_ech, _delais, delai_jours=await _delai_relance(_ctx), prochaine=_dec.get("prochaine_le"),
-                                                envoyes=sum(1 for d in _docs if d.get("statut") == "envoye" and classer_paiement(d, _paie) == "meme"))
+                                                envoyes=sum(1 for d in _docs if d.get("statut") in ("envoye", "annule") and classer_paiement(d, _paie) == "meme"))
                 except ValueError:
                     _jalons = []
         _lignes.append({"code": _ctx["sub"].get("code"), "nom": _ctx["sub"].get("name") or "",
@@ -1444,6 +1534,122 @@ async def verifier_envoi(sub_id: str, corps: PreuveEnvoi, request: Request):
     return {"resolu": True, "message": "Preuve reçue : cet envoi est bien parti. Aucun message n'a été envoyé." + _note}
 
 
+class ActionRappel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    confirmation: bool = False
+    portee: str = ""        # annuler : `un` ou `tous`
+    numero: object = None   # annuler `un` : le rappel que le coach voyait
+    motif: object = None
+
+
+def _motif_action(valeur) -> str:
+    if valeur is None:
+        return ""
+    if not isinstance(valeur, str) or len(valeur.strip()) > MOTIF_ACTION_MAX:
+        raise HTTPException(status_code=400, detail={"type": "motif_refuse", "message": "Motif : %d caractères au plus." % MOTIF_ACTION_MAX})
+    return valeur.strip()
+
+
+async def _contexte_action(sub_id: str, corps: ActionRappel, request: Request):
+    """La porte commune : jeton signé, confirmation, puis droits. 404 sur le client d'un autre coach."""
+    _email, _admin = await _exiger_coach(request)
+    if corps.confirmation is not True:
+        raise HTTPException(status_code=400, detail={"type": "confirmation", "message": "Confirmation du coach requise."})
+    _motif = _motif_action(corps.motif)
+    _ctx = await _contexte(sub_id)
+    if not _acces(_ctx, _email, _admin):
+        raise HTTPException(status_code=404, detail="Abonnement introuvable.")
+    return _email, _admin, _ctx, _motif
+
+
+def _champs_annulation(sub_id: str, ctx: dict, paiement: dict, par: str, motif: str, quand: str, statut: str) -> dict:
+    _vue = suivi_paiement_lire(ctx["sub"])
+    return {"subscription_id": sub_id, "code": ctx["sub"].get("code"), "coach_id": ctx.get("proprio", ""), "palier": PALIER_MANUEL,
+            "statut": statut, "echeance": _vue.get("prochaine_echeance"), "montant": _vue.get("reste_a_payer"), "devise": ctx["sub"].get("devise") or "CHF",
+            "destinataire": str(ctx["sub"].get("email") or "").strip().lower(), "envoye_par": par, "motif_action": motif, "annule_le": quand, "maj_le": quand,
+            "paiement_numero": paiement["numero"], "nb_au_rappel": paiement["nb"], "encaisse_au_rappel": paiement["encaisse"], "total_au_rappel": paiement["total"]}
+
+
+@router.post("/api/rappels-paiement/{sub_id}/annuler")
+async def annuler_rappel(sub_id: str, corps: ActionRappel, request: Request):
+    """Annule le prochain rappel (`un`) ou tous ceux de ce paiement (`tous`). N'efface rien, n'envoie rien, ne touche à aucun solde."""
+    _email, _admin, _ctx, _motif = await _contexte_action(sub_id, corps, request)
+    if corps.portee not in ("un", "tous"):
+        raise HTTPException(status_code=400, detail={"type": "portee", "message": "Portée inconnue."})
+    _v = await _verdict(_ctx, ignorer_fenetre=True)
+    if not _v["ok"]:
+        raise HTTPException(status_code=409, detail={"type": _v["motif"], "message": _v["message"]})
+    _maintenant = datetime.now(timezone.utc)
+    _iso = _maintenant.isoformat()
+    _paiement = paiement_attendu(sub_id, _ctx["sub"])
+    _delai = await _delai_relance(_ctx)
+    _docs = await _docs_interrompus_inscrits(sub_id, _maintenant, _ctx)
+
+    if corps.portee == "tous":
+        _cle = "%s|annule_tous|%s|%s" % (sub_id, _paiement["numero"], _paiement["encaisse"])
+        try:
+            await db[COL_RAPPELS].insert_one(dict(_champs_annulation(sub_id, _ctx, _paiement, _email, _motif, _iso, "annule_tous"), _id=_cle, rang=0, cree_le=_iso))
+        except DuplicateKeyError:
+            return {"annule": True, "deja": True, "message": "Ces rappels étaient déjà annulés."}
+        # Écrit D'ABORD, relu ENSUITE : un envoi qui n'a pas encore fait sa dernière vérification s'arrêtera.
+        _encours = any(_statut_effectif(d, _maintenant) in ("en_cours", "incertain") for d in await _docs_abonnement(sub_id, _ctx))
+        return {"annule": True, "envoi_en_cours": _encours,
+                "message": "Rappels futurs annulés. Un envoi déjà en cours peut encore arriver." if _encours else "Rappels futurs annulés pour ce paiement."}
+
+    _dec = decision_relance(_docs, _delai, _maintenant, _paiement)
+    if _dec["action"] == "refus" and _dec.get("type") != "deja_envoye":
+        raise HTTPException(status_code=409, detail={"type": _dec.get("type"), "message": _dec.get("message", "")})
+    _numero = _dec.get("numero") or _dec.get("numero_suivant")
+    if corps.numero != _numero:
+        raise HTTPException(status_code=409, detail={"type": "etat_change", "message": "La situation a changé : recharge la liste. Rien n'a été annulé."})
+    # Le délai repart de la date où ce rappel aurait pu partir : le suivant ne part pas dans l'heure.
+    _effet = _instant(_dec.get("prochaine_le")) or _maintenant
+    _champs = dict(_champs_annulation(sub_id, _ctx, _paiement, _email, _motif, _iso, "annule"), numero=_numero, effet_le=max(_effet, _maintenant).isoformat())
+    if _dec["action"] == "reessai":
+        _ex = _dec["doc"]
+        _pris = await db[COL_RAPPELS].find_one_and_update({"_id": _ex["_id"], "statut": "echec", "maj_le": _ex.get("maj_le")}, {"$set": _champs})
+        if not _pris:
+            raise HTTPException(status_code=409, detail={"type": "en_cours", "message": MSG_EN_COURS})
+    else:
+        _rang = _dec.get("rang_suivant") or _dec["rang"]
+        try:   # le même `_id` qu'un envoi de ce rang : l'annulation et l'envoi ne peuvent pas gagner tous les deux
+            await db[COL_RAPPELS].insert_one(dict(_champs, _id=cle_envoi(sub_id, _rang), rang=_rang, cree_le=_iso))
+        except DuplicateKeyError:
+            raise HTTPException(status_code=409, detail={"type": "en_cours", "message": MSG_EN_COURS})
+    return {"annule": True, "message": "Rappel annulé."}
+
+
+@router.post("/api/rappels-paiement/{sub_id}/exclure")
+async def exclure_membre(sub_id: str, corps: ActionRappel, request: Request):
+    """Plus aucun rappel, manuel ou automatique, pour ce membre chez ce coach. Le compte, l'abonnement et le solde ne bougent pas."""
+    _email, _admin, _ctx, _motif = await _contexte_action(sub_id, corps, request)
+    _iso = datetime.now(timezone.utc).isoformat()
+    _coach = _cle_reglages(_ctx.get("proprio"))
+    for _cle in cle_membre(_ctx.get("proprio"), _ctx["sub"], _ctx.get("code")):
+        await db[COL_EXCLUSIONS].update_one({"_id": _cle}, {
+            "$set": {"actif": True, "coach_id": _coach, "code": _ctx["sub"].get("code"), "par": _email, "le": _iso, "motif": _motif},
+            "$unset": {"reprise_jour": ""},
+            "$push": {"journal": {"action": "exclu", "par": _email, "le": _iso, "motif": _motif}}}, upsert=True)
+    return {"exclu": True, "message": "Membre exclu des rappels. Son abonnement et son solde ne changent pas."}
+
+
+@router.post("/api/rappels-paiement/{sub_id}/reactiver")
+async def reactiver_membre(sub_id: str, corps: ActionRappel, request: Request):
+    """Lève l'exclusion. Rien n'est envoyé ici, et l'automatique ne reprend qu'aux échéances à partir d'aujourd'hui."""
+    _email, _admin, _ctx, _motif = await _contexte_action(sub_id, corps, request)
+    _iso = datetime.now(timezone.utc).isoformat()
+    _maj = 0
+    for _cle in cle_membre(_ctx.get("proprio"), _ctx["sub"], _ctx.get("code")):
+        _r = await db[COL_EXCLUSIONS].update_one({"_id": _cle, "actif": True}, {
+            "$set": {"actif": False, "reprise_jour": v617_jour_local(), "reactive_par": _email, "reactive_le": _iso},
+            "$push": {"journal": {"action": "reactive", "par": _email, "le": _iso, "motif": _motif}}})
+        _maj += _r.modified_count
+    if not _maj:
+        raise HTTPException(status_code=409, detail={"type": "pas_exclu", "message": "Ce membre n'est pas exclu."})
+    _v = await _verdict(_ctx)
+    return {"reactive": True, "eligible": bool(_v["ok"]), "message": "Rappels réactivés." if _v["ok"] else "Rappels réactivés. Pour l'instant : " + _v["message"]}
+
+
 @router.post("/api/rappels-paiement/{sub_id}/envoyer")
 async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     """L'envoi. Le navigateur n'apporte qu'une empreinte et une confirmation : tout le reste
@@ -1512,6 +1718,12 @@ async def _executer_envoi(sub_id: str, _ctx: dict, _v: dict, _msg: dict, _emp: s
     if not _v2["ok"] or _empreinte_message(sub_id, _v2, _message_de(_ctx2, _v2, modele)) != _emp:
         await _clore_sans_succes(_doc, "echec", "donnees_changees")     # l'appel n'a pas eu lieu
         raise HTTPException(status_code=409, detail={"type": "donnees_changees", "message": "Les données ont changé : rien n'a été envoyé."})
+    # V652 : une annulation enregistrée pendant la réservation arrête l'envoi. L'exclusion est déjà relue par le verdict ci-dessus.
+    _autres = [x for x in await _docs_abonnement(sub_id, _ctx2) if x.get("_id") != _cle]
+    _dec2 = decision_relance(_autres, _delai, datetime.now(timezone.utc), _paiement)
+    if _dec2["action"] == "refus":
+        await _clore_sans_succes(_doc, "echec", "annule_ou_concurrent")
+        raise HTTPException(status_code=409, detail={"type": _dec2.get("type"), "message": _dec2.get("message") or "Rien n'a été envoyé."})
 
     _params = {"from": "Afroboost <notifications@afroboost.com>", "to": [_v["destinataire"]],
                "subject": _msg["sujet"], "html": _msg["html"], "text": _msg["texte"]}
@@ -1582,6 +1794,10 @@ async def passage_automatique(maintenant: datetime = None) -> dict:
         if not _v["ok"] or _v.get("incomplet") or _v["echeance"] < _reg["auto_actif_depuis"] \
                 or not auto_doit_envoyer(_v["echeance"], delais_du_reglage(_reg), _jour) \
                 or not await _envoi_autorise_vers(_v["destinataire"]):
+            _bilan["ecartes"] += 1
+            continue
+        # V652 : réactiver un membre ne réexpédie pas ses anciennes échéances. L'automatique reprend aux échéances suivantes.
+        if _v["echeance"] < str((await _exclusion(_ctx) or {}).get("reprise_jour") or ""):
             _bilan["ecartes"] += 1
             continue
         _delai = await _delai_relance(_ctx)

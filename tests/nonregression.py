@@ -3306,6 +3306,9 @@ def t166_v648_rappel_paiement_ferme():
                          requests.delete(_url(base + "/modele"), headers=h, timeout=TIMEOUT).status_code,
                          requests.post(_url(base + "/aide-ia"), json={}, headers=h, timeout=TIMEOUT).status_code,
                          requests.post(_url(base + "/nonregression-v648/apercu"), json={}, headers=h, timeout=TIMEOUT).status_code]
+        # V652 : annuler, exclure, réactiver. Identifiant FICTIF : refusé avant toute lecture.
+        statuts[nom] += [requests.post(_url(base + "/nonregression-v648/" + route), json={"confirmation": True, "portee": "tous"}, headers=h, timeout=TIMEOUT).status_code
+                         for route in ("annuler", "exclure", "reactiver")]
     record(166, "V648 rappel de paiement : routes refusées sans jeton",
            all(s == 403 for l in statuts.values() for s in l),
            f"{statuts} envoi_reel={drapeaux.get('RAPPEL_PAIEMENT_ENVOI_REEL')} test={drapeaux.get('RAPPEL_PAIEMENT_TEST_CONTROLE')} auto={drapeaux.get('RAPPEL_PAIEMENT_AUTO_ACTIF')}")
