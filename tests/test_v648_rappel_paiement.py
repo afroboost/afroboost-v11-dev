@@ -386,6 +386,10 @@ async def tests_v650(db, cl, faux, A, P):
     v("texte correct accepté", m("Petit rappel", C) == "")
     v("texte d'origine accepté", m(rp.sujet_defaut(), rp.CORPS_DEFAUT) == "")
     v("phrases normales acceptées", m("Petit rappel", C + " Merci. De ton côté, tout va bien. Merci. Me voici. À bientôt !") == "", m("Petit rappel", C + " Merci. De ton côté, tout va bien. Merci. Me voici. À bientôt !"))
+    v("accents et émojis acceptés", m("Été à bientôt", C + " À très vite \u2764\ufe0f !") == "")
+    v("modèle sain relu tel quel", rp.modele_enregistre({"sujet": "", "corps": C}) == {"sujet": "", "corps": C})
+    v("modèle devenu invalide : texte d'origine", rp.modele_enregistre({"sujet": "Coucou", "corps": C + " evil.com"}) is None)
+    v("modèle illisible : texte d'origine", rp.modele_enregistre({"sujet": "Coucou"}) is None and rp.modele_enregistre("x") is None)
     v("délais jamais réglés : les trois", rp.delais_du_reglage({}) == ["J-3", "J0", "J+3"])
     v("délais tout décochés : aucun", rp.delais_du_reglage({"delais": []}) == [])
     for nom, s_, c_ in (("montant écrit", "Petit rappel", C + " Soit 150 CHF."), ("chiffre dans l'objet", "Rappel 150", C), ("date écrite", "Petit rappel", C + " Le 12.11."),
@@ -393,7 +397,11 @@ async def tests_v650(db, cl, faux, A, P):
                         ("domaine", "Petit rappel", C + " www.evil.test"), ("domaine sans www", "Petit rappel", C + " Paie sur evil.com merci"),
                         ("domaine avec espaces", "Petit rappel", C + " evil . com"), ("domaine en toutes lettres", "Petit rappel", C + " evil point com"),
                         ("point pleine largeur", "Petit rappel", C + " evil\uff0ecom"), ("caractère invisible", "Petit rappel", C + " evil\u200b.com"),
-                        ("arobase pleine largeur", "Petit rappel", C + " paie\uff20evil"), ("domaine dans l'objet", "evil.shop", C), ("iban", "Petit rappel", C + " Mon IBAN suit."), ("adresse", "Petit rappel", C + " paie@evil.test"), ("sans {montant}", "Petit rappel", "{echeance}"),
+                        ("arobase pleine largeur", "Petit rappel", C + " paie\uff20evil"), ("domaine dans l'objet", "evil.shop", C), ("iban", "Petit rappel", C + " Mon IBAN suit."),
+                        ("extension non latine", "Petit rappel", C + " evil.рф"), ("extension io avec espaces", "Petit rappel", C + " evil . io"),
+                        ("extension-mot avec espaces", "Petit rappel", C + " evil . de"), ("point idéographique", "Petit rappel", C + " evil\u3002com"),
+                        ("remplisseur hangul", "Petit rappel", C + " evil\u3164.com"), ("blanc braille", "Petit rappel", C + " evil.\u2800com"),
+                        ("sélecteur de variante", "Petit rappel", C + " evil\ufe0f.com"), ("joint de graphèmes", "Petit rappel", C + " evil\u034f.com"), ("adresse", "Petit rappel", C + " paie@evil.test"), ("sans {montant}", "Petit rappel", "{echeance}"),
                         ("sans {echeance}", "Petit rappel", "{montant}"), ("variable inconnue", "Petit rappel", C + " {iban}"), ("accolade seule", "Petit rappel", C + " }"),
                         ("objet sur deux lignes", "a\nBcc: x", C), ("objet trop long", "x" * 121, C), ("corps trop long", "Petit rappel", C + "x" * 2000),
                         ("objet vide", "", C), ("corps vide", "Petit rappel", ""), ("objet non texte", 5, C), ("variable dans l'objet", "{montant}", C)):
@@ -441,6 +449,9 @@ async def tests_v650(db, cl, faux, A, P):
     v("objet d'origine : reste calculé, jamais figé", r.json()["modele"]["sujet"] == "", r.text)
     r = await cl.put("/api/rappels-paiement/modele", headers=A, json={"sujet": "Un petit mot", "corps": "Payez 500 CHF"})
     v("modèle invalide : 400", r.status_code == 400)
+    await db[rp.COL_REGLAGES].update_one({"_id": rp.SUPER_ADMIN_EMAIL.lower()}, {"$set": {"modele": {"sujet": "Coucou", "corps": "{montant} {echeance} evil.com"}}})
+    _a = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+    v("modèle rangé invalide : il ne part pas", "evil.com" not in _a["texte"] and _a["sujet"] != "Coucou", _a["sujet"])
     r = await cl.delete("/api/rappels-paiement/modele", headers=A)
     v("réinitialisation", r.status_code == 200 and (await cl.get("/api/rappels-paiement/reglages", headers=A)).json()["modele"] is None, r.text)
     for meth, url in (("put", "modele"), ("delete", "modele"), ("post", "aide-ia"), ("post", "s1/apercu")):

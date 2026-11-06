@@ -120,8 +120,12 @@ JETONS_MODELE = ("{bonjour}", "{montant}", "{echeance}")
 CORPS_DEFAUT = "{bonjour}\n\nPetit rappel amical : il reste {montant} à régler pour ton abonnement Afroboost, prévu le {echeance}."
 TONS_IA = {"chaleureux": "chaleureux et encourageant", "professionnel": "professionnel et courtois", "direct": "direct et bref, sans être sec"}
 IA_LIMITE_HEURE = 20
-# « evil . com », « evil point com ». Sans de, it, me, co, info… : « Merci. De ton côté » reste une phrase.
-RE_LIEN_ESPACE = re.compile(r"(?:\.|\bdot\b|\bpoint\b)\s*(?:com|ch|net|org|fr|shop|xyz|app|online|biz|link|club)\b", re.IGNORECASE)
+# « evil . com », « evil point com ».
+RE_LIEN_ESPACE = re.compile(r"(?:\.|\bdot\b|\bpoint\b)\s*(?:com|ch|net|org|fr|io|ly|shop|xyz|app|online|biz|link|club)\b", re.IGNORECASE)
+# Extensions qui sont aussi des mots : en minuscules seulement, « Merci. De ton côté » reste une phrase.
+RE_LIEN_MOT = re.compile(r"\.\s*(?:de|it|me|co|site|top|info)\b")
+# Invisibles que `unicodedata` ne classe pas tous : remplisseurs hangul, blanc braille, joint de graphèmes.
+INVISIBLES = frozenset("\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0")
 
 MODE_MANUEL = "MANUEL"
 MODE_AUTOMATIQUE = "AUTOMATIQUE"
@@ -607,8 +611,10 @@ def motif_modele_refuse(sujet, corps) -> str:
     if "{montant}" not in _c or "{echeance}" not in _c:
         return "Garde {montant} et {echeance} : le serveur les remplit avec les données vérifiées."
     # Lu comme à l'œil : caractères invisibles retirés, signes de compatibilité (．＠) ramenés à leur forme simple.
-    _tout = "".join(c for c in unicodedata.normalize("NFKC", _s + "\n" + _c) if unicodedata.category(c) != "Cf")
-    if re.search(r"https?:|www\.|@|\w\.[a-z]{2,}", _tout, re.IGNORECASE) or RE_LIEN_ESPACE.search(_tout):
+    # Pour ce contrôle seulement : le texte envoyé garde ses accents et ses émojis.
+    _tout = "".join(c for c in unicodedata.normalize("NFKC", _s + "\n" + _c)
+                    if unicodedata.category(c) not in ("Cf", "Mn", "Me") and c not in INVISIBLES).replace("\u3002", ".")
+    if re.search(r"https?:|www\.|@|\w\.[^\W\d_]{2,}", _tout, re.IGNORECASE) or RE_LIEN_ESPACE.search(_tout) or RE_LIEN_MOT.search(_tout):
         return "Pas de lien ni d'adresse e-mail dans le message."
     if re.search(r"\biban\b", _tout, re.IGNORECASE):
         return "Pas de coordonnées de paiement dans le message."
@@ -795,10 +801,17 @@ async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
     return _v
 
 
+def modele_enregistre(modele) -> dict:
+    """PUR. Un modèle rangé repasse le contrôle à chaque usage : s'il ne le passe plus, le texte d'origine reprend."""
+    if not isinstance(modele, dict):
+        return None
+    return modele if not motif_modele_refuse(modele.get("sujet") or sujet_defaut(), modele.get("corps")) else None
+
+
 def _message_de(ctx: dict, verdict: dict, modele: dict = None) -> dict:
     return construire_message(_prenom(ctx["sub"].get("name")), verdict["reste"], verdict["devise"], verdict["echeance"],
                               signature_du_code(ctx.get("code"), ctx.get("signature")), verdict.get("paiement_actuel"),
-                              modele or ctx.get("modele"))
+                              modele or modele_enregistre(ctx.get("modele")))
 
 
 def _empreinte_message(sub_id, verdict, msg) -> str:
@@ -1314,7 +1327,7 @@ async def _reponse_apercu(sub_id: str, _ctx: dict, _email: str, _admin: bool, mo
     _maintenant = datetime.now(timezone.utc)
     _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), _delai, _maintenant, paiement_attendu(sub_id, _ctx["sub"]))
     _envoi = _vue_envoi(_dec, _delai, _admin)
-    _m = modele or _ctx.get("modele") or {}
+    _m = modele or modele_enregistre(_ctx.get("modele")) or {}
     return {"possible": True, "envoi_reel": await _envoi_autorise_vers(_v["destinataire"]), "mode_paiement": classer_mode_paiement(_ctx["sub"])["libelle"],
             "empreinte": jeton_apercu(_empreinte_message(sub_id, _v, _msg), etat_decision(_dec), _email, _maintenant),
             "destinataire": _v["destinataire"],
