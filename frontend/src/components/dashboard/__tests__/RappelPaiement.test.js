@@ -360,6 +360,139 @@ test('aucune boucle : un seul appel à chaque route, même dialogue ouvert', asy
   });
 });
 
+describe('menu ⋯ : annuler, exclure, réactiver', () => {
+  const ACTIONS = { annuler_un: true, annuler_tous: true, exclure: true, reactiver: false };
+  const ouvrir = async (l) => {
+    brancher({ lignes: [l] });
+    await monter();
+    await clic(await attendre('v652-menu-CODE-1'));
+    await attendre('v652-menu-contenu-CODE-1');
+  };
+
+  test('le menu ne propose que ce que le serveur permet, sans aucun appel', async () => {
+    await ouvrir(ligne({ actions: { annuler_un: false, annuler_tous: false, exclure: false, reactiver: true } }));
+    expect($('v652-action-reactiver-CODE-1')).not.toBeNull();
+    expect($('v652-action-exclure-CODE-1')).toBeNull();
+    expect($('v652-action-annuler_un-CODE-1')).toBeNull();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('sans action permise : pas de menu', async () => {
+    brancher({ lignes: [ligne()] });
+    await monter();
+    await attendre('v648-ligne-CODE-1');
+    expect($('v652-menu-CODE-1')).toBeNull();
+  });
+
+  test('annuler ce rappel : confirmation, numéro vu, motif, puis relecture', async () => {
+    axios.post.mockResolvedValue({ data: { annule: true, message: 'Rappel annulé.' } });
+    await ouvrir(ligne({ actions: ACTIONS, envoi: { ...ENVOI, numero: 2 } }));
+    await clic($('v652-action-annuler_un-CODE-1'));
+    await attendre('v652-confirmer');
+    expect(axios.post).not.toHaveBeenCalled();
+    await saisir($('v652-motif'), ' Payé en espèces ');
+    const avant = axios.get.mock.calls.filter(([u]) => u.endsWith('/liste')).length;
+    await clic($('v652-confirmer-action'));
+    expect(axios.post.mock.calls[0][0]).toContain('/rappels-paiement/s1/annuler');
+    expect(axios.post.mock.calls[0][1]).toEqual({ confirmation: true, portee: 'un', numero: 2, motif: 'Payé en espèces' });
+    expect((await attendre('v652-note')).textContent).toBe('Rappel annulé.');
+    expect($('v652-confirmer')).toBeNull();
+    expect(axios.get.mock.calls.filter(([u]) => u.endsWith('/liste')).length).toBe(avant + 1);
+  });
+
+  test('échéance lointaine : le numéro vient de la ligne', async () => {
+    axios.post.mockResolvedValue({ data: { message: 'ok' } });
+    await ouvrir(ligne({ actions: ACTIONS, envoi: null, possible: false, numero_rappel: 1 }));
+    await clic($('v652-action-annuler_un-CODE-1'));
+    await clic(await attendre('v652-confirmer-action'));
+    expect(axios.post.mock.calls[0][1]).toEqual({ confirmation: true, portee: 'un', numero: 1 });
+  });
+
+  test.each([
+    ['annuler_tous', '/annuler', { confirmation: true, portee: 'tous' }],
+    ['exclure', '/exclure', { confirmation: true }],
+  ])('%s : la bonne route', async (nom, route, corps) => {
+    axios.post.mockResolvedValue({ data: { message: 'ok' } });
+    await ouvrir(ligne({ actions: ACTIONS }));
+    await clic($(`v652-action-${nom}-CODE-1`));
+    await clic(await attendre('v652-confirmer-action'));
+    expect(axios.post.mock.calls[0][0].endsWith(route)).toBe(true);
+    expect(axios.post.mock.calls[0][1]).toEqual(corps);
+  });
+
+  test('reprendre : proposé seulement si le serveur le permet, avec confirmation', async () => {
+    axios.post.mockResolvedValue({ data: { message: 'Rappels repris.' } });
+    await ouvrir(ligne({ actions: { reprendre: true, exclure: true } }));
+    expect($('v652-action-annuler_tous-CODE-1')).toBeNull();
+    await clic($('v652-action-reprendre-CODE-1'));
+    await attendre('v652-confirmer');
+    expect(axios.post).not.toHaveBeenCalled();
+    expect($('v652-confirmer').textContent).toContain('Rien n\'est envoyé');
+    await clic($('v652-confirmer-action'));
+    expect(axios.post.mock.calls[0][0].endsWith('/reprendre')).toBe(true);
+    expect(axios.post.mock.calls[0][1]).toEqual({ confirmation: true });
+    expect((await attendre('v652-note')).textContent).toBe('Rappels repris.');
+  });
+
+  test('abonnements inactifs : à part, repliés, avec leur solde', async () => {
+    brancher({ lignes: [ligne(), ligne({ code: 'CODE-I', subscription_id: 'si', motif: 'abonnement_suspendu', possible: false, statut_rappel: { code: 'suspendu', libelle: 'Suspendu' } })] });
+    await monter();
+    await attendre('v648-ligne-CODE-1');
+    expect($('v648-liste').querySelector('[data-testid="v648-ligne-CODE-I"]')).toBeNull();
+    expect($('v652-inactifs').open).toBe(false);
+    expect($('v652-inactifs').querySelector('summary').textContent).toBe('Abonnements inactifs (1)');
+    expect($('v652-inactifs').textContent).toContain('200.00 CHF');
+  });
+
+  test('seulement des abonnements inactifs : pas de liste principale', async () => {
+    brancher({ lignes: [ligne({ motif: 'abonnement_suspendu', possible: false })] });
+    await monter();
+    await attendre('v652-inactifs');
+    expect($('v648-liste')).toBeNull();
+    expect($('v648-liste-vide')).not.toBeNull();
+  });
+
+  test('réactiver : la bonne route, rien d\'autre', async () => {
+    axios.post.mockResolvedValue({ data: { message: 'Rappels réactivés.' } });
+    await ouvrir(ligne({ actions: { reactiver: true } }));
+    await clic($('v652-action-reactiver-CODE-1'));
+    await clic(await attendre('v652-confirmer-action'));
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post.mock.calls[0][0].endsWith('/reactiver')).toBe(true);
+  });
+
+  test('refus du serveur : message, fenêtre ouverte, confirmation à refaire', async () => {
+    axios.post.mockRejectedValue({ response: { status: 409, data: { detail: { type: 'en_cours', message: 'Un envoi est déjà en cours.' } } } });
+    await ouvrir(ligne({ actions: ACTIONS }));
+    await clic($('v652-action-annuler_un-CODE-1'));
+    await clic(await attendre('v652-confirmer-action'));
+    expect((await attendre('v652-erreur')).textContent).toContain('déjà en cours');
+    expect($('v652-confirmer-action').disabled).toBe(false);
+    expect($('v652-note')).toBeNull();
+  });
+
+  test.each([
+    ['exclu', 'Exclu'], ['suspendu', 'Suspendu'], ['annule', 'Annulé'], ['envoye', 'Envoyé'],
+  ])('statut %s affiché', async (code, libelle) => {
+    brancher({ lignes: [ligne({ statut_rappel: { code, libelle } })] });
+    await monter();
+    expect((await attendre('v652-statut-CODE-1')).textContent).toBe(libelle);
+  });
+
+  test('statut Programmé : avec sa date', async () => {
+    brancher({ lignes: [ligne({ statut_rappel: { code: 'programme', libelle: 'Programmé', date: '2026-11-09' } })] });
+    await monter();
+    expect((await attendre('v652-statut-CODE-1')).textContent).toBe('Programmé 09.11.2026');
+  });
+
+  test("l'historique montre une annulation et son motif", async () => {
+    brancher({ historique: [{ code: 'CODE-1', etape: 'Rappel', statut: 'annule_tous', maj_le: '2026-11-05', echeance: '2026-11-05', palier: 'manuel', rang: 0, destinataire: 'm@example.test', montant: 200, devise: 'CHF', envoye_par: 'coach@example.test', motif_action: 'Arrangement' }] });
+    await monter();
+    expect((await attendre('v652-histo-motif')).textContent).toContain('Arrangement');
+    expect($('v648-historique-general').textContent).toContain('Rappels futurs annulés');
+  });
+});
+
 test('réglage : MANUEL par défaut, les délais automatiques n\'apparaissent qu\'en Automatique', async () => {
   brancher();
   axios.put.mockResolvedValue({ data: {} });
