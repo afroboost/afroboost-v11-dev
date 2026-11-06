@@ -34,6 +34,7 @@ export const LIBELLES_STATUT = {
   annule_tous: 'Rappels futurs annulés',
   annule_tous_leve: 'Rappels futurs annulés, puis repris',
   reprise: 'Rappels futurs repris',
+  supprime: 'Rappel supprimé',
 };
 
 const STYLE_FENETRE = { background: 'var(--background-color, #0a0a0a)', borderColor: 'rgba(var(--primary-rgb, 217, 28, 210), 0.35)' };
@@ -595,6 +596,10 @@ const ACTIONS_MEMBRE = {
   exclure: {
     titre: 'Exclure ce membre', url: 'exclure', confirmer: 'Exclure ce membre',
     texte: "Plus aucun rappel pour ce membre, ni manuel ni automatique, même si un solde reste affiché. Son compte, son abonnement et son solde ne changent pas.",
+  },
+  supprimer: {
+    titre: 'Supprimer définitivement le rappel', url: 'supprimer', confirmer: 'Supprimer définitivement',
+    texte: "Ce rappel quitte la liste et ne sera plus envoyé ni recréé pour ce paiement, sans retour arrière. L'abonnement, le solde, les transactions et les preuves d'envoi ne changent pas. Les autres paiements du membre restent concernés.",
   },
   reactiver: {
     titre: 'Réactiver les rappels', url: 'reactiver', confirmer: 'Réactiver les rappels',

@@ -452,6 +452,30 @@ describe('menu ⋯ : annuler, exclure, réactiver', () => {
     expect($('v648-liste-vide')).not.toBeNull();
   });
 
+  test('supprimer : confirmation obligatoire, bonne route, la liste est relue', async () => {
+    axios.post.mockResolvedValue({ data: { supprime: true, message: "Rappel supprimé. L'abonnement et le solde ne changent pas." } });
+    await ouvrir(ligne({ actions: { exclure: true, supprimer: true } }));
+    await clic($('v652-action-supprimer-CODE-1'));
+    await attendre('v652-confirmer');
+    expect(axios.post).not.toHaveBeenCalled();
+    expect($('v652-confirmer').textContent).toContain('sans retour arrière');
+    const avant = axios.get.mock.calls.filter(([u]) => u.endsWith('/liste')).length;
+    await saisir($('v652-motif'), 'Test');
+    await clic($('v652-confirmer-action'));
+    expect(axios.post.mock.calls[0][0].endsWith('/s1/supprimer')).toBe(true);
+    expect(axios.post.mock.calls[0][1]).toEqual({ confirmation: true, motif: 'Test' });
+    expect((await attendre('v652-note')).textContent).toContain('Rappel supprimé');
+    expect(axios.get.mock.calls.filter(([u]) => u.endsWith('/liste')).length).toBe(avant + 1);
+  });
+
+  test("supprimer pendant un envoi engagé : l'écran dit la vérité", async () => {
+    axios.post.mockResolvedValue({ data: { supprime: true, envoi_engage: true, message: 'Rappel supprimé. Un envoi était déjà engagé : il a pu partir, vérifie l\'historique.' } });
+    await ouvrir(ligne({ actions: { supprimer: true } }));
+    await clic($('v652-action-supprimer-CODE-1'));
+    await clic(await attendre('v652-confirmer-action'));
+    expect((await attendre('v652-note')).textContent).toContain('il a pu partir');
+  });
+
   test('réactiver : la bonne route, rien d\'autre', async () => {
     axios.post.mockResolvedValue({ data: { message: 'Rappels réactivés.' } });
     await ouvrir(ligne({ actions: { reactiver: true } }));
