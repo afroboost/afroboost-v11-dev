@@ -619,6 +619,31 @@ describe('éditeur et aide IA', () => {
     expect(corps.value).toBe(MODELE.corps);
   });
 
+  test('page d\'erreur de Cloudflare : message en français, brouillon gardé, nouvel essai possible', async () => {
+    brancher({ apercu: AP });
+    axios.post.mockRejectedValueOnce({ response: { status: 502, data: { title: 'Error 502: Bad gateway', detail: 'The origin web server returned an invalid or incomplete response to Cloudflare.', error_name: 'origin_bad_gateway', error_category: 'origin', type: 'https://developers.cloudflare.com/x' } } });
+    const corps = await ouvrir();
+    await saisir(corps, '{montant} {echeance} mon brouillon');
+    await clic($('v650-aide-ia'));
+    const refus = await attendre('v650-ia-refus');
+    expect(refus.textContent).toContain("L'aide IA n'a pas répondu");
+    expect(refus.textContent).not.toMatch(/Cloudflare|origin/i);
+    expect(corps.value).toBe('{montant} {echeance} mon brouillon');
+    axios.post.mockResolvedValueOnce({ data: { proposition: { sujet: 'Coucou', corps: '{bonjour} {montant} {echeance}' } } });
+    await clic($('v650-aide-ia'));
+    await attendre('v650-proposition');
+    expect($('v650-ia-refus')).toBeNull();
+    expect(corps.value).toBe('{montant} {echeance} mon brouillon');
+  });
+
+  test('réponse HTML du proxy : message en français', async () => {
+    brancher({ apercu: AP });
+    axios.post.mockRejectedValue({ response: { status: 504, data: '<html>504</html>' } });
+    await ouvrir();
+    await clic($('v650-aide-ia'));
+    expect((await attendre('v650-ia-refus')).textContent).toContain("L'aide IA n'a pas répondu");
+  });
+
   test('garder et réinitialiser le modèle passent par le serveur', async () => {
     brancher({ apercu: AP });
     axios.put.mockResolvedValue({ data: {} });

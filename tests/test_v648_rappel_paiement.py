@@ -434,7 +434,7 @@ async def tests_v650(db, cl, faux, A, P):
     faux.Emails.reponse = {}
     ap = (await cl.post("/api/rappels-paiement/s-offre/apercu", headers=A, json=T)).json()
     r = await cl.post("/api/rappels-paiement/s-offre/envoyer", headers=A, json=dict(T, confirmation=True, empreinte=ap["empreinte"]))
-    v("sans identifiant du fournisseur : jamais « envoyé »", r.status_code == 502 and r.json()["detail"]["type"] == "incertain", r.text)
+    v("sans identifiant du fournisseur : jamais « envoyé »", r.status_code == 503 and r.json()["detail"]["type"] == "incertain", r.text)
     v("et à vérifier", (await db[rp.COL_RAPPELS].find_one({"subscription_id": "s-offre"}))["statut"] == "incertain")
 
     print("── V650 : modèle, isolation")
@@ -482,12 +482,35 @@ async def tests_v650(db, cl, faux, A, P):
     v("ton inconnu : 400", r.status_code == 400)
     _prop["corps"] = "Payez 500 CHF tout de suite {montant} {echeance}"
     r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
-    v("une proposition avec un montant inventé est écartée", r.status_code == 502 and r.json()["detail"]["type"] == "ia_refusee", r.text)
+    v("une proposition avec un montant inventé est écartée", r.status_code == 422 and r.json()["detail"]["type"] == "ia_refusee", r.text)
+    v("deux refus : deux essais, pas plus", len(recus) >= 2 and "précédente a été refusée" in recus[-1], recus[-1][-120:])
+    n_ = len(recus)
+    await db[rp.COL_REGLAGES].delete_many({"modele": {"$exists": True}})
+    _prop.update(sujet="", corps="{bonjour} reste {montant} CHF pour le {echeance}.")
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(sujet=rp.OBJETS_RAPPEL[0], corps=T["corps"], ton="direct"))
+    v("l'objet réel part vers l'IA, jamais vide", rp.OBJETS_RAPPEL[0] in recus[n_], recus[n_][-160:])
+    v("objet vide : celui du coach ; devise après {montant} : retirée", r.status_code == 200 and r.json()["proposition"] == {"sujet": rp.OBJETS_RAPPEL[0], "corps": "{bonjour} reste {montant} pour le {echeance}."}, r.text)
+    v("corrigé du premier coup : un seul appel", len(recus) == n_ + 1)
+    _suite = [{"sujet": "Rappel du {echeance}", "corps": "{bonjour} {montant} {echeance}"}, {"sujet": "Coucou", "corps": "{bonjour} reste {montant} pour le {echeance}."}]
+    async def _ia_deux(sys_, txt):
+        recus.append(txt)
+        return json.dumps(_suite.pop(0))
+    rp.appeler_ia = _ia_deux
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("refusée puis corrigée : la seconde proposition sert", r.status_code == 200 and r.json()["proposition"]["sujet"] == "Coucou" and not _suite, r.text)
+    v("le motif du refus est transmis à l'IA", "ne peut pas contenir de variable" in recus[-1], recus[-1][-120:])
+    async def _pas_objet(*_):
+        return json.dumps(["x"])
+    rp.appeler_ia = _pas_objet
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("réponse illisible : 503 clair", r.status_code == 503 and r.json()["detail"]["type"] == "ia_erreur", r.text)
+    v("nettoyage : francs suisses", rp.nettoyer_proposition("a", "{montant} francs suisses, merci", "b")["corps"] == "{montant}, merci")
+    v("nettoyage : le mot suivant n'est pas touché", rp.nettoyer_proposition("a", "{montant} frais", "b")["corps"] == "{montant} frais")
     async def _panne(*_):
         raise TimeoutError()
     rp.appeler_ia = _panne
     r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
-    v("IA en panne : 502 clair", r.status_code == 502 and r.json()["detail"]["type"] == "ia_erreur", r.text)
+    v("IA en panne : 503 clair", r.status_code == 503 and r.json()["detail"]["type"] == "ia_erreur", r.text)
     rp._appels_ia.clear()
     rp._appels_ia[rp.SUPER_ADMIN_EMAIL.lower()] = [datetime.now(timezone.utc).timestamp()] * rp.IA_LIMITE_HEURE
     r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
@@ -1304,7 +1327,7 @@ async def principal():
         ap = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
         corps = {"confirmation": True, "empreinte": ap["empreinte"]}
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
-        v("422 : échec annoncé", r.status_code == 502 and r.json()["detail"]["type"] == "echec", r.text)
+        v("422 : échec annoncé", r.status_code == 503 and r.json()["detail"]["type"] == "echec", r.text)
         d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
         v("historique : échec", d["statut"] == "echec")
         k1 = faux.Emails.appels[0][1]["idempotency_key"]
@@ -1323,14 +1346,14 @@ async def principal():
         faux.Emails.__init__()
         faux.Emails.reponse = rc.QuotaResendAtteint(95, 95, False)
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
-        v("quota : échec certain, réessai possible", r.status_code == 502 and r.json()["detail"]["type"] == "echec", r.text)
+        v("quota : échec certain, réessai possible", r.status_code == 503 and r.json()["detail"]["type"] == "echec", r.text)
 
         print("── Réponse incertaine : jamais de nouvel essai automatique")
         await semer(db, flag=True)
         faux.Emails.__init__()
         faux.Emails.reponse = TimeoutError()
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
-        v("coupure : annoncée incertaine", r.status_code == 502 and r.json()["detail"]["type"] == "incertain", r.text)
+        v("coupure : annoncée incertaine", r.status_code == 503 and r.json()["detail"]["type"] == "incertain", r.text)
         d = await db[rp.COL_RAPPELS].find_one({"_id": rp.cle_envoi("s1")})
         v("historique : incertain", d["statut"] == "incertain")
         faux.Emails.reponse = None
@@ -1544,7 +1567,7 @@ async def principal():
         faux.Emails.__init__()
         faux.Emails.reponse = {"pas_d_identifiant": True}
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=corps)
-        v("réponse sans identifiant : incertain", r.status_code == 502 and r.json()["detail"]["type"] == "incertain", r.text)
+        v("réponse sans identifiant : incertain", r.status_code == 503 and r.json()["detail"]["type"] == "incertain", r.text)
 
         await semer(db, flag=True)
         faux.Emails.__init__()
