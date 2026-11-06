@@ -10,7 +10,7 @@ CE QU'IL NE FAIT JAMAIS : aucun prélèvement, aucun lien de paiement, aucune é
 
 TROIS VERROUS EN BASE, TOUS ABSENTS DONC FAUX À LA LIVRAISON, RÉGLÉS PAR LE SUPER-ADMIN :
   * `RAPPEL_PAIEMENT_ENVOI_REEL` : faux = la route d'envoi répond « simulation », n'écrit rien, n'appelle personne.
-  * `RAPPEL_PAIEMENT_TEST_CONTROLE` : vrai = envoi réel, mais vers les seules plus-adresses du super-admin.
+  * `RAPPEL_PAIEMENT_TEST_CONTROLE` : vrai = envoi réel vers UNE SEULE adresse, rangée en base (V651), et aucune autre.
   * `RAPPEL_PAIEMENT_AUTO_ACTIF` : faux = la boucle automatique relit ce drapeau et ressort sans rien lire d'autre.
 
 V650 — L'AUTOMATIQUE (`passage_automatique`). Le coach l'active volontairement ; cela marche sans lui connecté.
@@ -112,6 +112,7 @@ COL_REGLAGES = "rappels_paiement_reglages"
 DRAPEAU_ENVOI_REEL = "RAPPEL_PAIEMENT_ENVOI_REEL"
 DRAPEAU_AUTO = "RAPPEL_PAIEMENT_AUTO_ACTIF"
 DRAPEAU_TEST = "RAPPEL_PAIEMENT_TEST_CONTROLE"
+ID_TEST_ADRESSE = "_test_adresse"     # V651 : hors des drapeaux, dont la lecture est publique
 PLAFOND_PASSAGE = 20                  # messages au plus par passage automatique
 PERIODE_AUTO_S, DEMARRAGE_AUTO_S = 3600, 180
 AUTO_JOURS_APRES_MAX = 30             # au-delà de J+30, l'automatique se tait
@@ -709,11 +710,10 @@ def auto_doit_envoyer(echeance, delais, jour) -> bool:
     return min(_coches) <= _j <= AUTO_JOURS_APRES_MAX
 
 
-def adresse_de_test(email) -> bool:
-    """PUR. Une plus-adresse du super-admin : le mode test n'atteint que sa boîte."""
-    _e = str(email or "").strip().lower()
-    _al, _, _ad = SUPER_ADMIN_EMAIL.lower().partition("@")
-    return _e.startswith(_al + "+") and _e.endswith("@" + _ad) and len(_e) > len(_al) + 2 + len(_ad)
+def adresse_de_test(destinataire, autorisee) -> bool:
+    """PUR. V651 : égalité stricte avec l'unique adresse autorisée. Aucune adresse rangée : personne."""
+    _d, _a = str(destinataire or "").strip().lower(), str(autorisee or "").strip().lower()
+    return bool(_a) and "@" in _a and _d == _a
 
 
 def auto_heure_ouvree(maintenant=None) -> bool:
@@ -743,10 +743,13 @@ async def _envoi_reel_autorise() -> bool:
 
 
 async def _envoi_autorise_vers(destinataire: str) -> bool:
-    """Envoi réel ouvert à tous ; ou mode test, vers les seules plus-adresses du super-admin."""
+    """Envoi réel ouvert à tous ; ou mode test, vers l'unique adresse rangée en base."""
     if await _drapeau(DRAPEAU_ENVOI_REEL):
         return True
-    return adresse_de_test(destinataire) and await _drapeau(DRAPEAU_TEST)
+    if not await _drapeau(DRAPEAU_TEST):
+        return False
+    _doc = await db[COL_REGLAGES].find_one({"_id": ID_TEST_ADRESSE}, {"adresse": 1}) or {}
+    return adresse_de_test(destinataire, _doc.get("adresse"))
 
 
 def _peut_voir(code_doc, sub, appelant, admin) -> bool:
