@@ -32,6 +32,8 @@ export const LIBELLES_STATUT = {
   en_cours: 'Envoi en cours',
   annule: 'Annulé',
   annule_tous: 'Rappels futurs annulés',
+  annule_tous_leve: 'Rappels futurs annulés, puis repris',
+  reprise: 'Rappels futurs repris',
 };
 
 const STYLE_FENETRE = { background: 'var(--background-color, #0a0a0a)', borderColor: 'rgba(var(--primary-rgb, 217, 28, 210), 0.35)' };
@@ -581,7 +583,11 @@ const ACTIONS_MEMBRE = {
   },
   annuler_tous: {
     titre: 'Annuler les rappels futurs', url: 'annuler', portee: 'tous', confirmer: 'Annuler les rappels futurs',
-    texte: "Plus aucun rappel pour ce paiement, ni manuel ni automatique. Le solde ne change pas. Cette annulation n'est pas réversible.",
+    texte: "Plus aucun rappel pour ce paiement, ni manuel ni automatique, tant que tu ne les reprends pas. Le solde ne change pas.",
+  },
+  reprendre: {
+    titre: 'Reprendre les rappels futurs', url: 'reprendre', confirmer: 'Reprendre les rappels',
+    texte: "Rien n'est envoyé maintenant. Les rappels déjà annulés ne repartent pas. Le délai et le plafond s'appliquent, et l'automatique ne revient pas sur une échéance déjà passée.",
   },
   exclure: {
     titre: 'Exclure ce membre', url: 'exclure', confirmer: 'Exclure ce membre',
@@ -781,6 +787,15 @@ export default function RappelsPaiementSection() {
     }
   };
 
+  // V652 : les abonnements inactifs gardent leur solde, à part, pour ne pas encombrer la liste principale.
+  const actives = (lignes || []).filter((l) => l.motif !== 'abonnement_suspendu');
+  const inactives = (lignes || []).filter((l) => l.motif === 'abonnement_suspendu');
+  const afficherLigne = (l) => (
+    <LigneRappel key={l.subscription_id} ligne={l}
+      onOuvrir={(ligne, envoi) => { setEnvoiDemande(envoi); setCible(ligne); }}
+      onAction={(ligne, nom) => { setNoteAction(''); setAction({ ligne, action: nom }); }} />
+  );
+
   return (
     <div className="space-y-5" data-testid="v648-section">
       {!envoiReel && (
@@ -802,15 +817,13 @@ export default function RappelsPaiementSection() {
         <p className="text-white text-sm font-semibold mb-2">Paiements restant à encaisser</p>
         {lignes === null && <p className="text-xs text-white/60">Chargement…</p>}
         {erreurListe && <p className="text-sm text-red-400" data-testid="v648-liste-erreur">{erreurListe}</p>}
-        {lignes && !lignes.length && !erreurListe && <p className="text-xs text-white/60" data-testid="v648-liste-vide">Aucun paiement restant.</p>}
-        {lignes && lignes.length > 0 && (
-          <ul className="space-y-2" data-testid="v648-liste">
-            {lignes.map((l) => (
-              <LigneRappel key={l.subscription_id} ligne={l}
-                onOuvrir={(ligne, envoi) => { setEnvoiDemande(envoi); setCible(ligne); }}
-                onAction={(ligne, nom) => { setNoteAction(''); setAction({ ligne, action: nom }); }} />
-            ))}
-          </ul>
+        {lignes && !actives.length && !erreurListe && <p className="text-xs text-white/60" data-testid="v648-liste-vide">Aucun paiement restant.</p>}
+        {actives.length > 0 && <ul className="space-y-2" data-testid="v648-liste">{actives.map(afficherLigne)}</ul>}
+        {inactives.length > 0 && (
+          <details className="mt-3" data-testid="v652-inactifs">
+            <summary className="text-xs text-white/70 cursor-pointer">Abonnements inactifs ({inactives.length})</summary>
+            <ul className="space-y-2 mt-2">{inactives.map(afficherLigne)}</ul>
+          </details>
         )}
         {noteAction && <p className="text-xs text-white mt-2" data-testid="v652-note">{noteAction}</p>}
         <p className="text-white/40 text-[11px] mt-2">

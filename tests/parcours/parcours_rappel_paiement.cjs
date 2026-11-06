@@ -412,7 +412,11 @@ async function ouvrirSection(p) {
       await p.waitForSelector(id('v652-note'));
       await p.waitForTimeout(400);
     };
-    v('abonnement résilié : ligne gardée, statut Suspendu', /Suspendu/.test(await p.locator(id('v652-statut-V652-RESILIE')).textContent()));
+    v('abonnement résilié : pas dans la liste principale', (await p.locator(`${id('v648-liste')} ${id('v648-ligne-V652-RESILIE')}`).count()) === 0);
+    v('abonnements inactifs : repliés par défaut', !(await p.locator(id('v652-statut-V652-RESILIE')).isVisible()));
+    await p.locator(`${id('v652-inactifs')} summary`).click();
+    v('abonnement résilié : statut Suspendu et solde', /Suspendu/.test(await p.locator(id('v652-statut-V652-RESILIE')).textContent()) && /200\.00 CHF/.test(await p.locator(id('v648-ligne-V652-RESILIE')).textContent()));
+    await p.locator(`${id('v652-inactifs')} summary`).click();
     await p.click(id('v652-menu-V648-NORMAL'));
     await p.waitForSelector(id('v652-menu-contenu-V648-NORMAL'));
     await capture(p, '30-menu');
@@ -435,6 +439,12 @@ async function ouvrirSection(p) {
     await p.locator(`${id('v648-historique-general')} summary`).click();
     const histoV652 = await p.locator(id('v648-historique-general')).textContent();
     v('historique : annulations et motifs', /Rappels futurs annulés/.test(histoV652) && /Payé en espèces/.test(histoV652) && /Arrangement/.test(histoV652));
+    await agir('V648-RETARD', 'reprendre', 'Le membre a demandé');
+    v('reprendre : statut Annulé retiré', (await p.locator(id('v652-statut-V648-RETARD')).count()) === 0);
+    v('reprendre : le rappel manuel redevient possible', (await p.locator(id('v648-rappel-V648-RETARD')).count()) === 1);
+    const histoReprise = await p.locator(id('v648-historique-general')).textContent();
+    v('historique : annulation puis reprise', /annulés, puis repris/.test(histoReprise) && /Rappels futurs repris/.test(histoReprise) && /Le membre a demandé/.test(histoReprise));
+    await capture(p, '35-reprise', { fullPage: true });
     await agir('V648-CASE', 'reactiver');
     v('réactiver : statut Exclu retiré', (await p.locator(id('v652-statut-V648-CASE')).count()) === 0);
     v('aucun e-mail pendant ces actions', lignesEmails().length === base, lignesEmails().length - base);

@@ -420,6 +420,38 @@ describe('menu ⋯ : annuler, exclure, réactiver', () => {
     expect(axios.post.mock.calls[0][1]).toEqual(corps);
   });
 
+  test('reprendre : proposé seulement si le serveur le permet, avec confirmation', async () => {
+    axios.post.mockResolvedValue({ data: { message: 'Rappels repris.' } });
+    await ouvrir(ligne({ actions: { reprendre: true, exclure: true } }));
+    expect($('v652-action-annuler_tous-CODE-1')).toBeNull();
+    await clic($('v652-action-reprendre-CODE-1'));
+    await attendre('v652-confirmer');
+    expect(axios.post).not.toHaveBeenCalled();
+    expect($('v652-confirmer').textContent).toContain('Rien n\'est envoyé');
+    await clic($('v652-confirmer-action'));
+    expect(axios.post.mock.calls[0][0].endsWith('/reprendre')).toBe(true);
+    expect(axios.post.mock.calls[0][1]).toEqual({ confirmation: true });
+    expect((await attendre('v652-note')).textContent).toBe('Rappels repris.');
+  });
+
+  test('abonnements inactifs : à part, repliés, avec leur solde', async () => {
+    brancher({ lignes: [ligne(), ligne({ code: 'CODE-I', subscription_id: 'si', motif: 'abonnement_suspendu', possible: false, statut_rappel: { code: 'suspendu', libelle: 'Suspendu' } })] });
+    await monter();
+    await attendre('v648-ligne-CODE-1');
+    expect($('v648-liste').querySelector('[data-testid="v648-ligne-CODE-I"]')).toBeNull();
+    expect($('v652-inactifs').open).toBe(false);
+    expect($('v652-inactifs').querySelector('summary').textContent).toBe('Abonnements inactifs (1)');
+    expect($('v652-inactifs').textContent).toContain('200.00 CHF');
+  });
+
+  test('seulement des abonnements inactifs : pas de liste principale', async () => {
+    brancher({ lignes: [ligne({ motif: 'abonnement_suspendu', possible: false })] });
+    await monter();
+    await attendre('v652-inactifs');
+    expect($('v648-liste')).toBeNull();
+    expect($('v648-liste-vide')).not.toBeNull();
+  });
+
   test('réactiver : la bonne route, rien d\'autre', async () => {
     axios.post.mockResolvedValue({ data: { message: 'Rappels réactivés.' } });
     await ouvrir(ligne({ actions: { reactiver: true } }));

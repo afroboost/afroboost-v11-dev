@@ -113,6 +113,7 @@ COL_EXCLUSIONS = "rappels_paiement_exclusions"     # V652 : un membre exclu, par
 # V652 : un abonnement remplacé ou archivé n'est plus une dette à suivre. Tout autre statut non actif suspend les rappels.
 STATUTS_SANS_SUSPENSION = ("active", "superseded", "archived", "")
 MOTIF_ACTION_MAX = 200
+STATUTS_TRACE = ("annule_tous", "annule_tous_leve", "reprise")     # des décisions du coach, sans rang d'envoi
 DRAPEAU_ENVOI_REEL = "RAPPEL_PAIEMENT_ENVOI_REEL"
 DRAPEAU_AUTO = "RAPPEL_PAIEMENT_AUTO_ACTIF"
 DRAPEAU_TEST = "RAPPEL_PAIEMENT_TEST_CONTROLE"
@@ -432,7 +433,7 @@ def decision_relance(docs, delai_jours, maintenant, paiement=None) -> dict:
     _dates = [_date_effet(d) for d in _partis]
     if any(x is None for x in _dates):
         return _refus_incertain(next(d for d in _partis if _date_effet(d) is None))
-    _ici = [d for d in docs if d.get("statut") != "annule_tous" and (not paiement or d.get("subscription_id") == paiement.get("sub"))]
+    _ici = [d for d in docs if d.get("statut") not in STATUTS_TRACE and (not paiement or d.get("subscription_id") == paiement.get("sub"))]
     _der = max(_ici, key=lambda d: int(d.get("rang") or 1)) if _ici else None
     _rang_suivant = int((_der or {}).get("rang") or 0) + 1
     if _dates and maintenant < max(_dates) + _delai:
@@ -834,6 +835,13 @@ async def _exclusion(ctx: dict) -> dict:
     return next((d for d in _docs if d.get("actif") is True), None) or (_docs[0] if _docs else None)
 
 
+async def _jour_de_reprise(ctx: dict) -> str:
+    """Après une réactivation ou une reprise : l'automatique ne revient pas sur les échéances déjà passées."""
+    _jours = [str((await _exclusion(ctx) or {}).get("reprise_jour") or "")]
+    _jours += [str(d.get("reprise_jour") or "") for d in await _docs_abonnement(ctx["sub"].get("id"), ctx) if d.get("statut") == "reprise"]
+    return max(_jours)
+
+
 async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
     if (await _exclusion(ctx) or {}).get("actif") is True:
         return {"ok": False, "motif": "membre_exclu", "message": MOTIFS["membre_exclu"]}
@@ -985,7 +993,7 @@ async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> 
     _reg = await db[COL_REGLAGES].find_one({"_id": _cle_reglages(ctx.get("proprio"))}, {"mode": 1, "delais": 1, "auto_actif_depuis": 1}) or {}
     _auto = _reg.get("mode") == MODE_AUTOMATIQUE and await _drapeau(DRAPEAU_AUTO)
     _jalons = []
-    _reprise = str((await _exclusion(ctx) or {}).get("reprise_jour") or "")
+    _reprise = await _jour_de_reprise(ctx)
     if _auto and _dec and _dec["action"] != "refus" and not _va.get("incomplet") and _ech and _ech >= max(str(_reg.get("auto_actif_depuis") or "9999"), _reprise):
         try:
             _jalons = jalons_simulation(_ech, delais_du_reglage(_reg), maintenant, _delai)
@@ -995,7 +1003,8 @@ async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> 
     _ligne["statut_rappel"] = statut_affiche(_va, _dec, _jalons[0]["date"] if _jalons else None)
     _exclu = _v.get("motif") == "membre_exclu"
     _ligne["actions"] = {"annuler_un": bool(_dec) and (_dec["action"] != "refus" or (_dec.get("type") == "deja_envoye" and (_dec.get("numero_suivant") or 9) <= MAX_RAPPELS_PAR_ECHEANCE)),
-                         "annuler_tous": bool(_dec) and _dec.get("type") != "annule_tous", "exclure": not _exclu, "reactiver": _exclu}
+                         "annuler_tous": bool(_dec) and _dec.get("type") != "annule_tous", "reprendre": bool(_dec) and _dec.get("type") == "annule_tous",
+                         "exclure": not _exclu, "reactiver": _exclu}
     return _ligne
 
 
@@ -1381,7 +1390,7 @@ async def simuler_automatique(request: Request):
         _ech = _vue.get("prochaine_echeance")
         _exclu = _v.get("motif") if not _v["ok"] else ("suivi_incomplet" if _v.get("incomplet") else None)
         _depuis = _reg.get("auto_actif_depuis")
-        _reprise = str((await _exclusion(_ctx) or {}).get("reprise_jour") or "")
+        _reprise = await _jour_de_reprise(_ctx)
         if _exclu is None and _ech and ((_depuis and _ech < _depuis) or _ech < _reprise):
             _exclu = "echeance_ancienne"
         _jalons, _msg_dec = [], ""
@@ -1586,7 +1595,8 @@ async def annuler_rappel(sub_id: str, corps: ActionRappel, request: Request):
     _docs = await _docs_interrompus_inscrits(sub_id, _maintenant, _ctx)
 
     if corps.portee == "tous":
-        _cle = "%s|annule_tous|%s|%s" % (sub_id, _paiement["numero"], _paiement["encaisse"])
+        _reprises = await db[COL_RAPPELS].count_documents({"subscription_id": sub_id, "statut": "annule_tous_leve"})
+        _cle = "%s|annule_tous|%s|%s|%d" % (sub_id, _paiement["numero"], _paiement["encaisse"], _reprises)
         try:
             await db[COL_RAPPELS].insert_one(dict(_champs_annulation(sub_id, _ctx, _paiement, _email, _motif, _iso, "annule_tous"), _id=_cle, rang=0, cree_le=_iso))
         except DuplicateKeyError:
@@ -1617,6 +1627,32 @@ async def annuler_rappel(sub_id: str, corps: ActionRappel, request: Request):
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail={"type": "en_cours", "message": MSG_EN_COURS})
     return {"annule": True, "message": "Rappel annulé."}
+
+
+@router.post("/api/rappels-paiement/{sub_id}/reprendre")
+async def reprendre_rappels(sub_id: str, corps: ActionRappel, request: Request):
+    """Lève « annuler les rappels futurs », sur décision du coach. N'envoie rien. Les rappels déjà annulés gardent leur
+    place, le délai et le plafond s'appliquent, et l'automatique ne revient pas sur une échéance déjà passée."""
+    _email, _admin, _ctx, _motif = await _contexte_action(sub_id, corps, request)
+    _v = await _verdict(_ctx, ignorer_fenetre=True)
+    if not _v["ok"]:
+        raise HTTPException(status_code=409, detail={"type": _v["motif"], "message": _v["message"]})
+    _maintenant = datetime.now(timezone.utc)
+    _iso = _maintenant.isoformat()
+    _paiement = paiement_attendu(sub_id, _ctx["sub"])
+    _docs = await _docs_interrompus_inscrits(sub_id, _maintenant, _ctx)
+    _cibles = [d for d in _docs if d.get("statut") == "annule_tous" and classer_paiement(d, _paiement) != "distinct"]
+    _repris = 0
+    for _d in _cibles:
+        # Conditionnel : un double clic ne reprend qu'une fois, et la décision d'annulation reste dans l'historique.
+        if await db[COL_RAPPELS].find_one_and_update({"_id": _d["_id"], "statut": "annule_tous"}, {"$set": {"statut": "annule_tous_leve", "maj_le": _iso}}):
+            _repris += 1
+            await db[COL_RAPPELS].insert_one(dict(_champs_annulation(sub_id, _ctx, _paiement, _email, _motif, _iso, "reprise"),
+                                                  _id=_d["_id"] + "|reprise", rang=0, cree_le=_iso, reprise_jour=v617_jour_local(_maintenant)))
+    if not _repris:
+        raise HTTPException(status_code=409, detail={"type": "pas_annule", "message": "Les rappels de ce paiement ne sont pas annulés."})
+    _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), await _delai_relance(_ctx), _maintenant, _paiement)
+    return {"repris": True, "message": "Rappels repris. Rien n'a été envoyé. " + (_dec.get("message") if _dec["action"] == "refus" else "Le prochain rappel suivra les règles habituelles.")}
 
 
 @router.post("/api/rappels-paiement/{sub_id}/exclure")
@@ -1797,7 +1833,7 @@ async def passage_automatique(maintenant: datetime = None) -> dict:
             _bilan["ecartes"] += 1
             continue
         # V652 : réactiver un membre ne réexpédie pas ses anciennes échéances. L'automatique reprend aux échéances suivantes.
-        if _v["echeance"] < str((await _exclusion(_ctx) or {}).get("reprise_jour") or ""):
+        if _v["echeance"] < await _jour_de_reprise(_ctx):
             _bilan["ecartes"] += 1
             continue
         _delai = await _delai_relance(_ctx)
