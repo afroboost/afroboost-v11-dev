@@ -3300,9 +3300,15 @@ def t166_v648_rappel_paiement_ferme():
                         requests.get(_url(base + "/nonregression-v648/apercu"), headers=h, timeout=TIMEOUT).status_code,
                         requests.post(_url(base + "/nonregression-v648/envoyer"), json={"confirmation": True}, headers=h, timeout=TIMEOUT).status_code]
     drapeaux = requests.get(_url("/api/feature-flags"), timeout=TIMEOUT).json() or {}
-    record(166, "V648 rappel de paiement : routes refusées sans jeton, envoi réel coupé",
-           all(s == 403 for l in statuts.values() for s in l) and drapeaux.get("RAPPEL_PAIEMENT_ENVOI_REEL") is False,
-           f"{statuts} envoi_reel={drapeaux.get('RAPPEL_PAIEMENT_ENVOI_REEL')}")
+    # V650 : les routes du texte, et l'état des drapeaux. Leur ouverture est un acte du super-admin : le test l'affiche, sans la juger.
+    for nom, h in (("anonyme", {}), ("en-tête admin", {"X-User-Email": ADMIN})):
+        statuts[nom] += [requests.put(_url(base + "/modele"), json={}, headers=h, timeout=TIMEOUT).status_code,
+                         requests.delete(_url(base + "/modele"), headers=h, timeout=TIMEOUT).status_code,
+                         requests.post(_url(base + "/aide-ia"), json={}, headers=h, timeout=TIMEOUT).status_code,
+                         requests.post(_url(base + "/nonregression-v648/apercu"), json={}, headers=h, timeout=TIMEOUT).status_code]
+    record(166, "V648 rappel de paiement : routes refusées sans jeton",
+           all(s == 403 for l in statuts.values() for s in l),
+           f"{statuts} envoi_reel={drapeaux.get('RAPPEL_PAIEMENT_ENVOI_REEL')} test={drapeaux.get('RAPPEL_PAIEMENT_TEST_CONTROLE')} auto={drapeaux.get('RAPPEL_PAIEMENT_AUTO_ACTIF')}")
 
 
 def main():

@@ -8,11 +8,22 @@ CE QU'IL NE FAIT JAMAIS : aucun prélèvement, aucun lien de paiement, aucune é
 `subscriptions` ni sur `discount_codes`. Les seules collections écrites sont les siennes :
 `rappels_paiement` (historique) et `rappels_paiement_reglages` (choix du coach).
 
-DEUX VERROUS, TOUS DEUX FERMÉS À LA LIVRAISON :
-  * `RAPPEL_PAIEMENT_ENVOI_REEL` (drapeau en base, absent = faux) : tant qu'il est faux, la
-    route d'envoi répond « simulation », n'écrit rien et n'appelle aucun fournisseur.
-  * AUTOMATISATION_DISPONIBLE = False : aucune boucle n'existe. Choisir « Automatique » range
-    une préférence ; les délais J-3, J0, J+3 ne sont calculés qu'en simulation, en lecture seule.
+TROIS VERROUS EN BASE, TOUS ABSENTS DONC FAUX À LA LIVRAISON, RÉGLÉS PAR LE SUPER-ADMIN :
+  * `RAPPEL_PAIEMENT_ENVOI_REEL` : faux = la route d'envoi répond « simulation », n'écrit rien, n'appelle personne.
+  * `RAPPEL_PAIEMENT_TEST_CONTROLE` : vrai = envoi réel, mais vers les seules plus-adresses du super-admin.
+  * `RAPPEL_PAIEMENT_AUTO_ACTIF` : faux = la boucle automatique relit ce drapeau et ressort sans rien lire d'autre.
+
+V650 — L'AUTOMATIQUE (`passage_automatique`). Le coach l'active volontairement ; cela marche sans lui connecté.
+POLITIQUE DE FRÉQUENCE : les règles sont celles du manuel, sans exception. Le plus tôt des délais cochés (J-3,
+J0, J+3) ouvre le premier rappel, puis chaque rappel attend le délai de relance (7 jours au moins), dans la limite
+de 3 par paiement. Avec les trois délais cochés : J-3, J+4, J+11. J0 et J+3 ne suivent donc jamais J-3 : envoyer à
+3 jours d'écart violerait la règle des 7 jours. Les échéances antérieures à l'activation sont ignorées : aucun
+envoi en masse sur l'historique. 20 messages au plus par passage, jours ouvrés de 8 h à 18 h, heure de Zurich.
+Une panne du fournisseur arrête le passage. Sont exclus de l'automatique : les cas qui exigent une confirmation.
+
+V650 — LE TEXTE. Le coach rédige avec {bonjour}, {montant} et {echeance}, que seul le serveur remplit. Un montant,
+une date, un lien, une adresse ou un IBAN tapés à la main sont refusés. La mention « si tu as déjà payé » et la
+signature sont toujours ajoutées : un solde calculé n'est jamais présenté comme une preuve de non-paiement.
 
 V649 — SEUL UN ABONNEMENT STRIPE RÉEL COMPTE. Le type de l'offre ne dit pas comment CE client paie : une
 offre `saison_2x` peut être vendue à la main, en TWINT ou en espèces. Voir `classer_mode_paiement`.
@@ -67,6 +78,7 @@ import asyncio
 import hashlib
 import hmac
 import html as _html
+import json
 import logging
 import math
 import os
@@ -74,6 +86,7 @@ import re
 import unicodedata
 from email.utils import parseaddr
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
@@ -97,7 +110,22 @@ _refus_email = None
 COL_RAPPELS = "rappels_paiement"
 COL_REGLAGES = "rappels_paiement_reglages"
 DRAPEAU_ENVOI_REEL = "RAPPEL_PAIEMENT_ENVOI_REEL"
-AUTOMATISATION_DISPONIBLE = False     # aucune boucle : à changer seulement par une version dédiée
+DRAPEAU_AUTO = "RAPPEL_PAIEMENT_AUTO_ACTIF"
+DRAPEAU_TEST = "RAPPEL_PAIEMENT_TEST_CONTROLE"
+PLAFOND_PASSAGE = 20                  # messages au plus par passage automatique
+PERIODE_AUTO_S, DEMARRAGE_AUTO_S = 3600, 180
+AUTO_JOURS_APRES_MAX = 30             # au-delà de J+30, l'automatique se tait
+OBJET_MAX, CORPS_MAX = 120, 2000
+JETONS_MODELE = ("{bonjour}", "{montant}", "{echeance}")
+CORPS_DEFAUT = "{bonjour}\n\nPetit rappel amical : il reste {montant} à régler pour ton abonnement Afroboost, prévu le {echeance}."
+TONS_IA = {"chaleureux": "chaleureux et encourageant", "professionnel": "professionnel et courtois", "direct": "direct et bref, sans être sec"}
+IA_LIMITE_HEURE = 20
+# « evil . com », « evil point com ».
+RE_LIEN_ESPACE = re.compile(r"(?:\.|\bdot\b|\bpoint\b)\s*(?:com|ch|net|org|fr|io|ly|shop|xyz|app|online|biz|link|club)\b", re.IGNORECASE)
+# Extensions qui sont aussi des mots : en minuscules seulement, « Merci. De ton côté » reste une phrase.
+RE_LIEN_MOT = re.compile(r"\.\s*(?:de|it|me|co|site|top|info)\b")
+# Invisibles que `unicodedata` ne classe pas tous : remplisseurs hangul, blanc braille, joint de graphèmes.
+INVISIBLES = frozenset("\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0")
 
 MODE_MANUEL = "MANUEL"
 MODE_AUTOMATIQUE = "AUTOMATIQUE"
@@ -561,22 +589,59 @@ def _date_ch(iso) -> str:
     return "%s.%s.%s" % (_j, _m, _a)
 
 
-def construire_message(prenom, reste, devise, echeance, signature, paiement_actuel=None) -> dict:
-    """PUR. Le texte validé par Bassi le 05/11/2026. {sujet, texte, html}.
+def sujet_defaut(paiement_actuel=None) -> str:
+    """PUR. Le mot « deuxième » n'est écrit que s'il est vrai : au 3e paiement, l'objet dit « prochain »."""
+    return "Rappel : ton %s paiement Afroboost" % ("prochain" if paiement_actuel and paiement_actuel >= 2 else "deuxième")
 
-    Le mot « deuxième » n'est écrit que s'il est vrai : au 3e paiement d'un échéancier en
-    quatre fois, l'objet dit « prochain ». Toute valeur variable est échappée dans le HTML.
+
+def motif_modele_refuse(sujet, corps) -> str:
+    """PUR. Chaîne vide si ce texte peut être envoyé ; sinon l'explication pour le coach."""
+    if not isinstance(sujet, str) or not isinstance(corps, str):
+        return "Objet ou message illisible."
+    _s, _c = sujet.strip(), corps.strip()
+    if not 3 <= len(_s) <= OBJET_MAX or "\n" in _s or "\r" in _s:
+        return "Objet : une seule ligne, %d caractères au plus." % OBJET_MAX
+    if not _c or len(_c) > CORPS_MAX:
+        return "Message : %d caractères au plus." % CORPS_MAX
+    if re.search(r"[{}]", _s):
+        return "L'objet ne peut pas contenir de variable."
+    _jetons = re.findall(r"\{[^{}]*\}", _c)
+    if any(j not in JETONS_MODELE for j in _jetons) or re.search(r"[{}]", re.sub(r"\{[^{}]*\}", "", _c)):
+        return "Seules les variables {bonjour}, {montant} et {echeance} sont acceptées."
+    if "{montant}" not in _c or "{echeance}" not in _c:
+        return "Garde {montant} et {echeance} : le serveur les remplit avec les données vérifiées."
+    # Lu comme à l'œil : caractères invisibles retirés, signes de compatibilité (．＠) ramenés à leur forme simple.
+    # Pour ce contrôle seulement : le texte envoyé garde ses accents et ses émojis.
+    _tout = "".join(c for c in unicodedata.normalize("NFKC", _s + "\n" + _c)
+                    if unicodedata.category(c) not in ("Cf", "Mn", "Me") and c not in INVISIBLES).replace("\u3002", ".")
+    if re.search(r"https?:|www\.|@|\w\.[^\W\d_]{2,}", _tout, re.IGNORECASE) or RE_LIEN_ESPACE.search(_tout) or RE_LIEN_MOT.search(_tout):
+        return "Pas de lien ni d'adresse e-mail dans le message."
+    if re.search(r"\biban\b", _tout, re.IGNORECASE):
+        return "Pas de coordonnées de paiement dans le message."
+    if re.search(r"\d", _tout):
+        return "Pas de chiffres dans le texte : le serveur remplit {montant} et {echeance}."
+    if re.search(r"\b(?:chf|eur|euros?|francs?|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\b", _tout, re.IGNORECASE):
+        return "N'écris ni montant ni date : utilise {montant} et {echeance}."
+    return ""
+
+
+def construire_message(prenom, reste, devise, echeance, signature, paiement_actuel=None, modele=None) -> dict:
+    """PUR. Le texte validé par Bassi le 05/11/2026, ou le modèle du coach. {sujet, texte, html}.
+
+    Le montant et la date viennent du serveur. La mention « si tu as déjà payé » et la signature sont
+    toujours ajoutées. Toute valeur variable est échappée dans le HTML.
     """
-    _rang = "prochain" if paiement_actuel and paiement_actuel >= 2 else "deuxième"
-    _sujet = "Rappel : ton %s paiement Afroboost" % _rang
+    _m = modele if isinstance(modele, dict) else {}
+    _sujet = (_m.get("sujet") or sujet_defaut(paiement_actuel)).strip()
     _bonjour = "Bonjour %s," % prenom if prenom else "Bonjour,"
-    _montant, _date = _montant_lisible(reste), _date_ch(echeance)
-    _p1 = "Petit rappel amical : il reste %s %s à régler pour ton abonnement Afroboost, prévu le %s." % (_montant, devise, _date)
+    _rendu = (_m.get("corps") or CORPS_DEFAUT).strip().replace("\r\n", "\n").replace("{bonjour}", _bonjour) \
+        .replace("{montant}", "%s %s" % (_montant_lisible(reste), devise)).replace("{echeance}", _date_ch(echeance))
     _p2 = "Si tu as déjà payé, ne tiens pas compte de ce message. Pour toute question, réponds simplement à cet e-mail."
     _p3 = "À très vite en cours !"
-    _texte = "\n\n".join((_bonjour, _p1, _p2, _p3 + "\n" + signature))
-    _lignes = "".join('<p style="margin:0 0 16px">%s</p>' % _html.escape(x, quote=True) for x in (_bonjour, _p1, _p2))
-    _fin = '<p style="margin:0">%s<br>%s</p>' % (_html.escape(_p3, quote=True), _html.escape(signature, quote=True).replace("\n", "<br>"))
+    _texte = "\n\n".join((_rendu, _p2, _p3 + "\n" + signature))
+    _esc = lambda x: _html.escape(x, quote=True).replace("\n", "<br>")  # noqa: E731
+    _lignes = "".join('<p style="margin:0 0 16px">%s</p>' % _esc(x) for x in _rendu.split("\n\n") + [_p2])
+    _fin = '<p style="margin:0">%s<br>%s</p>' % (_esc(_p3), _esc(signature))
     _corps = ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#222;'
               'max-width:520px;margin:0 auto;padding:16px">%s%s</div>' % (_lignes, _fin))
     return {"sujet": _sujet, "texte": _texte, "html": _corps}
@@ -599,18 +664,61 @@ def classer_erreur(err) -> str:
     return "echec" if 400 <= _code < 500 else "incertain"
 
 
-def jalons_simulation(echeance, delais, maintenant=None) -> list:
-    """PUR. Les dates des paliers. Un palier passé reste passé : jamais de rattrapage."""
+def _nom_jalon(offset) -> str:
+    return "J0" if offset == 0 else ("J%+d" % offset)
+
+
+def jalons_simulation(echeance, delais, maintenant=None, delai_jours=DELAI_RELANCE_DEFAUT, envoyes=0, prochaine=None) -> list:
+    """PUR. Les dates que le moteur retiendrait : jamais une date passée. Le premier rappel part au plus
+    tôt des délais cochés (ou aujourd'hui s'il est dépassé) ; les suivants, tous les `delai_jours`."""
     _auj = v617_jour_local(maintenant)
     _base = datetime.strptime(echeance, "%Y-%m-%d")
+    _coches = [PALIERS_AUTO[p] for p in PALIERS_AUTO if p in delais]
+    if not _coches:
+        return []
+    _aujourdhui = datetime.strptime(_auj, "%Y-%m-%d")
+    _debut = max(_base + timedelta(days=min(_coches)), _aujourdhui)
+    if prochaine:
+        _debut = max(_debut, datetime.strptime(prochaine[:10], "%Y-%m-%d"))
     _sortie = []
-    for _p in PALIERS_AUTO:
-        if _p not in delais:
-            continue
-        _d = (_base + timedelta(days=PALIERS_AUTO[_p])).strftime("%Y-%m-%d")
-        _sortie.append({"palier": _p, "date": _d,
-                        "etat": "passe" if _d < _auj else ("aujourdhui" if _d == _auj else "a_venir")})
+    for _i in range(max(0, MAX_RAPPELS_PAR_ECHEANCE - envoyes)):
+        _date = _debut + timedelta(days=_i * delai_jours)
+        _off = (_date - _base).days
+        if _off > AUTO_JOURS_APRES_MAX:
+            break
+        _d = _date.strftime("%Y-%m-%d")
+        _sortie.append({"palier": _nom_jalon(_off), "date": _d, "etat": "aujourdhui" if _d == _auj else "a_venir"})
     return _sortie
+
+
+def delais_du_reglage(doc) -> list:
+    """PUR. Jamais réglé : les trois délais. Tout décoché : aucun, donc aucun envoi automatique."""
+    _d = (doc or {}).get("delais")
+    return list(PALIERS_AUTO) if _d is None else [p for p in _d if p in PALIERS_AUTO]
+
+
+def auto_doit_envoyer(echeance, delais, jour) -> bool:
+    """PUR. Le jour est-il ouvert pour un rappel automatique ? Le délai de 7 jours et le plafond sont dans `decision_relance`."""
+    _coches = [PALIERS_AUTO[p] for p in PALIERS_AUTO if p in (delais or [])]
+    if not _coches:
+        return False
+    try:
+        _j = (datetime.strptime(jour, "%Y-%m-%d") - datetime.strptime(echeance, "%Y-%m-%d")).days
+    except (TypeError, ValueError):
+        return False
+    return min(_coches) <= _j <= AUTO_JOURS_APRES_MAX
+
+
+def adresse_de_test(email) -> bool:
+    """PUR. Une plus-adresse du super-admin : le mode test n'atteint que sa boîte."""
+    _e = str(email or "").strip().lower()
+    _al, _, _ad = SUPER_ADMIN_EMAIL.lower().partition("@")
+    return _e.startswith(_al + "+") and _e.endswith("@" + _ad) and len(_e) > len(_al) + 2 + len(_ad)
+
+
+def auto_heure_ouvree(maintenant=None) -> bool:
+    _z = (maintenant or datetime.now(timezone.utc)).astimezone(ZoneInfo("Europe/Zurich"))
+    return _z.weekday() < 5 and 8 <= _z.hour < 18
 
 
 # ═══════════════════════════ LECTURES ═══════════════════════════
@@ -625,9 +733,20 @@ async def _exiger_coach(request: Request):
     return _email, _admin
 
 
+async def _drapeau(nom: str) -> bool:
+    _f = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0, nom: 1}) or {}
+    return _f.get(nom) is True
+
+
 async def _envoi_reel_autorise() -> bool:
-    _f = await db.feature_flags.find_one({"id": "feature_flags"}, {"_id": 0, DRAPEAU_ENVOI_REEL: 1}) or {}
-    return _f.get(DRAPEAU_ENVOI_REEL) is True
+    return await _drapeau(DRAPEAU_ENVOI_REEL)
+
+
+async def _envoi_autorise_vers(destinataire: str) -> bool:
+    """Envoi réel ouvert à tous ; ou mode test, vers les seules plus-adresses du super-admin."""
+    if await _drapeau(DRAPEAU_ENVOI_REEL):
+        return True
+    return adresse_de_test(destinataire) and await _drapeau(DRAPEAU_TEST)
 
 
 def _peut_voir(code_doc, sub, appelant, admin) -> bool:
@@ -646,6 +765,11 @@ def _acces(ctx: dict, appelant, admin) -> bool:
         v617_visible_par(c, appelant, admin) for c in ctx.get("codes") or [])
 
 
+def _cle_reglages(proprio) -> str:
+    """Les fiches de la plateforme, avec ou sans propriétaire, partagent les réglages du super-admin."""
+    return proprio if proprio not in COACHS_BASSI else SUPER_ADMIN_EMAIL.lower()
+
+
 async def _contexte(sub_id: str) -> dict:
     """Tout est relu en base à chaque appel : rien de ce que le navigateur envoie n'est cru."""
     _sub = await db.subscriptions.find_one({"id": sub_id}, {"_id": 0})
@@ -660,11 +784,9 @@ async def _contexte(sub_id: str) -> dict:
     if _motif == "unique" and (_actuel or {}).get("id") != _sub.get("id"):
         _motif = "aucun"
     _proprio = str((_code or {}).get("coach_id") or "").strip().lower()
-    _sig = None
-    if _proprio not in COACHS_BASSI:
-        _sig = (await db[COL_REGLAGES].find_one({"_id": _proprio}, {"signature": 1}) or {}).get("signature")
+    _reg = await db[COL_REGLAGES].find_one({"_id": _cle_reglages(_proprio)}, {"signature": 1, "modele": 1}) or {}
     return {"sub": _sub, "code": _code, "motif_abo": _motif, "codes_trouves": len(_codes), "codes": _codes,
-            "proprio": _proprio, "signature": _sig}
+            "proprio": _proprio, "signature": None if _proprio in COACHS_BASSI else _reg.get("signature"), "modele": _reg.get("modele")}
 
 
 async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
@@ -679,9 +801,32 @@ async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
     return _v
 
 
-def _message_de(ctx: dict, verdict: dict) -> dict:
+def modele_enregistre(modele) -> dict:
+    """PUR. Un modèle rangé repasse le contrôle à chaque usage : s'il ne le passe plus, le texte d'origine reprend."""
+    if not isinstance(modele, dict):
+        return None
+    return modele if not motif_modele_refuse(modele.get("sujet") or sujet_defaut(), modele.get("corps")) else None
+
+
+def _message_de(ctx: dict, verdict: dict, modele: dict = None) -> dict:
     return construire_message(_prenom(ctx["sub"].get("name")), verdict["reste"], verdict["devise"], verdict["echeance"],
-                              signature_du_code(ctx.get("code"), ctx.get("signature")), verdict.get("paiement_actuel"))
+                              signature_du_code(ctx.get("code"), ctx.get("signature")), verdict.get("paiement_actuel"),
+                              modele or modele_enregistre(ctx.get("modele")))
+
+
+def _empreinte_message(sub_id, verdict, msg) -> str:
+    return empreinte(sub_id, verdict, msg["sujet"] + "\n" + msg["texte"])
+
+
+def _modele_saisi(sujet, corps) -> dict:
+    """Le texte envoyé par le navigateur, contrôlé ; None si le coach n'a rien modifié."""
+    if sujet is None and corps is None:
+        return None
+    _m = motif_modele_refuse(sujet, corps)
+    if _m:
+        raise HTTPException(status_code=400, detail={"type": "modele_refuse", "message": _m})
+    # L'objet d'origine reste calculé : « deuxième » deviendrait faux au 3e paiement.
+    return {"sujet": "" if sujet.strip() in OBJETS_RAPPEL else sujet.strip(), "corps": corps.strip()}
 
 
 def _delai_valide(v) -> int:
@@ -690,8 +835,7 @@ def _delai_valide(v) -> int:
 
 async def _delai_relance(ctx: dict) -> int:
     """Le délai du coach PROPRIÉTAIRE du code : le super-admin qui agit sur un code partenaire le respecte."""
-    _cle = ctx.get("proprio") if ctx.get("proprio") not in COACHS_BASSI else SUPER_ADMIN_EMAIL.lower()
-    _r = await db[COL_REGLAGES].find_one({"_id": _cle}, {"delai_relance_jours": 1}) or {}
+    _r = await db[COL_REGLAGES].find_one({"_id": _cle_reglages(ctx.get("proprio"))}, {"delai_relance_jours": 1}) or {}
     return _delai_valide(_r.get("delai_relance_jours"))
 
 
@@ -737,6 +881,7 @@ def _ligne_historique(doc) -> dict:
             "echeance": doc.get("echeance"), "statut": doc.get("statut"), "montant": doc.get("montant"),
             "devise": doc.get("devise"), "destinataire": doc.get("destinataire"), "envoye_le": doc.get("envoye_le"),
             "maj_le": doc.get("maj_le"), "envoye_par": doc.get("envoye_par"), "tentatives": doc.get("tentatives"),
+            "mode_envoi": doc.get("mode_envoi") or "manuel", "sujet": doc.get("sujet"),
             "montant_confirme": doc.get("montant_confirme")}
 
 
@@ -879,7 +1024,7 @@ def preuve_conforme(email, doc) -> str:
         return "Réponse du fournisseur illisible."
     if str(doc.get("destinataire") or "").lower() not in (adresses_fiche(email) or []):
         return "Le destinataire ne correspond pas."
-    if objet_fiche(email) not in OBJETS_RAPPEL:
+    if objet_fiche(email) not in OBJETS_RAPPEL + (doc.get("sujet"),):
         return "L'objet ne correspond pas à un rappel de paiement."
     if "notifications@afroboost.com" not in str(email.get("from") or ""):
         return "L'expéditeur ne correspond pas."
@@ -937,6 +1082,21 @@ class EnvoiRappel(BaseModel):
     empreinte: str = ""
     confirmation: bool = False
     montant_confirme: object = None       # seulement si le suivi est incomplet : la saisie du coach
+    sujet: object = None                  # texte modifié : contrôlé et rendu par le serveur
+    corps: object = None
+
+
+class ApercuPersonnalise(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    sujet: object = None
+    corps: object = None
+
+
+class DemandeIA(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    sujet: object = None
+    corps: object = None
+    ton: str = "chaleureux"
 
 
 @router.get("/api/rappels-paiement/reglages")
@@ -944,17 +1104,18 @@ async def lire_reglages(request: Request):
     _email, _ = await _exiger_coach(request)
     _doc = await db[COL_REGLAGES].find_one({"_id": _email}) or {}
     return {"mode": _doc.get("mode") if _doc.get("mode") in MODES else MODE_MANUEL,
-            "delais": [p for p in (_doc.get("delais") or list(PALIERS_AUTO)) if p in PALIERS_AUTO],
+            "delais": delais_du_reglage(_doc),
             "delai_relance_jours": _delai_valide(_doc.get("delai_relance_jours")),
             "signature_officielle": _email in COACHS_BASSI,
             "signature": _doc.get("signature") or {"nom": "", "activite": ""},
-            "automatisation_disponible": AUTOMATISATION_DISPONIBLE,
+            "automatisation_disponible": await _drapeau(DRAPEAU_AUTO), "auto_actif_depuis": _doc.get("auto_actif_depuis"),
+            "modele": _doc.get("modele") or None, "modele_defaut": {"sujet": sujet_defaut(), "corps": CORPS_DEFAUT},
             "envoi_reel": await _envoi_reel_autorise()}
 
 
 @router.put("/api/rappels-paiement/reglages")
 async def ecrire_reglages(request: Request):
-    """Range une préférence, et rien d'autre : aucun moteur ne lit ce réglage aujourd'hui."""
+    """Le choix du coach. Passer en Automatique est un acte explicite, daté : les échéances antérieures restent à l'écart."""
     _email, _ = await _exiger_coach(request)
     try:
         _corps = await request.json()
@@ -970,15 +1131,89 @@ async def ecrire_reglages(request: Request):
         raise HTTPException(status_code=400, detail="Délais inconnus : J-3, J0 ou J+3.")
     _propres = [p for p in PALIERS_AUTO if p in _delais]
     _champs = {"mode": _mode, "delais": _propres, "maj_le": datetime.now(timezone.utc).isoformat()}
+    _avant = await db[COL_REGLAGES].find_one({"_id": _email}, {"mode": 1}) or {}
+    _operation = {}
+    if _mode == MODE_AUTOMATIQUE and _avant.get("mode") != MODE_AUTOMATIQUE:
+        if _corps.get("confirmation_auto") is not True:
+            raise HTTPException(status_code=400, detail="Confirme l'activation de l'automatique : des e-mails réels partiront sans que tu sois connecté.")
+        _champs["auto_actif_depuis"] = v617_jour_local()
+    elif _mode == MODE_MANUEL:
+        _operation["$unset"] = {"auto_actif_depuis": ""}
     if "delai_relance_jours" in _corps:
         _j = _corps["delai_relance_jours"]
         if not isinstance(_j, int) or isinstance(_j, bool) or not DELAI_RELANCE_MIN <= _j <= DELAI_RELANCE_MAX:
             raise HTTPException(status_code=400, detail="Délai de relance : entre %d et %d jours." % (DELAI_RELANCE_MIN, DELAI_RELANCE_MAX))
         _champs["delai_relance_jours"] = _j
-    await db[COL_REGLAGES].update_one({"_id": _email}, {"$set": _champs}, upsert=True)
+    await db[COL_REGLAGES].update_one({"_id": _email}, dict(_operation, **{"$set": _champs}), upsert=True)
     _doc = await db[COL_REGLAGES].find_one({"_id": _email}) or {}
     return {"mode": _mode, "delais": _propres, "delai_relance_jours": _delai_valide(_doc.get("delai_relance_jours")),
-            "automatisation_disponible": AUTOMATISATION_DISPONIBLE}
+            "automatisation_disponible": await _drapeau(DRAPEAU_AUTO), "auto_actif_depuis": _doc.get("auto_actif_depuis")}
+
+
+@router.put("/api/rappels-paiement/modele")
+async def ecrire_modele(corps: ApercuPersonnalise, request: Request):
+    """Le modèle du coach pour ses envois futurs. Le sien seulement."""
+    _email, _ = await _exiger_coach(request)
+    _m = _modele_saisi(corps.sujet, corps.corps)
+    if not _m:
+        raise HTTPException(status_code=400, detail={"type": "modele_refuse", "message": "Objet ou message illisible."})
+    await db[COL_REGLAGES].update_one({"_id": _cle_reglages(_email)}, {"$set": {"modele": _m, "maj_le": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    return {"modele": _m}
+
+
+@router.delete("/api/rappels-paiement/modele")
+async def effacer_modele(request: Request):
+    """Retour au texte validé."""
+    _email, _ = await _exiger_coach(request)
+    await db[COL_REGLAGES].update_one({"_id": _cle_reglages(_email)}, {"$unset": {"modele": ""}})
+    return {"modele": None, "modele_defaut": {"sujet": sujet_defaut(), "corps": CORPS_DEFAUT}}
+
+
+_appels_ia = {}
+
+
+async def appeler_ia(systeme: str, texte: str) -> str:
+    """Le même client OpenAI que le reste du site. Remplacé par un faux dans les tests."""
+    from openai import OpenAI
+    _cl = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"), timeout=15.0, max_retries=0)
+    _r = await asyncio.wait_for(asyncio.to_thread(
+        _cl.chat.completions.create, model="gpt-4o-mini", temperature=0.5, max_tokens=500, response_format={"type": "json_object"},
+        messages=[{"role": "system", "content": systeme}, {"role": "user", "content": texte}]), timeout=18.0)
+    return (_r.choices[0].message.content or "").strip()
+
+
+@router.post("/api/rappels-paiement/aide-ia")
+async def aide_ia(demande: DemandeIA, request: Request):
+    """Une PROPOSITION : rien n'est enregistré ni remplacé. Le texte part sans aucune donnée client,
+    avec les variables, et la proposition repasse par le même contrôle qu'une saisie du coach."""
+    _email, _ = await _exiger_coach(request)
+    if demande.ton not in TONS_IA:
+        raise HTTPException(status_code=400, detail={"type": "ton_inconnu", "message": "Ton inconnu."})
+    _m = _modele_saisi(demande.sujet, demande.corps)
+    if not _m:
+        raise HTTPException(status_code=400, detail={"type": "modele_refuse", "message": "Objet ou message illisible."})
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise HTTPException(status_code=503, detail={"type": "ia_indisponible", "message": "L'aide IA n'est pas disponible pour le moment."})
+    _heure = datetime.now(timezone.utc).timestamp() - 3600
+    _recents = [t for t in _appels_ia.get(_email, []) if t > _heure]
+    if len(_recents) >= IA_LIMITE_HEURE:
+        raise HTTPException(status_code=429, detail={"type": "ia_limite", "message": "Trop de demandes : réessaie dans une heure."})
+    _appels_ia[_email] = _recents + [datetime.now(timezone.utc).timestamp()]
+    _sys = ("Tu reformules en français un e-mail de rappel de paiement d'un coach de fitness à son membre. Ton : %s. Reste court et humain. "
+            "Le solde peut déjà être réglé : n'accuse jamais, ne menace jamais, n'affirme pas que la personne n'a pas payé. "
+            "Garde exactement les variables {bonjour}, {montant} et {echeance}, sans les modifier ni en ajouter. N'écris aucun montant, date, lien, "
+            "numéro ou adresse. Pas de signature ni de formule de fin : elles sont ajoutées automatiquement. "
+            'Réponds uniquement en JSON : {"sujet": "...", "corps": "..."}.' % TONS_IA[demande.ton])
+    try:
+        _brut = json.loads(await appeler_ia(_sys, json.dumps(_m, ensure_ascii=False)))
+        _prop = {"sujet": _brut.get("sujet"), "corps": _brut.get("corps")}
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("[V650] aide IA : %s", type(_err).__name__)
+        raise HTTPException(status_code=502, detail={"type": "ia_erreur", "message": "L'aide IA n'a pas répondu. Ton texte n'a pas changé."})
+    _motif = motif_modele_refuse(_prop["sujet"], _prop["corps"])
+    if _motif:
+        raise HTTPException(status_code=502, detail={"type": "ia_refusee", "message": "La proposition n'a pas passé le contrôle. Ton texte n'a pas changé. (%s)" % _motif})
+    return {"proposition": {"sujet": _prop["sujet"].strip(), "corps": _prop["corps"].strip()}, "ton": demande.ton}
 
 
 @router.put("/api/rappels-paiement/signature")
@@ -1043,7 +1278,7 @@ async def simuler_automatique(request: Request):
     """Ce que l'automatique FERAIT, en LECTURE SEULE : aucun envoi, aucune écriture, aucun jeton."""
     _email, _admin = await _exiger_coach(request)
     _reg = await db[COL_REGLAGES].find_one({"_id": _email}) or {}
-    _delais = [p for p in (_reg.get("delais") or list(PALIERS_AUTO)) if p in PALIERS_AUTO]
+    _delais = delais_du_reglage(_reg)
     _lignes = []
     async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": "active"}, {"_id": 0, "id": 1}):
         _ctx = await _contexte(_s.get("id"))
@@ -1053,21 +1288,54 @@ async def simuler_automatique(request: Request):
         _vue = suivi_paiement_lire(_ctx["sub"])
         _ech = _vue.get("prochaine_echeance")
         _exclu = _v.get("motif") if not _v["ok"] else ("suivi_incomplet" if _v.get("incomplet") else None)
-        _jalons = []
+        _depuis = _reg.get("auto_actif_depuis")
+        if _exclu is None and _depuis and _ech and _ech < _depuis:
+            _exclu = "echeance_ancienne"
+        _jalons, _msg_dec = [], ""
         if _ech and (_v["ok"] or _v.get("motif") != "suivi_incoherent"):
-            try:
-                _jalons = jalons_simulation(_ech, _delais)
-            except ValueError:
-                _jalons = []
+            _paie = paiement_attendu(_ctx["sub"].get("id"), _ctx["sub"])
+            _docs = await _docs_abonnement(_ctx["sub"].get("id"), _ctx)
+            _dec = decision_relance(_docs, await _delai_relance(_ctx), datetime.now(timezone.utc), _paie)
+            if _dec["action"] == "refus" and _dec.get("type") != "deja_envoye":
+                _exclu, _msg_dec = _exclu or _dec.get("type"), _dec.get("message", "")
+            else:
+                try:
+                    _jalons = jalons_simulation(_ech, _delais, delai_jours=await _delai_relance(_ctx), prochaine=_dec.get("prochaine_le"),
+                                                envoyes=sum(1 for d in _docs if d.get("statut") == "envoye" and classer_paiement(d, _paie) == "meme"))
+                except ValueError:
+                    _jalons = []
         _lignes.append({"code": _ctx["sub"].get("code"), "nom": _ctx["sub"].get("name") or "",
                         "reste": _vue.get("reste_a_payer"), "echeance": _ech, "enverrait": _exclu is None,
                         "motif_exclusion": _exclu,
-                        "message_exclusion": ("Case « en plusieurs fois » non cochée : à confirmer par le coach."
-                                              if _exclu == "suivi_incomplet" else MOTIFS.get(_exclu, "")),
+                        "message_exclusion": ("Case « en plusieurs fois » non cochée : à confirmer par le coach." if _exclu == "suivi_incomplet"
+                                              else "Échéance antérieure à l'activation : jamais de rappel automatique." if _exclu == "echeance_ancienne"
+                                              else _msg_dec or MOTIFS.get(_exclu, "")),
                         "jalons": _jalons})
     _lignes.sort(key=lambda x: x.get("echeance") or "")
-    return {"simulation": True, "aucun_envoi": True, "automatisation_disponible": AUTOMATISATION_DISPONIBLE,
+    return {"simulation": True, "aucun_envoi": True, "automatisation_disponible": await _drapeau(DRAPEAU_AUTO),
             "delais": _delais, "lignes": _lignes[:SIMULATION_MAX]}
+
+
+async def _reponse_apercu(sub_id: str, _ctx: dict, _email: str, _admin: bool, modele: dict = None) -> dict:
+    _v = await _verdict(_ctx)
+    _hist = await _historique(sub_id)
+    _reel = await _envoi_reel_autorise()
+    if not _v["ok"]:
+        return {"possible": False, "motif": _v["motif"], "message": _v["message"], "historique": _hist, "envoi_reel": _reel}
+    _msg = _message_de(_ctx, _v, modele)
+    _delai = await _delai_relance(_ctx)
+    _maintenant = datetime.now(timezone.utc)
+    _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), _delai, _maintenant, paiement_attendu(sub_id, _ctx["sub"]))
+    _envoi = _vue_envoi(_dec, _delai, _admin)
+    _m = modele or modele_enregistre(_ctx.get("modele")) or {}
+    return {"possible": True, "envoi_reel": await _envoi_autorise_vers(_v["destinataire"]), "mode_paiement": classer_mode_paiement(_ctx["sub"])["libelle"],
+            "empreinte": jeton_apercu(_empreinte_message(sub_id, _v, _msg), etat_decision(_dec), _email, _maintenant),
+            "destinataire": _v["destinataire"],
+            "reste": _v["reste"], "devise": _v["devise"], "echeance": _v["echeance"], "avertissement": _v.get("avertissement", ""),
+            "verification_requise": bool(_v.get("verification_requise")), "envoi": _envoi,
+            "sujet": _msg["sujet"], "texte": _msg["texte"], "code": _ctx["sub"].get("code"), "historique": _hist,
+            "modele": {"sujet": _m.get("sujet") or sujet_defaut(_v.get("paiement_actuel")), "corps": _m.get("corps") or CORPS_DEFAUT},
+            "modele_defaut": {"sujet": sujet_defaut(_v.get("paiement_actuel")), "corps": CORPS_DEFAUT}}
 
 
 @router.get("/api/rappels-paiement/{sub_id}/apercu")
@@ -1077,21 +1345,17 @@ async def apercu_rappel(sub_id: str, request: Request):
     _ctx = await _contexte(sub_id)
     if not _acces(_ctx, _email, _admin):
         raise HTTPException(status_code=404, detail="Abonnement introuvable.")
-    _v = await _verdict(_ctx)
-    _hist = await _historique(sub_id)
-    _reel = await _envoi_reel_autorise()
-    if not _v["ok"]:
-        return {"possible": False, "motif": _v["motif"], "message": _v["message"], "historique": _hist, "envoi_reel": _reel}
-    _msg = _message_de(_ctx, _v)
-    _delai = await _delai_relance(_ctx)
-    _maintenant = datetime.now(timezone.utc)
-    _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), _delai, _maintenant, paiement_attendu(sub_id, _ctx["sub"]))
-    _envoi = _vue_envoi(_dec, _delai, _admin)
-    return {"possible": True, "envoi_reel": _reel, "mode_paiement": classer_mode_paiement(_ctx["sub"])["libelle"], "empreinte": jeton_apercu(empreinte(sub_id, _v, _msg["texte"]), etat_decision(_dec), _email, _maintenant),
-            "destinataire": _v["destinataire"],
-            "reste": _v["reste"], "devise": _v["devise"], "echeance": _v["echeance"], "avertissement": _v.get("avertissement", ""),
-            "verification_requise": bool(_v.get("verification_requise")), "envoi": _envoi,
-            "sujet": _msg["sujet"], "texte": _msg["texte"], "code": _ctx["sub"].get("code"), "historique": _hist}
+    return await _reponse_apercu(sub_id, _ctx, _email, _admin)
+
+
+@router.post("/api/rappels-paiement/{sub_id}/apercu")
+async def apercu_personnalise(sub_id: str, corps: ApercuPersonnalise, request: Request):
+    """L'aperçu du texte modifié. Rien n'est enregistré. Le jeton rendu vaut pour ce texte exact."""
+    _email, _admin = await _exiger_coach(request)
+    _ctx = await _contexte(sub_id)
+    if not _acces(_ctx, _email, _admin):
+        raise HTTPException(status_code=404, detail="Abonnement introuvable.")
+    return await _reponse_apercu(sub_id, _ctx, _email, _admin, _modele_saisi(corps.sujet, corps.corps))
 
 
 @router.post("/api/rappels-paiement/{sub_id}/verifier-envoi")
@@ -1135,7 +1399,7 @@ async def verifier_envoi(sub_id: str, corps: PreuveEnvoi, request: Request):
         _dest = str(_doc.get("destinataire") or "").lower()
         # Le bon destinataire suffit à douter : un objet inattendu vers cette personne n'est pas une absence.
         _vers_elle = [m for m in _liste if _dest in adresses_fiche(m)]
-        _pareils = [m for m in _vers_elle if objet_fiche(m) in OBJETS_RAPPEL]
+        _pareils = [m for m in _vers_elle if objet_fiche(m) in OBJETS_RAPPEL + (_doc.get("sujet"),)]
         if any(m not in _pareils and any(t in objet_fiche(m).casefold() for t in ("rappel", "paiement", "=?")) for m in _vers_elle):
             return _sans("preuve_insuffisante", "Un e-mail ressemblant existe pour cette personne : impossible de trancher.")
         if not _pareils:
@@ -1190,11 +1454,12 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     _v = await _verdict(_ctx)
     if not _v["ok"]:
         raise HTTPException(status_code=409, detail={"type": _v["motif"], "message": _v["message"]})
-    _msg = _message_de(_ctx, _v)
-    _emp = empreinte(sub_id, _v, _msg["texte"])
+    _modele = _modele_saisi(corps.sujet, corps.corps)
+    _msg = _message_de(_ctx, _v, _modele)
+    _emp = _empreinte_message(sub_id, _v, _msg)
     _delai = await _delai_relance(_ctx)
     _instant_envoi = datetime.now(timezone.utc)
-    _reel = await _envoi_reel_autorise()
+    _reel = await _envoi_autorise_vers(_v["destinataire"])
     _docs = await _docs_interrompus_inscrits(sub_id, _instant_envoi, _ctx) if _reel else await _docs_abonnement(sub_id, _ctx)
     _paiement = paiement_attendu(sub_id, _ctx["sub"])
     _dec = decision_relance(_docs, _delai, _instant_envoi, _paiement)
@@ -1204,7 +1469,7 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
         raise HTTPException(status_code=409, detail={"type": "apercu_expire", "message": "Cet aperçu est trop ancien. Rouvre l'aperçu."})
     if _jeton != "ok":
         raise HTTPException(status_code=409, detail={
-            "type": "donnees_changees", "message": "Le montant, l'échéance ou les envois ont changé depuis l'aperçu. Rouvre l'aperçu."})
+            "type": "donnees_changees", "message": "Le texte, le montant, l'échéance ou les envois ont changé depuis l'aperçu. Rouvre l'aperçu."})
     # Suivi incomplet : le solde calculé ne suffit pas, le coach dit lui-même ce qui est dû.
     # Rien n'est corrigé ici : s'il ne correspond pas, c'est au coach de reprendre son suivi.
     _confirme = None
@@ -1221,20 +1486,27 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     # VERROU D'ENVOI. Ici, aucune écriture et aucun fournisseur : rien ne peut partir.
     if not _reel:
         return {"issue": "simulation", "envoye": False, "message": "Simulation : aucun e-mail n'a été envoyé."}
+    return await _executer_envoi(sub_id, _ctx, _v, _msg, _emp, _paiement, _delai, etat_decision(_dec), _email, _confirme, "manuel", _modele)
+
+
+async def _executer_envoi(sub_id: str, _ctx: dict, _v: dict, _msg: dict, _emp: str, _paiement: dict, _delai: int, etat: str, envoye_par: str,
+                          confirme, mode_envoi: str, modele: dict = None, palier_auto: str = None, fenetre_libre: bool = False) -> dict:
+    """Le seul chemin vers le fournisseur, pour le manuel comme pour l'automatique : réservation, dernière
+    relecture, appel, historique. Lève HTTPException sur tout refus."""
     if resend is None or not os.environ.get("RESEND_API_KEY"):
         raise HTTPException(status_code=503, detail="Service d'e-mail non configuré : rien n'a été envoyé.")
-
     _base = {"subscription_id": sub_id, "code": _ctx["sub"].get("code"), "coach_id": _ctx.get("proprio", ""),
-             "palier": PALIER_MANUEL, "echeance": _v["echeance"], "montant": _v["reste"], "devise": _v["devise"],
-             "destinataire": _v["destinataire"], "empreinte": _emp, "envoye_par": _email, "montant_confirme": _confirme,
+             "palier": PALIER_MANUEL, "mode_envoi": mode_envoi, "palier_auto": palier_auto, "sujet": _msg["sujet"],
+             "echeance": _v["echeance"], "montant": _v["reste"], "devise": _v["devise"],
+             "destinataire": _v["destinataire"], "empreinte": _emp, "envoye_par": envoye_par, "montant_confirme": confirme,
              "paiement_numero": _paiement["numero"], "nb_au_rappel": _paiement["nb"], "encaisse_au_rappel": _paiement["encaisse"], "total_au_rappel": _paiement["total"]}
-    _doc = await _reserver(sub_id, _base, datetime.now(timezone.utc), _delai, _ctx, etat_decision(_dec), _paiement)
+    _doc = await _reserver(sub_id, _base, datetime.now(timezone.utc), _delai, _ctx, etat, _paiement)
     _cle = _doc["_id"]
 
     # DERNIÈRE VÉRIFICATION, jeton en main : un paiement saisi pendant la réservation arrête tout.
     _ctx2 = await _contexte(sub_id)
-    _v2 = await _verdict(_ctx2) if _ctx2 else {"ok": False, "motif": "aucun_abonnement_actuel", "message": ""}
-    if not _v2["ok"] or empreinte(sub_id, _v2, _message_de(_ctx2, _v2)["texte"]) != _emp:
+    _v2 = await _verdict(_ctx2, ignorer_fenetre=fenetre_libre) if _ctx2 else {"ok": False, "motif": "aucun_abonnement_actuel", "message": ""}
+    if not _v2["ok"] or _empreinte_message(sub_id, _v2, _message_de(_ctx2, _v2, modele)) != _emp:
         await _clore_sans_succes(_doc, "echec", "donnees_changees")     # l'appel n'a pas eu lieu
         raise HTTPException(status_code=409, detail={"type": "donnees_changees", "message": "Les données ont changé : rien n'a été envoyé."})
 
@@ -1252,7 +1524,9 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
         _ecrit = await _clore_sans_succes(_doc, _issue, type(_err).__name__)
         if _issue == "incertain" or not _ecrit:
             raise HTTPException(status_code=502, detail=_msg_incertain)
-        raise HTTPException(status_code=502, detail={"type": "echec", "message": "L'envoi a été refusé : aucun message n'est parti."})
+        # Quota, clé refusée, trop de demandes : tous les clients suivants échoueraient aussi.
+        raise HTTPException(status_code=502, detail={"type": "echec", "message": "L'envoi a été refusé : aucun message n'est parti.",
+                                                     "general": isinstance(_err, _rc.QuotaResendAtteint) or str(getattr(_err, "code", "")) in ("401", "403", "429")})
 
     _rid = _brut.get("id") if isinstance(_brut, dict) else getattr(_brut, "id", None)
     if not _rid:
@@ -1262,5 +1536,82 @@ async def envoyer_rappel(sub_id: str, corps: EnvoiRappel, request: Request):
     _fin = datetime.now(timezone.utc).isoformat()
     await db[COL_RAPPELS].update_one({"_id": _cle, "idempotency_key": _doc["idempotency_key"], "statut": {"$ne": "envoye"}}, {
         "$set": {"statut": "envoye", "resend_id": _rid, "envoye_le": _fin, "maj_le": _fin}, "$unset": {"erreur": ""}})
-    logger.info("[V648] rappel de paiement envoyé (échéance %s)", _v["echeance"])
-    return {"issue": "envoye", "envoye": True, "envoye_le": _fin, "message": "Rappel envoyé."}
+    logger.info("[V648] rappel de paiement envoyé (échéance %s, %s)", _v["echeance"], mode_envoi)
+    return {"issue": "envoye", "envoye": True, "envoye_le": _fin, "message": "E-mail envoyé."}
+
+
+# ═══════════════════════════ AUTOMATIQUE (V650) ═══════════════════════════
+
+async def passage_automatique(maintenant: datetime = None) -> dict:
+    """Un passage. Drapeau éteint : ressort sans rien lire d'autre. Mêmes vérifications et même chemin que le manuel."""
+    _bilan = {"actif": False, "envoyes": 0, "ecartes": 0}
+    if not await _drapeau(DRAPEAU_AUTO):
+        return _bilan
+    _bilan["actif"] = True
+    _maintenant = maintenant or datetime.now(timezone.utc)
+    if not auto_heure_ouvree(_maintenant):
+        _bilan["hors_horaire"] = True
+        return _bilan
+    _coachs = {}
+    async for _r in db[COL_REGLAGES].find({"mode": MODE_AUTOMATIQUE}, {"delais": 1, "auto_actif_depuis": 1}):
+        _coachs[_r["_id"]] = _r
+    if not _coachs:
+        return _bilan
+    _jour = v617_jour_local(_maintenant)
+    async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": "active"}, {"_id": 0, "id": 1}):
+        if _bilan["envoyes"] >= PLAFOND_PASSAGE:
+            _bilan["plafond"] = True
+            break
+        _sid = _s.get("id")
+        _ctx = await _contexte(_sid)
+        _reg = _coachs.get(_cle_reglages(_ctx.get("proprio"))) if _ctx.get("code") else None
+        if not _reg or not _reg.get("auto_actif_depuis"):
+            continue
+        # Le même contrôle que le manuel : le réglage d'un coach ne vaut que pour ses propres clients.
+        if _ctx["proprio"] in COACHS_BASSI:
+            if str(_ctx["sub"].get("coach_id") or "").strip().lower() not in COACHS_BASSI:
+                _bilan["ecartes"] += 1
+                continue
+        elif not _acces(_ctx, _ctx["proprio"], False) or not await v646_compte_coach_autorise(db, _ctx["proprio"]):
+            _bilan["ecartes"] += 1
+            continue
+        _v = await _verdict(_ctx, _maintenant, ignorer_fenetre=True)
+        if not _v["ok"] or _v.get("incomplet") or _v["echeance"] < _reg["auto_actif_depuis"] \
+                or not auto_doit_envoyer(_v["echeance"], delais_du_reglage(_reg), _jour) \
+                or not await _envoi_autorise_vers(_v["destinataire"]):
+            _bilan["ecartes"] += 1
+            continue
+        _delai = await _delai_relance(_ctx)
+        _paiement = paiement_attendu(_sid, _ctx["sub"])
+        _dec = decision_relance(await _docs_interrompus_inscrits(_sid, _maintenant, _ctx), _delai, _maintenant, _paiement)
+        # Après un refus du fournisseur : un seul essai automatique par jour, jamais à chaque passage.
+        if _dec["action"] == "refus" or (_dec["action"] == "reessai" and str(_dec["doc"].get("maj_le") or "")[:10] == _maintenant.date().isoformat()):
+            _bilan["ecartes"] += 1
+            continue
+        _msg = _message_de(_ctx, _v)
+        _off = (datetime.strptime(_jour, "%Y-%m-%d") - datetime.strptime(_v["echeance"], "%Y-%m-%d")).days
+        try:
+            await _executer_envoi(_sid, _ctx, _v, _msg, _empreinte_message(_sid, _v, _msg), _paiement, _delai, etat_decision(_dec), "automatique",
+                                  None, "automatique", palier_auto=_nom_jalon(_off), fenetre_libre=True)
+            _bilan["envoyes"] += 1
+        except HTTPException as _err:
+            _d = _err.detail if isinstance(_err.detail, dict) else {}
+            # Une adresse refusée ne concerne qu'un client : les suivants passent. Le reste arrête le passage.
+            if _err.status_code >= 500 and not (_d.get("type") == "echec" and not _d.get("general")):
+                _bilan["arret"] = True
+                break
+            _bilan["ecartes"] += 1
+    return _bilan
+
+
+async def boucle_automatique():
+    """Le réveil horaire. Il relit le drapeau à chaque passage, et une panne ne l'arrête pas."""
+    await asyncio.sleep(DEMARRAGE_AUTO_S)
+    while True:
+        try:
+            _b = await passage_automatique()
+            if _b.get("envoyes") or _b.get("arret"):
+                logger.info("[V650] passage automatique : %s envoyés, arrêt=%s", _b.get("envoyes"), bool(_b.get("arret")))
+        except Exception as _err:  # noqa: BLE001
+            logger.warning("[V650] passage ignoré : %s", type(_err).__name__)
+        await asyncio.sleep(PERIODE_AUTO_S)

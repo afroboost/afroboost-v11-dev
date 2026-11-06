@@ -3,6 +3,8 @@
 
   python3 fixtures_rappel_paiement.py poser     -> codes et abonnements @example.test
   python3 fixtures_rappel_paiement.py envoi on|off -> drapeau d'envoi, base de test seulement
+  python3 fixtures_rappel_paiement.py auto on|off -> drapeau de l'automatique, base de test seulement
+  python3 fixtures_rappel_paiement.py cible_auto -> un client dont l'échéance est aujourd'hui
   python3 fixtures_rappel_paiement.py vieillir <abonnement> -> 8 jours passent sur ses envois
   python3 fixtures_rappel_paiement.py partenaire <jeton> -> un partenaire connecté, un client
   python3 fixtures_rappel_paiement.py incertain <abonnement> -> un envoi sans réponse depuis 2 jours
@@ -47,7 +49,7 @@ def nettoyer():
     db.rappels_paiement.delete_many({})
     db.rappels_paiement_reglages.delete_many({})
     db.resend_envois.delete_many({"type_email": "rappel_paiement"})
-    db.feature_flags.update_one({"id": "feature_flags"}, {"$unset": {"RAPPEL_PAIEMENT_ENVOI_REEL": ""}})
+    db.feature_flags.update_one({"id": "feature_flags"}, {"$unset": {"RAPPEL_PAIEMENT_ENVOI_REEL": "", "RAPPEL_PAIEMENT_AUTO_ACTIF": ""}})
 
 
 def poser():
@@ -74,6 +76,11 @@ elif action == "nettoyer":
     nettoyer()
 elif action == "envoi":
     db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_ENVOI_REEL": sys.argv[2] == "on"}}, upsert=True)
+elif action == "auto":
+    db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {"RAPPEL_PAIEMENT_AUTO_ACTIF": sys.argv[2] == "on"}}, upsert=True)
+elif action == "cible_auto":
+    db.discount_codes.insert_one(_code("V650-AUTO"))
+    db.subscriptions.insert_one(_abo("V650-AUTO", "Eva Fictive", "eva.auto@example.test"))
 elif action == "partenaire":    # un partenaire fictif, un client fictif
     db.coaches.update_one({"email": PARTENAIRE}, {"$set": {"email": PARTENAIRE, "name": "Banc", "is_active": True, "_origine": ORIGINE}}, upsert=True)
     # Comme un vrai partenaire connecté : un compte et une session (sinon /auth/me le déconnecte).
