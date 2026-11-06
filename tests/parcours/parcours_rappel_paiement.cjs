@@ -114,6 +114,8 @@ async function ouvrirSection(p) {
     const lNormale = await p.locator(id('v648-ligne-V648-NORMAL')).textContent();
     v('montant et échéance sur la ligne', /200\.00 CHF/.test(lNormale) && /Échéance/.test(lNormale), lNormale.slice(0, 90));
     v('boutons Prévisualiser et Envoyer le rappel', (await p.locator(id('v648-voir-V648-NORMAL')).textContent()) === 'Prévisualiser' && (await p.locator(id('v648-rappel-V648-NORMAL')).textContent()) === 'Envoyer le rappel');
+    v('V649 : le mode réel est affiché', (await p.locator(id('v649-mode-V648-NORMAL')).textContent()) === 'TWINT');
+    v('V649 : le vrai abonnement Stripe est nommé', /Prélèvement automatique Stripe/.test(await p.locator(id('v649-mode-V648-STRIPE')).textContent()) && /pas de rappel manuel/.test(await p.locator(id('v648-bloque-V648-STRIPE')).textContent()));
     v('saison_2x : aucun bouton, motif affiché', (await p.locator(id('v648-rappel-V648-STRIPE')).count()) === 0 && /Stripe/.test(await p.locator(id('v648-bloque-V648-STRIPE')).textContent()));
     v('sans e-mail : aucun bouton, motif affiché', (await p.locator(id('v648-rappel-V648-SANSMAIL')).count()) === 0 && /e-mail/.test(await p.locator(id('v648-bloque-V648-SANSMAIL')).textContent()));
     const c = await p.locator(id('v648-rappel-V648-NORMAL')).evaluate((el) => ({ bouton: getComputedStyle(el).color, primaire: (() => {

@@ -149,6 +149,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
               <dd className="text-white break-all" data-testid="v648-destinataire">{apercu.destinataire}</dd>
               <dt className="text-white/50">Solde calculé</dt>
               <dd className="text-white font-semibold" data-testid="v648-montant">{montant(apercu.reste, apercu.devise)}</dd>
+              {apercu.mode_paiement && <><dt className="text-white/50">Mode</dt><dd className="text-white" data-testid="v649-mode-apercu">{apercu.mode_paiement}</dd></>}
               <dt className="text-white/50">Échéance</dt>
               <dd className="text-white" data-testid="v648-echeance">{dateCH(apercu.echeance)}</dd>
               <dt className="text-white/50">Objet</dt>
@@ -376,6 +377,7 @@ function LigneRappel({ ligne, onOuvrir }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="text-white font-semibold">{ligne.nom || ligne.code}</span>
         {ligne.paiement_suivant && <span className="text-white/70">Paiement {ligne.paiement_suivant}</span>}
+        {ligne.mode_paiement && <span className="text-white/70" data-testid={`v649-mode-${ligne.code}`}>{ligne.mode_paiement}</span>}
         <span style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>
           {montant(ligne.reste_a_payer, ligne.devise)} calculés
         </span>

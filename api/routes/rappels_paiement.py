@@ -14,6 +14,9 @@ DEUX VERROUS, TOUS DEUX FERMÉS À LA LIVRAISON :
   * AUTOMATISATION_DISPONIBLE = False : aucune boucle n'existe. Choisir « Automatique » range
     une préférence ; les délais J-3, J0, J+3 ne sont calculés qu'en simulation, en lecture seule.
 
+V649 — SEUL UN ABONNEMENT STRIPE RÉEL COMPTE. Le type de l'offre ne dit pas comment CE client paie : une
+offre `saison_2x` peut être vendue à la main, en TWINT ou en espèces. Voir `classer_mode_paiement`.
+
 POURQUOI LES ABONNEMENTS STRIPE SONT EXCLUS. `saison_2x` et `mensuel_auto` sont prélevés par
 Stripe, et la facture payée ne met à jour ni `montant_encaisse` ni `suivi_paiement`
 (`hiver.py`) : le « reste à payer » y reste affiché après le paiement. Relancer ces clients,
@@ -77,7 +80,7 @@ from pydantic import BaseModel, ConfigDict
 from pymongo.errors import DuplicateKeyError
 
 import api.resend_central as _rc
-from api.routes.shared import (SUPER_ADMIN_EMAIL, abo_actuel_du_code, coach_jwt_email,
+from api.routes.shared import (SUPER_ADMIN_EMAIL, abo_actuel_du_code, b_normaliser_origine, coach_jwt_email,
                                suivi_paiement_lire, suivi_rappel, v617_jour_local, v617_visible_par,
                                v646_compte_coach_autorise)
 
@@ -141,7 +144,8 @@ MOTIFS = {
     "aucun_abonnement_actuel": "Cet abonnement n'est plus l'abonnement actuel du code.",
     "plusieurs_abonnements": "Ce code porte plusieurs abonnements actuels : à vérifier d'abord.",
     "code_ambigu": "Ce code existe en plusieurs exemplaires : à vérifier d'abord.",
-    "stripe_recurrent": "Abonnement prélevé par Stripe : aucun rappel à envoyer.",
+    "stripe_recurrent": "Prélevé automatiquement par Stripe : pas de rappel manuel pour cette échéance.",
+    "paiement_a_verifier": "Paiement à vérifier : les informations de paiement sont contradictoires ou incomplètes. Aucun rappel possible.",
     "solde_inconnu": "Le montant total ou le montant encaissé n'est pas renseigné.",
     "solde_nul": "Il ne reste rien à payer.",
     "suivi_incoherent": "Le suivi de paiement est incohérent : à corriger avant tout rappel.",
@@ -174,15 +178,34 @@ def _nombre(v):
         return None
 
 
-def est_recurrent_stripe(sub, offre=None) -> bool:
-    """PUR. Vrai dès qu'un seul indice désigne un prélèvement Stripe (au moindre doute, exclu)."""
+MODES_MANUELS = {"twint": "TWINT", "especes": "Espèces", "virement": "Virement"}
+MODES_SANS_PRELEVEMENT = {"stripe": "Carte, paiement unique", "mobile_money": "Mobile Money, paiement unique"}
+
+
+def classer_mode_paiement(sub) -> dict:
+    """PUR. Comment CE client paie, d'après son abonnement : {classe, libelle}.
+
+    classe : stripe_auto | manuel | a_verifier. Un prélèvement automatique exige un vrai abonnement Stripe
+    (`stripe_subscription_id`). Ni le type de l'offre, ni un ancien paiement Stripe ne le prouvent.
+    Données contradictoires ou insuffisantes : `a_verifier`, sans rien affirmer.
+    """
     _s = sub or {}
-    return bool(str(_s.get("stripe_subscription_id") or "").strip()
-                or _s.get("billing_mode") in BILLING_STRIPE
-                or (offre or {}).get("billing_mode") in BILLING_STRIPE)
+    _id = str(_s.get("stripe_subscription_id") or "").strip()
+    _o = b_normaliser_origine(_s.get("origine_paiement"))
+    if _id:
+        if _o in MODES_MANUELS or _o == "offert":
+            return {"classe": "a_verifier", "libelle": "Paiement à vérifier"}
+        return {"classe": "stripe_auto", "libelle": "Prélèvement automatique Stripe"}
+    if _s.get("billing_mode") in BILLING_STRIPE and _s.get("payment_mode") != "full":
+        return {"classe": "a_verifier", "libelle": "Paiement à vérifier"}     # automatique annoncé, aucun abonnement Stripe
+    if _o in MODES_MANUELS:
+        return {"classe": "manuel", "libelle": MODES_MANUELS[_o]}
+    if _o in MODES_SANS_PRELEVEMENT:
+        return {"classe": "manuel", "libelle": MODES_SANS_PRELEVEMENT[_o]}
+    return {"classe": "a_verifier", "libelle": "Paiement à vérifier"}         # inconnu, ou « offert » avec un solde
 
 
-def eligibilite(sub, code_doc=None, offre=None, motif_abo="unique", maintenant=None, ignorer_fenetre=False) -> dict:
+def eligibilite(sub, code_doc=None, motif_abo="unique", maintenant=None, ignorer_fenetre=False) -> dict:
     """PUR. Ce rappel peut-il partir ? {ok, motif, message, avertissement, reste, ...}.
 
     Jamais de correction silencieuse : une donnée douteuse bloque, et le coach lit pourquoi.
@@ -198,8 +221,11 @@ def eligibilite(sub, code_doc=None, offre=None, motif_abo="unique", maintenant=N
     _s = sub or {}
     if motif_abo != "unique" or str(_s.get("status") or "").strip().lower() != "active":
         return _non("aucun_abonnement_actuel")
-    if est_recurrent_stripe(_s, offre):
+    _classe = classer_mode_paiement(_s)["classe"]
+    if _classe == "stripe_auto":
         return _non("stripe_recurrent")
+    if _classe == "a_verifier":
+        return _non("paiement_a_verifier")
 
     _vue = suivi_paiement_lire(_s)
     _total, _enc = _nombre(_vue.get("montant_total")), _nombre(_s.get("montant_encaisse"))
@@ -633,21 +659,18 @@ async def _contexte(sub_id: str) -> dict:
     # Ce rappel ne vise que l'abonnement ACTUEL : un abonnement remplacé ne reçoit rien.
     if _motif == "unique" and (_actuel or {}).get("id") != _sub.get("id"):
         _motif = "aucun"
-    _offre = None
-    if _sub.get("offer_id"):
-        _offre = await db.offers.find_one({"id": _sub["offer_id"]}, {"_id": 0, "billing_mode": 1})
     _proprio = str((_code or {}).get("coach_id") or "").strip().lower()
     _sig = None
     if _proprio not in COACHS_BASSI:
         _sig = (await db[COL_REGLAGES].find_one({"_id": _proprio}, {"signature": 1}) or {}).get("signature")
-    return {"sub": _sub, "code": _code, "offre": _offre, "motif_abo": _motif, "codes_trouves": len(_codes), "codes": _codes,
+    return {"sub": _sub, "code": _code, "motif_abo": _motif, "codes_trouves": len(_codes), "codes": _codes,
             "proprio": _proprio, "signature": _sig}
 
 
 async def _verdict(ctx: dict, maintenant=None, ignorer_fenetre=False) -> dict:
     if ctx.get("codes_trouves", 0) > 1:
         return {"ok": False, "motif": "code_ambigu", "message": MOTIFS["code_ambigu"]}
-    _v = eligibilite(ctx.get("sub"), ctx.get("code"), ctx.get("offre"), ctx.get("motif_abo"),
+    _v = eligibilite(ctx.get("sub"), ctx.get("code"), ctx.get("motif_abo"),
                      maintenant, ignorer_fenetre)
     if _v["ok"] and not signature_du_code(ctx.get("code"), ctx.get("signature")):
         return {"ok": False, "motif": "signature_manquante", "message": MOTIFS["signature_manquante"]}
@@ -734,7 +757,7 @@ async def _ligne_liste(ctx: dict, maintenant: datetime, admin: bool = False) -> 
               "reste_a_payer": _vue.get("reste_a_payer"), "devise": _sub.get("devise") or "CHF", "prochaine_echeance": _ech,
               "en_retard": bool(_ech) and _ech < v617_jour_local(maintenant),
               "paiement_suivant": ("%d/%d" % (_act + 1, _nb)) if _nb and _act and _act < _nb else None,
-              "possible": bool(_v["ok"]), "motif": _v.get("motif"), "message": _v.get("message", ""),
+              "mode_paiement": classer_mode_paiement(_sub)["libelle"], "possible": bool(_v["ok"]), "motif": _v.get("motif"), "message": _v.get("message", ""),
               "verification_requise": bool(_v.get("verification_requise")), "envoi": None}
     if _v["ok"]:
         _delai = await _delai_relance(ctx)
@@ -1064,7 +1087,7 @@ async def apercu_rappel(sub_id: str, request: Request):
     _maintenant = datetime.now(timezone.utc)
     _dec = decision_relance(await _docs_abonnement(sub_id, _ctx), _delai, _maintenant, paiement_attendu(sub_id, _ctx["sub"]))
     _envoi = _vue_envoi(_dec, _delai, _admin)
-    return {"possible": True, "envoi_reel": _reel, "empreinte": jeton_apercu(empreinte(sub_id, _v, _msg["texte"]), etat_decision(_dec), _email, _maintenant),
+    return {"possible": True, "envoi_reel": _reel, "mode_paiement": classer_mode_paiement(_ctx["sub"])["libelle"], "empreinte": jeton_apercu(empreinte(sub_id, _v, _msg["texte"]), etat_decision(_dec), _email, _maintenant),
             "destinataire": _v["destinataire"],
             "reste": _v["reste"], "devise": _v["devise"], "echeance": _v["echeance"], "avertissement": _v.get("avertissement", ""),
             "verification_requise": bool(_v.get("verification_requise")), "envoi": _envoi,

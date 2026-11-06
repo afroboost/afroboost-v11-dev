@@ -55,7 +55,7 @@ def jeton(email):
 
 def abo(**k):
     d = {"id": "s1", "code": "CODE-1", "status": "active", "email": "cliente@example.test", "name": "Marie Dupont",
-         "montant_encaisse": 200, "devise": "CHF",
+         "montant_encaisse": 200, "devise": "CHF", "origine_paiement": "twint",
          "suivi_paiement": {"montant_total": 400, "plusieurs_fois": True, "nb_paiements": 2, "paiement_actuel": 1,
                             "prochaine_echeance": D(0)}}
     d.update(k)
@@ -120,10 +120,23 @@ v("BASSBOOSTX-11 (case non cochée) : aperçu seulement, vérification exigée, 
       e(abo(suivi_paiement={"montant_total": 400, "prochaine_echeance": D(0)}))))
 v("case cochée : aucune vérification supplémentaire", e(abo())["verification_requise"] is False)
 v("AFR-B12426 (saison_2x + total saisi) : exclu",
-  e(abo(billing_mode="saison_2x", stripe_subscription_id="sub_x", montant_encaisse=199.99))["motif"] == "stripe_recurrent")
-v("Stripe : exclu par le seul identifiant d'abonnement", e(abo(stripe_subscription_id="sub_x"))["motif"] == "stripe_recurrent")
-v("Stripe : exclu par le seul billing_mode", e(abo(billing_mode="mensuel_auto"))["motif"] == "stripe_recurrent")
-v("Stripe : exclu par la seule offre", e(abo(), None, {"billing_mode": "saison_2x"})["motif"] == "stripe_recurrent")
+  e(abo(billing_mode="saison_2x", stripe_subscription_id="sub_x", montant_encaisse=199.99, origine_paiement="renouvellement_pulse"))["motif"] == "stripe_recurrent")
+v("Stripe : exclu par un vrai abonnement Stripe", e(abo(stripe_subscription_id="sub_x", origine_paiement="stripe"))["motif"] == "stripe_recurrent")
+print("── V649 : le mode de paiement réel")
+_cm = lambda **k: rp.classer_mode_paiement(k)  # noqa: E731
+v("CHRISTOUX10 : TWINT, offre saison_2x sans abonnement Stripe : manuel", _cm(origine_paiement="twint", offer_id="o-2x") == {"classe": "manuel", "libelle": "TWINT"})
+v("BASSBOOSTX-11 : espèces, offre saison_2x sans abonnement Stripe : manuel", _cm(origine_paiement="especes", offer_id="o-2x") == {"classe": "manuel", "libelle": "Espèces"})
+v("AFR-B12426 : vrai abonnement Stripe : prélèvement automatique", _cm(origine_paiement="renouvellement_pulse", billing_mode="saison_2x", stripe_subscription_id="sub_x")["classe"] == "stripe_auto")
+v("virement : manuel", _cm(origine_paiement="virement")["libelle"] == "Virement")
+v("carte en paiement unique : aucun prélèvement", _cm(origine_paiement="stripe") == {"classe": "manuel", "libelle": "Carte, paiement unique"})
+v("saison_2x payée en une fois : aucun prélèvement", _cm(origine_paiement="stripe", billing_mode="saison_2x", payment_mode="full")["classe"] == "manuel")
+for _nom, _k in (("abonnement Stripe ET TWINT", dict(stripe_subscription_id="sub_x", origine_paiement="twint")), ("abonnement Stripe ET espèces", dict(stripe_subscription_id="sub_x", origine_paiement="especes")),
+                 ("abonnement Stripe ET offert", dict(stripe_subscription_id="sub_x", origine_paiement="offert")), ("facturation automatique sans abonnement Stripe", dict(billing_mode="mensuel_auto", origine_paiement="stripe")),
+                 ("saison_2x sans abonnement, en TWINT", dict(billing_mode="saison_2x", origine_paiement="twint")), ("mode absent", {}), ("mode inconnu", dict(origine_paiement="xyz")),
+                 ("recharge sans abonnement Stripe", dict(origine_paiement="renouvellement_pulse")), ("offert avec un solde", dict(origine_paiement="offert"))):
+    v(f"{_nom} : à vérifier", _cm(**_k) == {"classe": "a_verifier", "libelle": "Paiement à vérifier"}, _cm(**_k))
+    v(f"{_nom} : aucun rappel, sans parler de Stripe", (lambda r: r["motif"] == "paiement_a_verifier" and "Stripe" not in r["message"])(e(abo(**dict({"origine_paiement": None}, **_k)))))
+v("l'ancien texte ambigu a disparu", all("aucun rappel à envoyer" not in m.lower() for m in rp.MOTIFS.values()))
 v("CHRISTOUX10 (retard, code sans e-mail) : éligible, e-mail de l'abonnement",
   (lambda r: r["ok"] and r["destinataire"] == "cliente@example.test")(
       e(abo(suivi_paiement=suivi(prochaine_echeance=D(-2))), {"assignedEmail": ""})))
@@ -141,7 +154,7 @@ v("sans e-mail : refusé", e(abo(email=""))["motif"] == "sans_email")
 v("e-mail illisible : refusé", e(abo(email="pas-une-adresse"))["motif"] == "sans_email")
 v("adresses code ≠ abonnement : refusé", e(abo(), {"assignedEmail": "autre@example.test"})["motif"] == "destinataire_ambigu")
 v("abonnement remplacé : refusé", e(abo(status="superseded"))["motif"] == "aucun_abonnement_actuel")
-v("plusieurs abonnements actifs : refusé", e(abo(), None, None, "plusieurs")["motif"] == "plusieurs_abonnements")
+v("plusieurs abonnements actifs : refusé", e(abo(), None, "plusieurs")["motif"] == "plusieurs_abonnements")
 
 print("── Message")
 m = rp.construire_message("Marie", 200, "CHF", "2026-11-05", "Coach Bassi, d'Afroboost")
@@ -334,7 +347,7 @@ async def semer(db, flag=False):
         abo(),
         abo(id="s-ancien", status="superseded", montant_encaisse=100, email="cliente@example.test"),
         abo(id="s-lea", code="CODE-LEA", coach_id=PARTENAIRE, email="client-lea@example.test", name="Paul"),
-        abo(id="s-stripe", code="CODE-STRIPE", billing_mode="saison_2x", stripe_subscription_id="sub_x", email="stripe@example.test"),
+        abo(id="s-stripe", code="CODE-STRIPE", billing_mode="saison_2x", stripe_subscription_id="sub_x", email="stripe@example.test", origine_paiement="stripe"),
         abo(id="s-offre", code="CODE-OFFRE", offer_id="o-2x", email="offre@example.test"),
         abo(id="s-opt", code="CODE-OPT", email="refus@example.test"),
         abo(id="s-case", code="CODE-CASE", email="case@example.test",
@@ -423,7 +436,7 @@ async def principal():
         v("toujours aucun appel au fournisseur", len(faux.Emails.appels) == 0)
 
         print("── Exclusions, par la route")
-        for sid, motif in (("s-stripe", "stripe_recurrent"), ("s-offre", "stripe_recurrent"), ("s-opt", "refus_email"),
+        for sid, motif in (("s-stripe", "stripe_recurrent"), ("s-opt", "refus_email"),
                            ("s-ancien", "aucun_abonnement_actuel")):
             r = await cl.get(f"/api/rappels-paiement/{sid}/apercu", headers=A)
             v(f"{sid} : aperçu sans message, motif {motif}", r.status_code == 200 and r.json()["possible"] is False and r.json()["motif"] == motif and "texte" not in r.json(), r.text)
@@ -904,7 +917,7 @@ async def principal():
         L = {x["code"]: x for x in s["lignes"]}
         v("cas normal : enverrait", L["CODE-1"]["enverrait"] is True and len(L["CODE-1"]["jalons"]) == 3, L.get("CODE-1"))
         v("saison_2x : n'enverrait pas", L["CODE-STRIPE"]["enverrait"] is False and L["CODE-STRIPE"]["motif_exclusion"] == "stripe_recurrent")
-        v("offre saison_2x : n'enverrait pas", L["CODE-OFFRE"]["enverrait"] is False)
+        v("offre saison_2x sans abonnement Stripe : un paiement manuel, il enverrait", L["CODE-OFFRE"]["enverrait"] is True, L["CODE-OFFRE"])
         v("case non cochée : n'enverrait pas tout seul", L["CODE-CASE"]["motif_exclusion"] == "suivi_incomplet")
         v("refus d'e-mails : n'enverrait pas", L["CODE-OPT"]["enverrait"] is False)
         r = await cl.get("/api/rappels-paiement/simulation", headers=P)
@@ -1227,6 +1240,24 @@ async def principal():
         v("son propre client n'est pas touché", (await cl.get("/api/rappels-paiement/s-tom/apercu", headers=O)).json()["envoi"]["etape"] == "Rappel")
         v("son historique reste vide", (await cl.get("/api/rappels-paiement/historique", headers=O)).json()["historique"] == [])
 
+
+        print("── V649 : les routes, avec le mode réel")
+        await semer(db, flag=True)
+        faux.Emails.__init__()
+        await db.subscriptions.update_one({"id": "s-offre"}, {"$set": {"origine_paiement": "especes"}})
+        ap = (await cl.get("/api/rappels-paiement/s-offre/apercu", headers=A)).json()
+        v("offre saison_2x en espèces, sans Stripe : aperçu possible, mode réel", ap["possible"] is True and ap["mode_paiement"] == "Espèces", ap)
+        r = await cl.post("/api/rappels-paiement/s-offre/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+        v("offre saison_2x en espèces : le rappel suit les règles normales", r.status_code == 200 and len(faux.Emails.appels) == 1, r.text)
+        L = {x["code"]: x for x in (await cl.get("/api/rappels-paiement/liste", headers=A)).json()["lignes"]}
+        v("liste : TWINT affiché", L["CODE-1"]["mode_paiement"] == "TWINT", L["CODE-1"])
+        v("liste : Stripe réel, motif explicite, aucun bouton", L["CODE-STRIPE"]["mode_paiement"] == "Prélèvement automatique Stripe" and L["CODE-STRIPE"]["possible"] is False and "Prélevé automatiquement par Stripe" in L["CODE-STRIPE"]["message"], L["CODE-STRIPE"])
+        await db.subscriptions.update_one({"id": "s-case"}, {"$set": {"stripe_subscription_id": "sub_y", "origine_paiement": "twint"}})
+        L = {x["code"]: x for x in (await cl.get("/api/rappels-paiement/liste", headers=A)).json()["lignes"]}
+        v("liste : données contradictoires, « Paiement à vérifier », jamais Stripe", L["CODE-CASE"]["mode_paiement"] == "Paiement à vérifier" and L["CODE-CASE"]["motif"] == "paiement_a_verifier" and "Stripe" not in L["CODE-CASE"]["message"], L["CODE-CASE"])
+        ap = (await cl.get("/api/rappels-paiement/s-case/apercu", headers=A)).json()
+        r = await cl.post("/api/rappels-paiement/s-case/envoyer", headers=A, json={"confirmation": True, "empreinte": "x", "montant_confirme": 200})
+        v("à vérifier : envoi refusé", r.status_code == 409 and r.json()["detail"]["type"] == "paiement_a_verifier" and len(faux.Emails.appels) == 1, r.text)
 
         print("── Section « Rappels de paiement »")
         await semer(db)
