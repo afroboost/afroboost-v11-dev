@@ -339,6 +339,32 @@ async function ouvrirSection(p) {
     await p.click(id('v650-aide-ia'));
     await p.waitForSelector(id('v650-ia-refus'));
     v('aide IA sans clé : message clair, texte intact', /pas disponible/.test(await p.locator(id('v650-ia-refus')).textContent()) && /merci !/.test(await p.inputValue(id('v650-corps'))));
+    // Réponses SIMULÉES pour tester l'écran : ceci ne prouve rien sur le fournisseur réel.
+    await p.route('**/api/rappels-paiement/aide-ia', (r) => r.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ title: 'Error 502: Bad gateway', detail: 'The origin web server returned an invalid or incomplete response to Cloudflare.', error_name: 'origin_bad_gateway' }) }));
+    await p.selectOption(id('v650-ton'), 'chaleureux');
+    await p.click(id('v650-aide-ia'));
+    await p.waitForFunction(() => /n'a pas répondu/.test(document.querySelector('[data-testid="v650-ia-refus"]')?.textContent || ''));
+    const texteErreur = await p.locator(id('v650-ia-refus')).textContent();
+    v('page Cloudflare : message en français, rien de brut', !/Cloudflare|origin web/i.test(texteErreur), texteErreur);
+    v('page Cloudflare : brouillon intact', /merci !/.test(await p.inputValue(id('v650-corps'))));
+    await p.unroute('**/api/rappels-paiement/aide-ia');
+    let tonRecu = null;
+    let objetRecu = null;
+    await p.route('**/api/rappels-paiement/aide-ia', (r) => {
+      const c = r.request().postDataJSON();
+      tonRecu = c.ton; objetRecu = c.sujet;
+      return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ proposition: { sujet: 'Un mot bienveillant', corps: '{bonjour}\n\nJuste un petit mot : il reste {montant}, pour le {echeance}. Merci !' }, ton: c.ton }) });
+    });
+    await p.click(id('v650-aide-ia'));
+    await p.waitForSelector(id('v650-proposition'));
+    v('objet affiché et ton choisi transmis', tonRecu === 'chaleureux' && objetRecu === 'Un petit mot de ton coach', `${tonRecu} / ${objetRecu}`);
+    v('proposition montrée, texte pas encore remplacé', /merci !/.test(await p.inputValue(id('v650-corps'))));
+    await p.click(id('v650-accepter'));
+    const accepte = await p.inputValue(id('v650-corps'));
+    v('accepter : variables dynamiques conservées', ['{bonjour}', '{montant}', '{echeance}'].every((x) => accepte.includes(x)), accepte);
+    await p.unroute('**/api/rappels-paiement/aide-ia');
+    await p.fill(id('v650-objet'), 'Un petit mot de ton coach');
+    await p.fill(id('v650-corps'), '{bonjour}\n\nIl reste {montant} pour le {echeance}, merci !');
     await p.click(id('v650-actualiser'));
     await p.waitForFunction(() => /merci !/.test(document.querySelector('[data-testid="v648-texte"]')?.textContent || ''));
     const rendu = await p.locator(id('v648-texte')).textContent();

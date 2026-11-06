@@ -43,7 +43,10 @@ const STYLE_BORD = { border: '1px solid var(--primary-color, #D91CD2)', color: '
 const STYLE_CARTE = { background: 'rgba(255,255,255,0.06)' };
 
 function detailErreur(err, secours) {
-  const d = err?.response?.data?.detail;
+  const donnees = err?.response?.data;
+  // V653 : une page d'erreur de Cloudflare ou du proxy n'est pas un message pour le coach.
+  if (donnees?.error_name || donnees?.error_category || /cloudflare/i.test(String(donnees?.type || ''))) return { type: 'erreur', message: secours };
+  const d = donnees?.detail;
   if (d && typeof d === 'object') return d;
   return { type: 'erreur', message: typeof d === 'string' ? d : secours };
 }
@@ -83,7 +86,7 @@ function EditeurTexte({ sujet, corps, onChange }) {
     try {
       setProposition((await axios.post(`${API}/aide-ia`, { sujet, corps, ton })).data.proposition);
     } catch (e) {
-      setRefus(detailErreur(e, "L'aide IA n'a pas répondu. Ton texte n'a pas changé.").message);
+      setRefus(detailErreur(e, "L'aide IA n'a pas répondu. Ton texte n'a pas changé : tu peux réessayer ou l'envoyer tel quel.").message);
     } finally {
       setAttente(false);
     }
