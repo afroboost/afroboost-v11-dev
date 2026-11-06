@@ -120,6 +120,8 @@ JETONS_MODELE = ("{bonjour}", "{montant}", "{echeance}")
 CORPS_DEFAUT = "{bonjour}\n\nPetit rappel amical : il reste {montant} à régler pour ton abonnement Afroboost, prévu le {echeance}."
 TONS_IA = {"chaleureux": "chaleureux et encourageant", "professionnel": "professionnel et courtois", "direct": "direct et bref, sans être sec"}
 IA_LIMITE_HEURE = 20
+# « evil . com », « evil point com ». Sans de, it, me, co, info… : « Merci. De ton côté » reste une phrase.
+RE_LIEN_ESPACE = re.compile(r"(?:\.|\bdot\b|\bpoint\b)\s*(?:com|ch|net|org|fr|shop|xyz|app|online|biz|link|club)\b", re.IGNORECASE)
 
 MODE_MANUEL = "MANUEL"
 MODE_AUTOMATIQUE = "AUTOMATIQUE"
@@ -604,9 +606,12 @@ def motif_modele_refuse(sujet, corps) -> str:
         return "Seules les variables {bonjour}, {montant} et {echeance} sont acceptées."
     if "{montant}" not in _c or "{echeance}" not in _c:
         return "Garde {montant} et {echeance} : le serveur les remplit avec les données vérifiées."
-    _tout = _s + "\n" + _c
-    if re.search(r"https?://|www\.|\.[a-z]{2,}/|@", _tout, re.IGNORECASE):
+    # Lu comme à l'œil : caractères invisibles retirés, signes de compatibilité (．＠) ramenés à leur forme simple.
+    _tout = "".join(c for c in unicodedata.normalize("NFKC", _s + "\n" + _c) if unicodedata.category(c) != "Cf")
+    if re.search(r"https?:|www\.|@|\w\.[a-z]{2,}", _tout, re.IGNORECASE) or RE_LIEN_ESPACE.search(_tout):
         return "Pas de lien ni d'adresse e-mail dans le message."
+    if re.search(r"\biban\b", _tout, re.IGNORECASE):
+        return "Pas de coordonnées de paiement dans le message."
     if re.search(r"\d", _tout):
         return "Pas de chiffres dans le texte : le serveur remplit {montant} et {echeance}."
     if re.search(r"\b(?:chf|eur|euros?|francs?|janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\b", _tout, re.IGNORECASE):
@@ -678,6 +683,12 @@ def jalons_simulation(echeance, delais, maintenant=None, delai_jours=DELAI_RELAN
         _d = _date.strftime("%Y-%m-%d")
         _sortie.append({"palier": _nom_jalon(_off), "date": _d, "etat": "aujourdhui" if _d == _auj else "a_venir"})
     return _sortie
+
+
+def delais_du_reglage(doc) -> list:
+    """PUR. Jamais réglé : les trois délais. Tout décoché : aucun, donc aucun envoi automatique."""
+    _d = (doc or {}).get("delais")
+    return list(PALIERS_AUTO) if _d is None else [p for p in _d if p in PALIERS_AUTO]
 
 
 def auto_doit_envoyer(echeance, delais, jour) -> bool:
@@ -1080,7 +1091,7 @@ async def lire_reglages(request: Request):
     _email, _ = await _exiger_coach(request)
     _doc = await db[COL_REGLAGES].find_one({"_id": _email}) or {}
     return {"mode": _doc.get("mode") if _doc.get("mode") in MODES else MODE_MANUEL,
-            "delais": [p for p in (_doc.get("delais") or list(PALIERS_AUTO)) if p in PALIERS_AUTO],
+            "delais": delais_du_reglage(_doc),
             "delai_relance_jours": _delai_valide(_doc.get("delai_relance_jours")),
             "signature_officielle": _email in COACHS_BASSI,
             "signature": _doc.get("signature") or {"nom": "", "activite": ""},
@@ -1254,7 +1265,7 @@ async def simuler_automatique(request: Request):
     """Ce que l'automatique FERAIT, en LECTURE SEULE : aucun envoi, aucune écriture, aucun jeton."""
     _email, _admin = await _exiger_coach(request)
     _reg = await db[COL_REGLAGES].find_one({"_id": _email}) or {}
-    _delais = [p for p in (_reg.get("delais") or list(PALIERS_AUTO)) if p in PALIERS_AUTO]
+    _delais = delais_du_reglage(_reg)
     _lignes = []
     async for _s in db.subscriptions.find({"suivi_paiement": {"$type": "object"}, "status": "active"}, {"_id": 0, "id": 1}):
         _ctx = await _contexte(_s.get("id"))
@@ -1543,11 +1554,17 @@ async def passage_automatique(maintenant: datetime = None) -> dict:
         _reg = _coachs.get(_cle_reglages(_ctx.get("proprio"))) if _ctx.get("code") else None
         if not _reg or not _reg.get("auto_actif_depuis"):
             continue
-        if _ctx.get("proprio") not in COACHS_BASSI and not await v646_compte_coach_autorise(db, _ctx["proprio"]):
+        # Le même contrôle que le manuel : le réglage d'un coach ne vaut que pour ses propres clients.
+        if _ctx["proprio"] in COACHS_BASSI:
+            if str(_ctx["sub"].get("coach_id") or "").strip().lower() not in COACHS_BASSI:
+                _bilan["ecartes"] += 1
+                continue
+        elif not _acces(_ctx, _ctx["proprio"], False) or not await v646_compte_coach_autorise(db, _ctx["proprio"]):
+            _bilan["ecartes"] += 1
             continue
         _v = await _verdict(_ctx, _maintenant, ignorer_fenetre=True)
         if not _v["ok"] or _v.get("incomplet") or _v["echeance"] < _reg["auto_actif_depuis"] \
-                or not auto_doit_envoyer(_v["echeance"], _reg.get("delais") or list(PALIERS_AUTO), _jour) \
+                or not auto_doit_envoyer(_v["echeance"], delais_du_reglage(_reg), _jour) \
                 or not await _envoi_autorise_vers(_v["destinataire"]):
             _bilan["ecartes"] += 1
             continue

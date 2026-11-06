@@ -385,9 +385,15 @@ async def tests_v650(db, cl, faux, A, P):
     C = "{bonjour} il reste {montant} pour le {echeance}."
     v("texte correct accepté", m("Petit rappel", C) == "")
     v("texte d'origine accepté", m(rp.sujet_defaut(), rp.CORPS_DEFAUT) == "")
+    v("phrases normales acceptées", m("Petit rappel", C + " Merci. De ton côté, tout va bien. Merci. Me voici. À bientôt !") == "", m("Petit rappel", C + " Merci. De ton côté, tout va bien. Merci. Me voici. À bientôt !"))
+    v("délais jamais réglés : les trois", rp.delais_du_reglage({}) == ["J-3", "J0", "J+3"])
+    v("délais tout décochés : aucun", rp.delais_du_reglage({"delais": []}) == [])
     for nom, s_, c_ in (("montant écrit", "Petit rappel", C + " Soit 150 CHF."), ("chiffre dans l'objet", "Rappel 150", C), ("date écrite", "Petit rappel", C + " Le 12.11."),
                         ("mois écrit", "Rappel de mars", C), ("devise écrite", "Petit rappel", C + " En francs."), ("lien", "Petit rappel", C + " Va sur https://evil.example"),
-                        ("domaine", "Petit rappel", C + " www.evil.test"), ("adresse", "Petit rappel", C + " paie@evil.test"), ("sans {montant}", "Petit rappel", "{echeance}"),
+                        ("domaine", "Petit rappel", C + " www.evil.test"), ("domaine sans www", "Petit rappel", C + " Paie sur evil.com merci"),
+                        ("domaine avec espaces", "Petit rappel", C + " evil . com"), ("domaine en toutes lettres", "Petit rappel", C + " evil point com"),
+                        ("point pleine largeur", "Petit rappel", C + " evil\uff0ecom"), ("caractère invisible", "Petit rappel", C + " evil\u200b.com"),
+                        ("arobase pleine largeur", "Petit rappel", C + " paie\uff20evil"), ("domaine dans l'objet", "evil.shop", C), ("iban", "Petit rappel", C + " Mon IBAN suit."), ("adresse", "Petit rappel", C + " paie@evil.test"), ("sans {montant}", "Petit rappel", "{echeance}"),
                         ("sans {echeance}", "Petit rappel", "{montant}"), ("variable inconnue", "Petit rappel", C + " {iban}"), ("accolade seule", "Petit rappel", C + " }"),
                         ("objet sur deux lignes", "a\nBcc: x", C), ("objet trop long", "x" * 121, C), ("corps trop long", "Petit rappel", C + "x" * 2000),
                         ("objet vide", "", C), ("corps vide", "Petit rappel", ""), ("objet non texte", 5, C), ("variable dans l'objet", "{montant}", C)):
@@ -515,6 +521,28 @@ async def tests_v650(db, cl, faux, A, P):
     v("mode test : seule la plus-adresse reçoit", b["envoyes"] == 1 and [x[0]["to"] for x in faux.Emails.appels] == [[plus]], faux.Emails.appels)
     b = await rp.passage_automatique()
     v("mode test, second passage : aucun doublon", b["envoyes"] == 0 and len(faux.Emails.appels) == 1, b)
+
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": [], "confirmation_auto": True})
+    await _drapeaux(db, DRAPEAU_AUTO=True)
+    b = await rp.passage_automatique()
+    v("tous les délais décochés : aucun envoi", b["envoyes"] == 0 and not faux.Emails.appels, b)
+    v("relu vide, pas remplacé par les trois", (await cl.get("/api/rappels-paiement/reglages", headers=A)).json()["delais"] == [])
+    v("simulation : aucune date annoncée", all(x["jalons"] == [] for x in (await cl.get("/api/rappels-paiement/simulation", headers=A)).json()["lignes"]))
+
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": A3, "confirmation_auto": True})
+    await db[rp.COL_REGLAGES].update_one({"_id": PARTENAIRE}, {"$set": {"mode": "AUTOMATIQUE", "delais": A3, "auto_actif_depuis": D(0)}})
+    await db.subscriptions.update_one({"id": "s1"}, {"$set": {"coach_id": AUTRE}})
+    await db.subscriptions.update_one({"id": "s-lea"}, {"$set": {"coach_id": AUTRE}})
+    await _drapeaux(db, DRAPEAU_AUTO=True)
+    await rp.passage_automatique()
+    dest = [x[0]["to"][0] for x in faux.Emails.appels]
+    v("code de la plateforme, abonnement marqué d'un autre coach : rien", "cliente@example.test" not in dest, dest)
+    v("code du partenaire, abonnement marqué d'un autre coach : rien", "client-lea@example.test" not in dest, dest)
+    v("les autres clients partent toujours", "offre@example.test" in dest, dest)
 
     await semer(db, flag=True)
     faux.Emails.__init__()
