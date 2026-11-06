@@ -104,6 +104,10 @@ S.resend.Emails.send = _faux_send
 S.RESEND_AVAILABLE = True
 S.RESEND_API_KEY = os.environ["RESEND_API_KEY"]
 S._STATIC_DIR = os.path.join(ICI, "pw_build")
+if os.environ.get("PW_AUTO_RAPIDE"):    # V650 : la VRAIE boucle des rappels, réveillée toutes les 2 s, à toute heure
+    import api.routes.rappels_paiement as _rp
+    _rp.DEMARRAGE_AUTO_S, _rp.PERIODE_AUTO_S = 2, 2
+    _rp.auto_heure_ouvree = lambda m=None: True
 for mod in ("stripe_routes", "checkout_routes", "hiver", "boost_routes"):
     try:
         m = __import__("api.routes." + mod, fromlist=["x"])

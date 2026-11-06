@@ -163,6 +163,9 @@ async function ouvrirSection(p) {
 
     // ── C. Manuel / Automatique ──
     await p.click(id('v648-mode-AUTOMATIQUE'));
+    await p.waitForSelector(id('v650-auto-demande'));
+    v('automatique : demande une confirmation explicite', /De vrais e-mails/.test(await p.locator(id('v650-auto-demande')).textContent()));
+    await p.click(id('v650-auto-confirmer'));
     await p.waitForSelector(id('v648-auto-coupe'));
     await p.click(id('v648-voir-simulation'));
     await p.waitForSelector(id('v648-simulation'));
@@ -317,6 +320,81 @@ async function ouvrirSection(p) {
     v('Codes promo : aucun bouton de rappel ajouté', (await p.locator(`${id('v617-echeances')} [data-testid^="v648-"]`).count()) === 0);
     v('Codes promo : texte d\'origine conservé', /aucun message n'est envoyé au client/.test(await p.locator(id('v617-echeances')).textContent()));
     await ctx.close();
+
+    // ── G. V650 : éditeur, aide IA, envoi, puis la vraie boucle automatique (pile lancée avec PW_AUTO_RAPIDE) ──
+    fixture('poser');
+    fixture('envoi', 'on');
+    ({ ctx, p } = await ouvrirPagePaiements(browser, { width: 1440, height: 900 }));
+    await ouvrirSection(p);
+    const tous = () => lignesEmails();
+    const depart = tous().length;
+    await p.click(id('v648-rappel-V648-NORMAL'));
+    await p.waitForSelector(id('v650-editeur'));
+    await p.click(`${id('v650-editeur')} summary`);
+    await p.fill(id('v650-objet'), 'Un petit mot de ton coach');
+    await p.fill(id('v650-corps'), '{bonjour}\n\nIl reste {montant} pour le {echeance}, merci !');
+    v('texte modifié : aperçu exigé', await p.locator(id('v650-a-revoir')).isVisible());
+    await p.click(id('v648-confirmation'));
+    v('texte modifié : envoi inerte', await p.locator(id('v648-envoyer')).isDisabled());
+    await p.click(id('v650-aide-ia'));
+    await p.waitForSelector(id('v650-ia-refus'));
+    v('aide IA sans clé : message clair, texte intact', /pas disponible/.test(await p.locator(id('v650-ia-refus')).textContent()) && /merci !/.test(await p.inputValue(id('v650-corps'))));
+    await p.click(id('v650-actualiser'));
+    await p.waitForFunction(() => /merci !/.test(document.querySelector('[data-testid="v648-texte"]')?.textContent || ''));
+    const rendu = await p.locator(id('v648-texte')).textContent();
+    v('aperçu : montant du serveur et mention « déjà payé »', /200/.test(rendu) && /CHF/.test(rendu) && /déjà payé/.test(rendu));
+    await capture(p, '20-editeur');
+    await p.click(id('v648-confirmation'));
+    await p.click(id('v648-envoyer'));
+    await p.waitForSelector(id('v648-resultat'));
+    v('« E-mail envoyé » après réponse du fournisseur', (await p.locator(id('v648-resultat')).textContent()) === 'E-mail envoyé.');
+    const parti = tous().slice(depart);
+    v('un seul e-mail, avec le texte vu', parti.length === 1 && parti[0].subject === 'Un petit mot de ton coach', parti.length);
+    await fermer(p);
+
+    fixture('cible_auto');
+    await p.click(id('v648-mode-AUTOMATIQUE'));
+    await p.click(id('v650-auto-confirmer'));
+    await p.waitForSelector(id('v648-auto-coupe'));
+    await p.waitForTimeout(5000);
+    const versEva = () => tous().slice(depart).filter((m) => JSON.stringify(m).includes('eva.auto@example.test'));
+    v('coach en automatique, drapeau fermé : la boucle tourne et n\'envoie rien', versEva().length === 0);
+    fixture('auto', 'on');
+    for (let i = 0; i < 30 && !versEva().length; i += 1) await p.waitForTimeout(500);    // eslint-disable-line no-await-in-loop
+    v('la vraie boucle envoie sans action du coach', versEva().length === 1, versEva().length);
+    await p.waitForTimeout(5000);
+    v('plusieurs passages : aucun doublon', versEva().length === 1, versEva().length);
+    const autres = tous().slice(depart + 1).filter((m) => !JSON.stringify(m).includes('eva.auto@example.test'));
+    v('anciennes échéances et cas exclus : aucun e-mail', autres.length === 0, autres.length);
+    await ctx.close();
+    ({ ctx, p } = await ouvrirPagePaiements(browser, { width: 1440, height: 900 }));
+    await ouvrirSection(p);
+    await p.waitForSelector(id('v650-auto-actif'));
+    await p.locator(`${id('v648-historique-general')} summary`).click();
+    v('historique : l\'envoi automatique est visible', await p.locator(id('v650-histo-auto')).first().isVisible());
+    v('automatique ouvert : état annoncé', await p.locator(id('v650-auto-actif')).isVisible());
+    await capture(p, '21-automatique', { fullPage: true });
+    await p.click(id('v648-mode-MANUEL'));
+    await p.waitForSelector(id('v648-enregistre'));
+    fixture('auto', 'off');
+    v('aucune erreur JavaScript (V650)', p.appels.erreurs.length === 0, p.appels.erreurs.join(' | '));
+    await ctx.close();
+
+    ({ ctx, p } = await ouvrirPagePaiements(browser, { width: 390, height: 844 }));
+    await ouvrirSection(p);
+    await p.click(id('v648-rappel-V648-RETARD'));
+    await p.waitForSelector(id('v650-editeur'));
+    await p.click(`${id('v650-editeur')} summary`);
+    await p.waitForSelector(id('v650-corps'));
+    await fenetreStable(p, id('v648-dialogue'));
+    await capture(p, '22-editeur-telephone');
+    const dlg = await p.locator(id('v648-dialogue')).boundingBox();
+    v('téléphone : éditeur dans l\'écran', Math.round(dlg.x) === 16 && Math.round(dlg.x + dlg.width) === 374, JSON.stringify(dlg));
+    await fermer(p);
+    const large = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    v('téléphone : aucun débordement (V650)', large <= 0, large);
+    await ctx.close();
+    fixture('envoi', 'off');
   } finally {
     await browser.close();
     fixture('nettoyer');

@@ -2017,6 +2017,8 @@ class FeatureFlags(BaseModel):
     P1E_ESSAI_NON_RESERVE_ENVOI_REEL: bool = False
     P1E_TEST_CONTROLE: bool = False
     RAPPEL_PAIEMENT_ENVOI_REEL: bool = False   # V648 : faux = aucun e-mail, aucune écriture (simulation)
+    RAPPEL_PAIEMENT_TEST_CONTROLE: bool = False  # V650 : envoi réel vers les seules plus-adresses du super-admin
+    RAPPEL_PAIEMENT_AUTO_ACTIF: bool = False   # V650 : faux = la boucle automatique ne fait rien
     # AUTO-PRESENCE PHASE 1 — l'oubli du scan ne bloque plus l'essai.
     # Meme double garde que P1-b/P1-d, mais le second drapeau ne parle pas
     # d'ENVOI : ce lot n'ecrit pas a des gens, il ECRIT EN BASE. Le nommer
@@ -2101,6 +2103,8 @@ class FeatureFlagsUpdate(BaseModel):
     P3_RELANCE_ENABLED: Optional[bool] = None     # V584b : P3-R2 n'était pas pilotable par l'API
     P3_RELANCE_ENVOI_REEL: Optional[bool] = None  # V584b
     RAPPEL_PAIEMENT_ENVOI_REEL: Optional[bool] = None  # V648
+    RAPPEL_PAIEMENT_TEST_CONTROLE: Optional[bool] = None  # V650
+    RAPPEL_PAIEMENT_AUTO_ACTIF: Optional[bool] = None  # V650
     SOCIAL_PROFILE_LINKS: Optional[bool] = None  # F3 FINAL : profils Spordateur des autres comptes liés
     SOCIAL_ACTIVATION_ENABLED: Optional[bool] = None  # F4 : activation volontaire du profil social
     REMINDERS_SUBSCRIBERS_ENABLED: Optional[bool] = None  # RV-AB : rappeler AUSSI les abonnés sans réservation
@@ -23789,6 +23793,8 @@ async def get_feature_flags():
             "P3_RELANCE_ENABLED": False,       # P3-R2 : défaut OFF (aucune relance J+3/J+7)
             "P3_RELANCE_ENVOI_REEL": False,    # P3-R2 : défaut OFF (simulation même si activé)
             "RAPPEL_PAIEMENT_ENVOI_REEL": False,  # V648 : défaut OFF (aucun e-mail de rappel de paiement)
+            "RAPPEL_PAIEMENT_TEST_CONTROLE": False,  # V650 : défaut OFF
+            "RAPPEL_PAIEMENT_AUTO_ACTIF": False,  # V650 : défaut OFF
             "SOCIAL_PROFILE_LINKS": False,     # F3 FINAL : défaut OFF (profils liés dormants)
             "SOCIAL_ACTIVATION_ENABLED": False,  # F4 : défaut OFF (activation dormante)
             "REMINDERS_SUBSCRIBERS_ENABLED": False,  # RV-AB : défaut OFF (aucun envoi nouveau)
@@ -23832,6 +23838,8 @@ async def get_feature_flags():
                          ("P3_RELANCE_ENABLED", False),
                          ("P3_RELANCE_ENVOI_REEL", False),
                          ("RAPPEL_PAIEMENT_ENVOI_REEL", False),
+                         ("RAPPEL_PAIEMENT_TEST_CONTROLE", False),
+                         ("RAPPEL_PAIEMENT_AUTO_ACTIF", False),
                          ("SOCIAL_PROFILE_LINKS", False),
                          ("SOCIAL_ACTIVATION_ENABLED", False),
                          ("REMINDERS_SUBSCRIBERS_ENABLED", False),
@@ -58762,6 +58770,12 @@ async def startup_db():
                     RV3B_PREFIXE, RV3B_PERIODE_S)
     except Exception as e:
         logger.warning(f"[P1-d] Demarrage de la boucle ignore: {e}")
+    # V650 : rappels de paiement automatiques. Même discipline : drapeau relu à chaque passage, éteint à la livraison.
+    try:
+        from api.routes.rappels_paiement import boucle_automatique as _v650_boucle
+        asyncio.create_task(_v650_boucle())
+    except Exception as _v650_err:  # noqa: BLE001
+        logger.warning("[V650] boucle non démarrée (%s)", type(_v650_err).__name__)
     # P1-e : relance « essai accordé, jamais réservé ». Même discipline que P1-d :
     # la boucle relit ses drapeaux à chaque passage ; à false, elle ne lit rien.
     try:

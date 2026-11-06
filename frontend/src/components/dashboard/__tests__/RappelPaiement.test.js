@@ -12,7 +12,7 @@ import V199BoutiqueAccordion from '../V199BoutiqueAccordion';
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const act = React.act;
 
-jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn() }));
+jest.mock('axios', () => ({ get: jest.fn(), post: jest.fn(), put: jest.fn(), delete: jest.fn() }));
 jest.mock('../ConceptEditor', () => ({ section }) => <div data-testid={`concept-${section}`} />);
 jest.mock('../PaymentConfigTab', () => () => <div data-testid="config-paiements" />);
 jest.mock('../InvoiceGenerator', () => () => <div data-testid="factures" />);
@@ -29,7 +29,7 @@ async function attendre(id) {
 }
 const clic = (el) => act(async () => { el.click(); });
 const saisir = (el, v) => act(async () => {
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+  Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, v);
   el.dispatchEvent(new Event('input', { bubbles: true }));
 });
 
@@ -367,9 +367,119 @@ test('réglage : MANUEL par défaut, les délais automatiques n\'apparaissent qu
   expect((await attendre('v648-mode-MANUEL')).checked).toBe(true);
   expect($('v648-delai-J0')).toBeNull();
   await clic($('v648-mode-AUTOMATIQUE'));
-  expect((await attendre('v648-auto-coupe')).textContent).toContain('Aucun rappel ne part tout seul');
-  expect(axios.put).toHaveBeenCalledWith(expect.stringContaining('/reglages'), { mode: 'AUTOMATIQUE', delais: ['J-3', 'J0', 'J+3'], delai_relance_jours: 7 });
+  expect((await attendre('v650-auto-demande')).textContent).toContain('De vrais e-mails partiront');
+  expect(axios.put).not.toHaveBeenCalled();
+  await clic($('v650-auto-annuler'));
+  expect($('v650-auto-demande')).toBeNull();
+  expect($('v648-mode-MANUEL').checked).toBe(true);
+  await clic($('v648-mode-AUTOMATIQUE'));
+  await clic(await attendre('v650-auto-confirmer'));
+  expect((await attendre('v648-auto-coupe')).textContent).toContain("tant que l'administration");
+  expect($('v650-politique').textContent).toContain('tous les 7 jours');
+  expect(axios.put).toHaveBeenCalledWith(expect.stringContaining('/reglages'), { mode: 'AUTOMATIQUE', delais: ['J-3', 'J0', 'J+3'], delai_relance_jours: 7, confirmation_auto: true });
   expect(axios.post).not.toHaveBeenCalled();
+});
+
+test('automatique ouvert : état annoncé, et retour en manuel sans confirmation', async () => {
+  brancher({ reglages: { ...REGLAGES, mode: 'AUTOMATIQUE', automatisation_disponible: true } });
+  axios.put.mockResolvedValue({ data: {} });
+  await monter();
+  expect((await attendre('v650-auto-actif')).textContent).toContain('activé');
+  await clic($('v648-mode-MANUEL'));
+  expect(axios.put.mock.calls[0][1].mode).toBe('MANUEL');
+  expect(axios.put.mock.calls[0][1].confirmation_auto).toBeUndefined();
+});
+
+describe('éditeur et aide IA', () => {
+  const MODELE = { sujet: 'Rappel : ton deuxième paiement Afroboost', corps: '{bonjour}\n\nReste {montant}, le {echeance}.' };
+  const AP = { ...APERCU, modele: MODELE, modele_defaut: MODELE };
+  const ouvrir = async () => {
+    await monter();
+    await clic(await attendre('v648-rappel-CODE-1'));
+    return attendre('v650-corps');
+  };
+
+  test("un texte modifié bloque l'envoi jusqu'à l'aperçu, puis part avec ce texte", async () => {
+    brancher({ apercu: AP });
+    const nouveau = { ...AP, empreinte: 'emp2', sujet: 'Rappel : ton deuxième paiement Afroboost', modele: { ...MODELE, corps: '{montant} {echeance} merci' } };
+    axios.post.mockImplementation((url) => Promise.resolve({ data: url.endsWith('/apercu') ? nouveau : { issue: 'envoye', envoye: true, message: 'E-mail envoyé.' } }));
+    const corps = await ouvrir();
+    await clic($('v648-confirmation'));
+    await saisir(corps, '{montant} {echeance} merci');
+    expect($('v650-a-revoir')).not.toBeNull();
+    expect($('v648-envoyer').disabled).toBe(true);
+    await clic($('v650-actualiser'));
+    await attendre('v648-confirmation');
+    expect($('v650-a-revoir')).toBeNull();
+    expect($('v648-confirmation').checked).toBe(false);
+    await clic($('v648-confirmation'));
+    await clic($('v648-envoyer'));
+    const envoi = axios.post.mock.calls.find(([u]) => u.endsWith('/envoyer'))[1];
+    expect(envoi).toEqual({ empreinte: 'emp2', confirmation: true, sujet: MODELE.sujet, corps: '{montant} {echeance} merci' });
+    expect((await attendre('v648-resultat')).textContent).toBe('E-mail envoyé.');
+  });
+
+  test("texte refusé par le serveur : le message s'affiche, rien ne part", async () => {
+    brancher({ apercu: AP });
+    axios.post.mockRejectedValue({ response: { status: 400, data: { detail: { type: 'modele_refuse', message: 'Pas de chiffres dans le texte' } } } });
+    const corps = await ouvrir();
+    await saisir(corps, 'Payez 500');
+    await clic($('v650-actualiser'));
+    expect((await attendre('v648-erreur')).textContent).toContain('Pas de chiffres');
+    expect(axios.post.mock.calls.some(([u]) => u.endsWith('/envoyer'))).toBe(false);
+  });
+
+  test("l'IA propose : le texte ne change qu'après acceptation, et le ton choisi part", async () => {
+    brancher({ apercu: AP });
+    const prop = { sujet: 'Coucou', corps: '{montant} {echeance} proposition' };
+    axios.post.mockResolvedValue({ data: { proposition: prop } });
+    const corps = await ouvrir();
+    await act(async () => {
+      const sel = $('v650-ton');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(sel, 'direct');
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await clic($('v650-aide-ia'));
+    expect(axios.post.mock.calls[0][1].ton).toBe('direct');
+    expect((await attendre('v650-proposition')).textContent).toContain('proposition');
+    expect(corps.value).toBe(MODELE.corps);
+    await clic($('v650-ignorer'));
+    expect($('v650-proposition')).toBeNull();
+    expect(corps.value).toBe(MODELE.corps);
+    await clic($('v650-aide-ia'));
+    await clic(await attendre('v650-accepter'));
+    expect(corps.value).toBe(prop.corps);
+    expect($('v650-objet').value).toBe('Coucou');
+    expect($('v650-a-revoir')).not.toBeNull();
+  });
+
+  test('IA en panne : message, texte inchangé', async () => {
+    brancher({ apercu: AP });
+    axios.post.mockRejectedValue({ response: { status: 502, data: { detail: { type: 'ia_erreur', message: "L'aide IA n'a pas répondu." } } } });
+    const corps = await ouvrir();
+    await clic($('v650-aide-ia'));
+    expect((await attendre('v650-ia-refus')).textContent).toContain("n'a pas répondu");
+    expect(corps.value).toBe(MODELE.corps);
+  });
+
+  test('garder et réinitialiser le modèle passent par le serveur', async () => {
+    brancher({ apercu: AP });
+    axios.put.mockResolvedValue({ data: {} });
+    axios.delete.mockResolvedValue({ data: {} });
+    const corps = await ouvrir();
+    await saisir(corps, '{montant} {echeance} a moi');
+    await clic($('v650-garder'));
+    expect(axios.put).toHaveBeenCalledWith(expect.stringContaining('/modele'), { sujet: MODELE.sujet, corps: '{montant} {echeance} a moi' });
+    await clic($('v650-reinitialiser'));
+    expect(axios.delete).toHaveBeenCalledWith(expect.stringContaining('/modele'));
+    expect((await attendre('v650-corps')).value).toBe(MODELE.corps);
+  });
+
+  test("l'historique signale un envoi automatique", async () => {
+    brancher({ historique: [{ code: 'CODE-1', etape: 'Rappel', statut: 'envoye', envoye_le: '2026-11-05', echeance: '2026-11-05', palier: 'manuel', rang: 1, destinataire: 'm@example.test', montant: 200, devise: 'CHF', envoye_par: 'automatique', mode_envoi: 'automatique' }] });
+    await monter();
+    expect((await attendre('v650-histo-auto')).textContent).toContain('Automatique');
+  });
 });
 
 test('délai de relance : 7 par défaut, réglable, refus du serveur affiché et valeur rétablie', async () => {

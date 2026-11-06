@@ -188,12 +188,20 @@ v("coupure réseau : incertain", c(TimeoutError()) == "incertain")
 v("erreur sans code : incertain", c(ValueError("x")) == "incertain")
 
 print("── Automatique : simulation seulement")
-v("automatisation fermée dans le code", rp.AUTOMATISATION_DISPONIBLE is False)
 j = rp.jalons_simulation(D(0), ["J-3", "J0", "J+3"])
-v("J-3 passé, J0 aujourd'hui, J+3 à venir", [x["etat"] for x in j] == ["passe", "aujourdhui", "a_venir"], j)
-v("seuls les délais choisis", [x["palier"] for x in rp.jalons_simulation(D(0), ["J0"])] == ["J0"])
+_pal = lambda *a, **k: [x["palier"] for x in rp.jalons_simulation(*a, **k)]  # noqa: E731
+v("J-3 dépassé : le premier part aujourd'hui, jamais de date passée", [x["palier"] for x in j] == ["J0", "J+7", "J+14"] and j[0]["etat"] == "aujourdhui", j)
+v("politique complète : J-3, puis tous les 7 jours", _pal(D(3), ["J-3", "J0", "J+3"]) == ["J-3", "J+4", "J+11"])
+v("délai de 14 jours respecté", _pal(D(3), ["J-3"], delai_jours=14) == ["J-3", "J+11", "J+25"])
+v("seul J+3 coché", _pal(D(0), ["J+3"]) == ["J+3", "J+10", "J+17"])
+v("échéance dépassée : à partir d'aujourd'hui", _pal(D(-2), ["J-3"]) == ["J+2", "J+9", "J+16"])
+v("2 rappels partis : il en reste un", len(_pal(D(0), ["J0"], envoyes=2)) == 1)
+v("3 rappels partis : plus rien", _pal(D(0), ["J0"], envoyes=3) == [])
+v("attente du délai respectée", rp.jalons_simulation(D(0), ["J0"], envoyes=1, prochaine=D(5) + "T10:00:00+00:00")[0]["date"] == D(5))
+v("rien après J+30", _pal(D(-28), ["J0"]) == ["J+28"])
+v("aucun délai coché : aucun jalon", rp.jalons_simulation(D(0), []) == [])
 _src = inspect.getsource(rp)
-v("le module ne lance aucune tâche de fond", "create_task" not in _src and "while True" not in _src)
+v("une seule boucle, et aucune tâche lancée par le module lui-même", "create_task" not in _src and _src.count("while True") == 1)
 _srv = open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 v("le serveur ne démarre aucune boucle de rappel de paiement", not re.search(r"create_task\([^)]*rappel[^)]*paiement", _srv))
 v("aucune mention de prélèvement ou de Stripe dans les appels du module",
@@ -360,6 +368,257 @@ async def semer(db, flag=False):
 
 async def refus_faux(db, canal, valeur):
     return bool(await db.subscribers.find_one({"channel": canal, "value": valeur, "status": "opted_out"}))
+
+
+async def _vieillir(db, sub_id, jours=8):
+    _h = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    await db[rp.COL_RAPPELS].update_many({"subscription_id": sub_id, "statut": "envoye"}, {"$set": {"envoye_le": _h, "cree_le": _h, "maj_le": _h}})
+
+
+async def _drapeaux(db, **k):
+    await db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {getattr(rp, n): val for n, val in k.items()}})
+
+
+async def tests_v650(db, cl, faux, A, P):
+    print("── V650 : le texte du coach")
+    m = rp.motif_modele_refuse
+    C = "{bonjour} il reste {montant} pour le {echeance}."
+    v("texte correct accepté", m("Petit rappel", C) == "")
+    v("texte d'origine accepté", m(rp.sujet_defaut(), rp.CORPS_DEFAUT) == "")
+    for nom, s_, c_ in (("montant écrit", "Petit rappel", C + " Soit 150 CHF."), ("chiffre dans l'objet", "Rappel 150", C), ("date écrite", "Petit rappel", C + " Le 12.11."),
+                        ("mois écrit", "Rappel de mars", C), ("devise écrite", "Petit rappel", C + " En francs."), ("lien", "Petit rappel", C + " Va sur https://evil.example"),
+                        ("domaine", "Petit rappel", C + " www.evil.test"), ("adresse", "Petit rappel", C + " paie@evil.test"), ("sans {montant}", "Petit rappel", "{echeance}"),
+                        ("sans {echeance}", "Petit rappel", "{montant}"), ("variable inconnue", "Petit rappel", C + " {iban}"), ("accolade seule", "Petit rappel", C + " }"),
+                        ("objet sur deux lignes", "a\nBcc: x", C), ("objet trop long", "x" * 121, C), ("corps trop long", "Petit rappel", C + "x" * 2000),
+                        ("objet vide", "", C), ("corps vide", "Petit rappel", ""), ("objet non texte", 5, C), ("variable dans l'objet", "{montant}", C)):
+        v(f"refusé : {nom}", m(s_, c_) != "", (s_, c_))
+
+    print("── V650 : envoi manuel d'un texte modifié")
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    T = {"sujet": "Un petit mot", "corps": "{bonjour}\n\nIl reste {montant}, prévu le {echeance}. <b>Merci</b>"}
+    r = await cl.post("/api/rappels-paiement/s1/apercu", headers=A, json=T)
+    ap = r.json()
+    v("aperçu du texte modifié", r.status_code == 200 and ap["sujet"] == "Un petit mot" and "200" in ap["texte"] and "CHF" in ap["texte"], r.text)
+    v("mention « déjà payé » toujours présente", "Si tu as déjà payé" in ap["texte"])
+    v("aperçu : rien n'est écrit ni envoyé", await db[rp.COL_RAPPELS].count_documents({}) == 0 and not faux.Emails.appels)
+    r = await cl.post("/api/rappels-paiement/s1/apercu", headers=A, json={"sujet": "Un petit mot", "corps": "Payez 500 CHF"})
+    v("montant inventé refusé à l'aperçu", r.status_code == 400 and r.json()["detail"]["type"] == "modele_refuse", r.text)
+    r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": ap["empreinte"]})
+    v("jeton du texte modifié, sans le texte : refus", r.status_code == 409 and not faux.Emails.appels, r.text)
+    r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=dict(T, confirmation=True, empreinte=ap["empreinte"], corps=T["corps"] + " Encore"))
+    v("texte changé après l'aperçu : refus", r.status_code == 409 and not faux.Emails.appels, r.text)
+    r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json=dict(T, confirmation=True, empreinte=ap["empreinte"]))
+    v("le texte vu part", r.status_code == 200 and r.json()["envoye"] is True and r.json()["message"] == "E-mail envoyé.", r.text)
+    p = faux.Emails.appels[0][0]
+    v("objet et corps du coach", p["subject"] == "Un petit mot" and "prévu le" in p["text"])
+    v("HTML échappé", "&lt;b&gt;Merci" in p["html"] and "<b>Merci" not in p["html"])
+    d = await db[rp.COL_RAPPELS].find_one({"subscription_id": "s1"})
+    v("historique : manuel, statut, identifiant, objet", d["statut"] == "envoye" and d["mode_envoi"] == "manuel" and d["resend_id"] and d["sujet"] == "Un petit mot", d)
+    v("preuve : l'objet modifié n'est pas pris pour un autre e-mail", rp.objet_fiche({"subject": "Un petit mot"}) in rp.OBJETS_RAPPEL + (d["sujet"],))
+    faux.Emails.__init__()
+    faux.Emails.reponse = {}
+    ap = (await cl.post("/api/rappels-paiement/s-offre/apercu", headers=A, json=T)).json()
+    r = await cl.post("/api/rappels-paiement/s-offre/envoyer", headers=A, json=dict(T, confirmation=True, empreinte=ap["empreinte"]))
+    v("sans identifiant du fournisseur : jamais « envoyé »", r.status_code == 502 and r.json()["detail"]["type"] == "incertain", r.text)
+    v("et à vérifier", (await db[rp.COL_RAPPELS].find_one({"subscription_id": "s-offre"}))["statut"] == "incertain")
+
+    print("── V650 : modèle, isolation")
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    r = await cl.put("/api/rappels-paiement/modele", headers=A, json=T)
+    v("modèle enregistré", r.status_code == 200, r.text)
+    v("relu dans les réglages", (await cl.get("/api/rappels-paiement/reglages", headers=A)).json()["modele"]["sujet"] == "Un petit mot")
+    v("appliqué aux clients de la plateforme", (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["sujet"] == "Un petit mot")
+    v("pas à ceux d'un partenaire", (await cl.get("/api/rappels-paiement/s-lea/apercu", headers=P)).json()["sujet"] != "Un petit mot")
+    r = await cl.put("/api/rappels-paiement/modele", headers=A, json={"sujet": rp.OBJETS_RAPPEL[0], "corps": T["corps"]})
+    v("objet d'origine : reste calculé, jamais figé", r.json()["modele"]["sujet"] == "", r.text)
+    r = await cl.put("/api/rappels-paiement/modele", headers=A, json={"sujet": "Un petit mot", "corps": "Payez 500 CHF"})
+    v("modèle invalide : 400", r.status_code == 400)
+    r = await cl.delete("/api/rappels-paiement/modele", headers=A)
+    v("réinitialisation", r.status_code == 200 and (await cl.get("/api/rappels-paiement/reglages", headers=A)).json()["modele"] is None, r.text)
+    for meth, url in (("put", "modele"), ("delete", "modele"), ("post", "aide-ia"), ("post", "s1/apercu")):
+        r = await cl.request(meth.upper(), "/api/rappels-paiement/" + url, json=T if meth != "delete" else None)
+        v(f"sans jeton : {meth} {url} = 403", r.status_code == 403, r.status_code)
+    r = await cl.post("/api/rappels-paiement/s1/apercu", headers=P, json=T)
+    v("aperçu du client d'un autre : 404", r.status_code == 404, r.status_code)
+
+    print("── V650 : aide IA")
+    _orig_ia, recus = rp.appeler_ia, []
+    _prop = {"sujet": "Coucou", "corps": "{bonjour} reste {montant} pour le {echeance}."}
+
+    async def _ia(sys_, txt):
+        recus.append(sys_ + txt)
+        return json.dumps(_prop)
+    rp.appeler_ia = _ia
+    os.environ.pop("OPENAI_API_KEY", None)
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("sans clé : 503 clair", r.status_code == 503 and not recus, r.text)
+    os.environ["OPENAI_API_KEY"] = "cle-factice"
+    avant = await db[rp.COL_REGLAGES].count_documents({})
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("une proposition", r.status_code == 200 and r.json()["proposition"]["sujet"] == "Coucou", r.text)
+    v("le ton est transmis", "direct" in recus[0])
+    v("aucune donnée client ne part chez l'IA", not any(x in recus[0] for x in ("example.test", "CODE-1", "200")), recus[0])
+    v("rien n'est enregistré", await db[rp.COL_REGLAGES].count_documents({}) == avant and (await db[rp.COL_REGLAGES].find_one({"_id": rp.SUPER_ADMIN_EMAIL.lower()}) or {}).get("modele") is None)
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="agressif"))
+    v("ton inconnu : 400", r.status_code == 400)
+    _prop["corps"] = "Payez 500 CHF tout de suite {montant} {echeance}"
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("une proposition avec un montant inventé est écartée", r.status_code == 502 and r.json()["detail"]["type"] == "ia_refusee", r.text)
+    async def _panne(*_):
+        raise TimeoutError()
+    rp.appeler_ia = _panne
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("IA en panne : 502 clair", r.status_code == 502 and r.json()["detail"]["type"] == "ia_erreur", r.text)
+    rp._appels_ia.clear()
+    rp._appels_ia[rp.SUPER_ADMIN_EMAIL.lower()] = [datetime.now(timezone.utc).timestamp()] * rp.IA_LIMITE_HEURE
+    r = await cl.post("/api/rappels-paiement/aide-ia", headers=A, json=dict(T, ton="direct"))
+    v("limite par heure : 429", r.status_code == 429, r.status_code)
+    rp._appels_ia.clear()
+    rp.appeler_ia = _orig_ia
+
+    print("── V650 : calculs de l'automatique")
+    Z = datetime(2026, 11, 9, 11, 0, tzinfo=timezone.utc)   # un lundi, midi à Zurich
+    v("lundi midi : ouvert", rp.auto_heure_ouvree(Z) is True)
+    v("lundi 6 h : fermé", rp.auto_heure_ouvree(Z.replace(hour=5)) is False)
+    v("samedi : fermé", rp.auto_heure_ouvree(Z + timedelta(days=5)) is False)
+    A3 = ["J-3", "J0", "J+3"]
+    v("J-4 : trop tôt", rp.auto_doit_envoyer("2026-11-10", A3, "2026-11-06") is False)
+    v("J-3 : ouvert", rp.auto_doit_envoyer("2026-11-10", A3, "2026-11-07") is True)
+    v("seul J+3 coché : J0 fermé", rp.auto_doit_envoyer("2026-11-10", ["J+3"], "2026-11-10") is False)
+    v("aucun délai : fermé", rp.auto_doit_envoyer("2026-11-10", [], "2026-11-10") is False)
+    v("après J+30 : fermé", rp.auto_doit_envoyer("2026-11-10", A3, "2026-12-11") is False)
+    v("date illisible : fermé", rp.auto_doit_envoyer("x", A3, "2026-11-10") is False)
+    S = rp.SUPER_ADMIN_EMAIL.lower()
+    al, ad = S.split("@")
+    v("plus-adresse du super-admin : test", rp.adresse_de_test("%s+t@%s" % (al, ad)) is True)
+    for mauvais in (S, "%s+@%s" % (al, ad), "%s+t@evil.test" % al, "x+%s@%s" % (al, ad), "", None):
+        v(f"pas une adresse de test : {mauvais}", rp.adresse_de_test(mauvais) is False)
+
+    print("── V650 : passage automatique")
+    _ouvert = rp.auto_heure_ouvree
+    rp.auto_heure_ouvree = lambda m=None: True
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": A3, "confirmation_auto": True})
+    b = await rp.passage_automatique()
+    v("drapeau éteint : rien", b["actif"] is False and not faux.Emails.appels, b)
+    await _drapeaux(db, DRAPEAU_AUTO=True, DRAPEAU_ENVOI_REEL=False)
+    b = await rp.passage_automatique()
+    v("automatique ouvert, envoi réel fermé : rien", b["envoyes"] == 0 and not faux.Emails.appels, b)
+    plus = "%s+rappel@%s" % (al, ad)
+    await db.subscriptions.update_one({"id": "s1"}, {"$set": {"email": plus}})
+    await db.discount_codes.update_one({"id": "c1"}, {"$set": {"assignedEmail": plus}})
+    await _drapeaux(db, DRAPEAU_TEST=True)
+    b = await rp.passage_automatique()
+    v("mode test : seule la plus-adresse reçoit", b["envoyes"] == 1 and [x[0]["to"] for x in faux.Emails.appels] == [[plus]], faux.Emails.appels)
+    b = await rp.passage_automatique()
+    v("mode test, second passage : aucun doublon", b["envoyes"] == 0 and len(faux.Emails.appels) == 1, b)
+
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    await db.subscriptions.update_one({"id": "s-tom"}, {"$set": {"suivi_paiement.prochaine_echeance": D(-5)}})
+    await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": A3, "confirmation_auto": True})
+    await db[rp.COL_REGLAGES].update_one({"_id": AUTRE}, {"$set": {"mode": "AUTOMATIQUE", "delais": A3, "auto_actif_depuis": D(0)}})
+    await _drapeaux(db, DRAPEAU_AUTO=True)
+    b = await rp.passage_automatique()
+    dest = sorted(x[0]["to"][0] for x in faux.Emails.appels)
+    v("les bons clients, et eux seuls", dest == ["cliente@example.test", "offre@example.test"], dest)
+    for exclu, nom in (("stripe@example.test", "Stripe réel"), ("refus@example.test", "refus d'e-mails"), ("case@example.test", "suivi incomplet"),
+                       ("client-lea@example.test", "partenaire resté en manuel"), ("client-tom@example.test", "échéance antérieure à l'activation")):
+        v(f"exclu : {nom}", exclu not in dest, dest)
+    d = await db[rp.COL_RAPPELS].find_one({"subscription_id": "s1"})
+    v("historique automatique", d["statut"] == "envoye" and d["mode_envoi"] == "automatique" and d["envoye_par"] == "automatique" and d["palier_auto"] == "J0", d)
+    n = len(faux.Emails.appels)
+    b = await rp.passage_automatique()
+    v("second passage du jour : aucun doublon", b["envoyes"] == 0 and len(faux.Emails.appels) == n, b)
+    await _vieillir(db, "s1", 6)
+    await rp.passage_automatique()
+    v("6 jours : toujours rien", len(faux.Emails.appels) == n)
+    await _vieillir(db, "s1", 8)
+    await rp.passage_automatique()
+    d2 = [x for x in faux.Emails.appels[n:] if x[0]["to"] == ["cliente@example.test"]]
+    v("8 jours : le 2e", len(d2) == 1, faux.Emails.appels[n:])
+    await _vieillir(db, "s1", 8)
+    await rp.passage_automatique()
+    await _vieillir(db, "s1", 8)
+    await db.subscriptions.update_one({"id": "s1"}, {"$set": {"suivi_paiement.prochaine_echeance": D(1)}})
+    await rp.passage_automatique()
+    await _vieillir(db, "s1", 8)
+    await rp.passage_automatique()
+    v("3 rappels au plus, même si la date change", await db[rp.COL_RAPPELS].count_documents({"subscription_id": "s1", "statut": "envoye"}) == 3,
+      await db[rp.COL_RAPPELS].count_documents({"subscription_id": "s1"}))
+
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": A3, "confirmation_auto": True})
+    await _drapeaux(db, DRAPEAU_AUTO=True)
+    await cl.put("/api/rappels-paiement/modele", headers=A, json=T)
+    _p, rp.PLAFOND_PASSAGE = rp.PLAFOND_PASSAGE, 1
+    b = await rp.passage_automatique()
+    rp.PLAFOND_PASSAGE = _p
+    v("plafond par passage", len(faux.Emails.appels) == 1, b)
+    v("le modèle du coach sert à l'automatique", faux.Emails.appels[0][0]["subject"] == "Un petit mot")
+    await db[rp.COL_RAPPELS].delete_many({})
+    faux.Emails.__init__()
+    faux.Emails.reponse = TimeoutError()
+    b = await rp.passage_automatique()
+    v("panne : le passage s'arrête au premier", b.get("arret") is True and len(faux.Emails.appels) == 1, b)
+    faux.Emails.reponse = None
+    _sid = (await db[rp.COL_RAPPELS].find_one({"statut": "incertain"}))["subscription_id"]
+    _mail = (await db.subscriptions.find_one({"id": _sid}))["email"]
+    n = len(faux.Emails.appels)
+    await rp.passage_automatique()
+    v("résultat incertain : plus aucun envoi pour ce client", len(faux.Emails.appels) > n and not any(x[0]["to"] == [_mail] for x in faux.Emails.appels[n:]), faux.Emails.appels[n:])
+
+    await semer(db, flag=True)
+    faux.Emails.__init__()
+    await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": A3, "confirmation_auto": True})
+    await _drapeaux(db, DRAPEAU_AUTO=True)
+    _vrai = faux.Emails.send
+    def _refuse_une(params, options=None):
+        if params["to"] == ["cliente@example.test"]:
+            faux.Emails.appels.append((params, options))
+            raise ErreurResend(422)
+        return _vrai(params, options)
+    faux.Emails.send = _refuse_une
+    b = await rp.passage_automatique()
+    v("une adresse refusée n'arrête pas les suivants", "arret" not in b and any(x[0]["to"] == ["offre@example.test"] for x in faux.Emails.appels), b)
+    n = len([x for x in faux.Emails.appels if x[0]["to"] == ["cliente@example.test"]])
+    await rp.passage_automatique()
+    v("refus du fournisseur : un seul essai par jour", n == 1 and len([x for x in faux.Emails.appels if x[0]["to"] == ["cliente@example.test"]]) == 1, n)
+    v("refus : historique « echec », jamais « envoyé »", (await db[rp.COL_RAPPELS].find_one({"subscription_id": "s1"}))["statut"] == "echec")
+    del faux.Emails.send
+    await db[rp.COL_RAPPELS].delete_many({})
+    faux.Emails.__init__()
+    faux.Emails.reponse = ErreurResend(429)
+    b = await rp.passage_automatique()
+    v("trop de demandes : le passage s'arrête au premier", b.get("arret") is True and len(faux.Emails.appels) == 1, b)
+    faux.Emails.__init__()
+    await db[rp.COL_RAPPELS].delete_many({})
+    r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "MANUEL", "delais": A3})
+    v("désactivation : date effacée", r.json()["auto_actif_depuis"] is None, r.text)
+    b = await rp.passage_automatique()
+    v("coach revenu en manuel : rien", b["envoyes"] == 0 and not faux.Emails.appels, b)
+    await db.subscriptions.update_one({"id": "s1"}, {"$set": {"suivi_paiement.prochaine_echeance": D(-2)}})
+    r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": A3, "confirmation_auto": True})
+    b = await rp.passage_automatique()
+    v("réactivation : l'ancienne échéance reste à l'écart", not any(x[0]["to"] == ["cliente@example.test"] for x in faux.Emails.appels), faux.Emails.appels)
+    rp.auto_heure_ouvree = lambda m=None: False
+    faux.Emails.__init__()
+    await db[rp.COL_RAPPELS].delete_many({})
+    b = await rp.passage_automatique()
+    v("hors horaire : rien", b.get("hors_horaire") is True and not faux.Emails.appels, b)
+    rp.auto_heure_ouvree = _ouvert
+    await db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {rp.DRAPEAU_AUTO: False}})
+    r = await cl.get("/api/rappels-paiement/simulation", headers=A)
+    v("simulation : aucun envoi", r.status_code == 200 and r.json()["aucun_envoi"] is True)
+    await semer(db, flag=True)
+    await db[rp.COL_RAPPELS].insert_one({"_id": "s1|manuel|1", "subscription_id": "s1", "palier": "manuel", "rang": 1, "statut": "incertain", "echeance": D(0), "premier_essai_le": datetime.now(timezone.utc).isoformat(), "maj_le": datetime.now(timezone.utc).isoformat()})
+    L = {x["code"]: x for x in (await cl.get("/api/rappels-paiement/simulation", headers=A)).json()["lignes"]}
+    v("simulation : un envoi à vérifier n'annonce aucune date", L["CODE-1"]["enverrait"] is False and L["CODE-1"]["jalons"] == [], L["CODE-1"])
+    faux.Emails.__init__()
 
 
 async def principal():
@@ -737,8 +996,8 @@ async def principal():
         v_s = rp.empreinte("s1", rp.eligibilite(await db.subscriptions.find_one({"id": "s1"}, {"_id": 0})))
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": v_s})
         v("sans aperçu demandé (empreinte calculée) : refus", r.status_code == 409 and len(faux.Emails.appels) == 0, r.text)
-        _t0 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()["texte"]
-        _e_vraie = rp.empreinte("s1", rp.eligibilite(await db.subscriptions.find_one({"id": "s1"}, {"_id": 0})), _t0)
+        _t0 = (await cl.get("/api/rappels-paiement/s1/apercu", headers=A)).json()
+        _e_vraie = rp.empreinte("s1", rp.eligibilite(await db.subscriptions.find_one({"id": "s1"}, {"_id": 0})), _t0["sujet"] + "\n" + _t0["texte"])
         vieux_j = rp.jeton_apercu(_e_vraie, "nouveau|1|0", ADMIN, datetime.now(timezone.utc) - timedelta(minutes=31))
         r = await cl.post("/api/rappels-paiement/s1/envoyer", headers=A, json={"confirmation": True, "empreinte": vieux_j})
         v("aperçu de plus de 30 min : refus", r.status_code == 409 and r.json()["detail"]["type"] == "apercu_expire" and len(faux.Emails.appels) == 0, r.text)
@@ -886,6 +1145,8 @@ async def principal():
           r.json()["mode"] == "MANUEL" and r.json()["automatisation_disponible"] is False and r.json()["envoi_reel"] is False, r.text)
         v("les trois délais proposés", r.json()["delais"] == ["J-3", "J0", "J+3"])
         r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": ["J0", "J+3"]})
+        v("automatique sans confirmation explicite : 400", r.status_code == 400, r.text)
+        r = await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": ["J0", "J+3"], "confirmation_auto": True})
         v("choix AUTOMATIQUE rangé", r.status_code == 200 and r.json()["mode"] == "AUTOMATIQUE" and r.json()["automatisation_disponible"] is False, r.text)
         v("lecture après écriture", (await cl.get("/api/rappels-paiement/reglages", headers=A)).json()["delais"] == ["J0", "J+3"])
         v("le réglage d'un coach ne touche pas l'autre", (await cl.get("/api/rappels-paiement/reglages", headers=P)).json()["mode"] == "MANUEL")
@@ -907,7 +1168,7 @@ async def principal():
         print("── Simulation : lecture seule, automatique choisi ou non")
         await db.feature_flags.update_one({"id": "feature_flags"}, {"$set": {rp.DRAPEAU_ENVOI_REEL: True}})
         faux.Emails.__init__()
-        await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": ["J-3", "J0", "J+3"]})
+        await cl.put("/api/rappels-paiement/reglages", headers=A, json={"mode": "AUTOMATIQUE", "delais": ["J-3", "J0", "J+3"], "confirmation_auto": True})
         avant, avant_n = await empreinte_base(db), await db[rp.COL_RAPPELS].count_documents({})
         r = await cl.get("/api/rappels-paiement/simulation", headers=A)
         s = r.json()
@@ -1286,6 +1547,8 @@ async def principal():
         v("les champs d'origine sont intacts", {x["code"]: x for x in r.json()["rappels"]}["CODE-1"]["reste_a_payer"] == 200)
         r = await cl.get("/api/discount-codes/echeances")
         v("sans jeton : toujours 403", r.status_code == 403)
+
+        await tests_v650(db, cl, faux, A, P)
 
     await client.drop_database(BASE)
     client.close()

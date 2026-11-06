@@ -1,13 +1,13 @@
 /**
  * V648 — section « Rappels de paiement » de la page Gestion → Paiements (coach uniquement).
  *
- * Tout passe par `/api/rappels-paiement` : le navigateur n'envoie qu'une empreinte, une
- * confirmation et, si le suivi est incomplet, le montant confirmé par le coach. Le serveur relit
- * le montant, l'abonnement, le destinataire et les droits, et reconstruit le message.
- * Aucun prélèvement. Rien ne part sans le clic du coach, et rien tant que l'envoi réel est coupé.
+ * Tout passe par `/api/rappels-paiement` : le navigateur envoie une empreinte, une confirmation,
+ * le texte du coach (avec des variables) et, si le suivi est incomplet, le montant confirmé. Le
+ * serveur relit le montant, l'abonnement, le destinataire et les droits, et rend le message.
+ * Aucun prélèvement. Rien ne part tant que l'envoi réel est coupé.
  *
- * L'automatique n'est PAS activé : ce choix est rangé, J-3, J0 et J+3 ne sont montrés qu'en
- * simulation, en lecture seule.
+ * V650 : l'éditeur et l'aide IA (une proposition, jamais un remplacement) ; l'automatique, activé
+ * volontairement par le coach, ne part que si l'administration l'a ouvert.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
@@ -49,6 +49,7 @@ function HistoriqueLignes({ lignes, avecCode = false }) {
       {lignes.map((h) => (
         <li key={`${h.code || ''}-${h.echeance}-${h.palier}-${h.rang}`} className="rounded-md px-3 py-2 text-xs text-white/80" style={STYLE_CARTE}>
           <span className="font-semibold text-white">{h.etape}</span>
+          {h.mode_envoi === 'automatique' && <span className="text-white/70" data-testid="v650-histo-auto"> · Automatique</span>}
           {avecCode && h.code && <span className="text-white/40 font-mono"> {h.code}</span>}
           {' · '}{LIBELLES_STATUT[h.statut] || h.statut}{' · '}{dateCH(h.envoye_le || h.maj_le)}
           <br />
@@ -59,6 +60,68 @@ function HistoriqueLignes({ lignes, avecCode = false }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+const TONS = [['chaleureux', 'Chaleureux'], ['professionnel', 'Professionnel'], ['direct', 'Direct']];
+
+/** Objet, message, aide IA. La proposition reste à côté tant que le coach ne l'a pas acceptée. */
+function EditeurTexte({ sujet, corps, onChange }) {
+  const [ton, setTon] = useState('chaleureux');
+  const [proposition, setProposition] = useState(null);
+  const [attente, setAttente] = useState(false);
+  const [refus, setRefus] = useState('');
+
+  const demander = async () => {
+    setRefus(''); setProposition(null); setAttente(true);
+    try {
+      setProposition((await axios.post(`${API}/aide-ia`, { sujet, corps, ton })).data.proposition);
+    } catch (e) {
+      setRefus(detailErreur(e, "L'aide IA n'a pas répondu. Ton texte n'a pas changé.").message);
+    } finally {
+      setAttente(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 text-xs text-white/80">
+      <label className="block">
+        Objet
+        <input type="text" value={sujet} onChange={(e) => onChange({ sujet: e.target.value, corps })}
+          className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v650-objet" />
+      </label>
+      <label className="block">
+        Message
+        <textarea rows={5} value={corps} onChange={(e) => onChange({ sujet, corps: e.target.value })}
+          className="w-full mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v650-corps" />
+      </label>
+      <p className="text-[11px] text-white/60">
+        {'Garde {montant} et {echeance} : le serveur les remplit. La mention « si tu as déjà payé » et ta signature sont ajoutées.'}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={ton} onChange={(e) => setTon(e.target.value)} aria-label="Ton" data-testid="v650-ton"
+          className="px-2 py-1.5 rounded neon-input text-xs">
+          {TONS.map(([v, n]) => <option key={v} value={v}>{n}</option>)}
+        </select>
+        <button type="button" disabled={attente} onClick={demander} data-testid="v650-aide-ia"
+          className="px-2.5 py-1 rounded-md font-semibold disabled:opacity-40" style={STYLE_BORD}>
+          {attente ? 'Aide IA…' : 'Aide IA'}
+        </button>
+      </div>
+      {refus && <p className="text-red-400" data-testid="v650-ia-refus">{refus}</p>}
+      {proposition && (
+        <div className="rounded-md p-3 space-y-2" style={STYLE_CARTE} data-testid="v650-proposition">
+          <p className="font-semibold text-white">{proposition.sujet}</p>
+          <p className="whitespace-pre-wrap text-white/90">{proposition.corps}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { onChange(proposition); setProposition(null); }} data-testid="v650-accepter"
+              className="px-2.5 py-1 rounded-md font-semibold" style={STYLE_BORD}>Utiliser ce texte</button>
+            <button type="button" onClick={() => setProposition(null)} data-testid="v650-ignorer"
+              className="px-2.5 py-1 rounded-md text-white/80" style={{ border: '1px solid rgba(255,255,255,0.25)' }}>Ignorer</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -74,6 +137,15 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
   const [resultat, setResultat] = useState(null);
   const [resendId, setResendId] = useState('');
   const [preuve, setPreuve] = useState(null);
+  const [texte, setTexte] = useState(null);
+  const [personnalise, setPersonnalise] = useState(false);
+  const [noteModele, setNoteModele] = useState('');
+
+  const recevoir = (donnees) => {
+    setApercu(donnees);
+    setTexte(donnees?.modele || null);
+    setConfirme(false);
+  };
 
   const verifier = async (absence) => {
     setErreur(''); setPreuve(null);
@@ -90,10 +162,11 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
     if (!ouvert || !subId) return undefined;
     let vivant = true;
     setApercu(null); setErreur(''); setConfirme(false); setMontantSaisi(''); setResultat(null);
+    setTexte(null); setPersonnalise(false); setNoteModele('');
     setModeEnvoi(!!envoiDemande);
     setChargement(true);
     axios.get(`${API}/${encodeURIComponent(subId)}/apercu`)
-      .then((r) => { if (vivant) setApercu(r.data); })
+      .then((r) => { if (vivant) recevoir(r.data); })
       .catch((e) => { if (vivant) setErreur(detailErreur(e, "L'aperçu n'a pas pu être chargé.").message); })
       .finally(() => { if (vivant) setChargement(false); });
     return () => { vivant = false; };
@@ -101,7 +174,39 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
 
   const etat = apercu?.envoi;
   const verification = !!apercu?.verification_requise;
-  const pret = confirme && !envoi && (!verification || String(montantSaisi).trim() !== '');
+  // Un texte modifié doit repasser par l'aperçu : on n'envoie que ce que le coach a vu.
+  const modifie = !!(texte && apercu?.modele) && (texte.sujet !== apercu.modele.sujet || texte.corps !== apercu.modele.corps);
+  const pret = confirme && !envoi && !modifie && (!verification || String(montantSaisi).trim() !== '');
+
+  const actualiser = async () => {
+    setErreur(''); setNoteModele('');
+    try {
+      recevoir((await axios.post(`${API}/${encodeURIComponent(subId)}/apercu`, texte)).data);
+      setPersonnalise(true);
+    } catch (e) {
+      setErreur(detailErreur(e, "L'aperçu n'a pas pu être calculé.").message);
+    }
+  };
+  const garderModele = async () => {
+    setErreur(''); setNoteModele('');
+    try {
+      await axios.put(`${API}/modele`, texte);
+      setNoteModele('Modèle enregistré pour tes prochains envois.');
+    } catch (e) {
+      setErreur(detailErreur(e, "Le modèle n'a pas été enregistré.").message);
+    }
+  };
+  const reinitialiser = async () => {
+    setErreur(''); setNoteModele('');
+    try {
+      await axios.delete(`${API}/modele`);
+      recevoir((await axios.get(`${API}/${encodeURIComponent(subId)}/apercu`)).data);
+      setPersonnalise(false);
+      setNoteModele('Texte d\'origine rétabli.');
+    } catch (e) {
+      setErreur(detailErreur(e, "Le modèle n'a pas été réinitialisé.").message);
+    }
+  };
 
   const envoyer = async () => {
     if (!pret || !apercu?.empreinte) return;
@@ -109,6 +214,7 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
     try {
       const corps = { empreinte: apercu.empreinte, confirmation: true };
       if (verification) corps.montant_confirme = Number(String(montantSaisi).replace(',', '.'));
+      if (personnalise && apercu.modele) { corps.sujet = apercu.modele.sujet; corps.corps = apercu.modele.corps; }
       const r = await axios.post(`${API}/${encodeURIComponent(subId)}/envoyer`, corps);
       setResultat(r.data);
       if (r.data?.envoye) onEnvoye?.();
@@ -156,6 +262,25 @@ export function RappelPaiementDialog({ rappel, envoiDemande = false, ouvert, onF
               <dd className="text-white" data-testid="v648-sujet">{apercu.sujet}</dd>
             </dl>
             <div className="rounded-md px-3 py-3 text-white/90 whitespace-pre-wrap text-sm" data-testid="v648-texte" style={STYLE_CARTE}>{apercu.texte}</div>
+
+            {texte && etat?.peut_envoyer && (
+              <details className="text-xs" data-testid="v650-editeur">
+                <summary className="cursor-pointer text-white font-semibold">Modifier le message</summary>
+                <div className="mt-2 space-y-2">
+                  <EditeurTexte sujet={texte.sujet} corps={texte.corps} onChange={setTexte} />
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" disabled={!modifie} onClick={actualiser} data-testid="v650-actualiser"
+                      className="px-2.5 py-1 rounded-md font-semibold disabled:opacity-40" style={STYLE_BORD}>Voir l'aperçu</button>
+                    <button type="button" onClick={garderModele} data-testid="v650-garder"
+                      className="px-2.5 py-1 rounded-md text-white/80" style={{ border: '1px solid rgba(255,255,255,0.25)' }}>Garder comme modèle</button>
+                    <button type="button" onClick={reinitialiser} data-testid="v650-reinitialiser"
+                      className="px-2.5 py-1 rounded-md text-white/80" style={{ border: '1px solid rgba(255,255,255,0.25)' }}>Réinitialiser</button>
+                  </div>
+                  {modifie && <p className="text-white font-semibold" data-testid="v650-a-revoir">Texte modifié : ouvre l'aperçu avant d'envoyer.</p>}
+                  {noteModele && <p className="text-white/70" data-testid="v650-note">{noteModele}</p>}
+                </div>
+              </details>
+            )}
 
             {apercu.avertissement && (
               <p className="text-xs text-white font-semibold" data-testid="v648-avertissement">{apercu.avertissement}</p>
@@ -277,10 +402,59 @@ function SignaturePartenaire({ valeur, onEnregistre }) {
   );
 }
 
-function ReglagesRappels({ enregistrer, reglages, erreur, enregistre }) {
+/** Le texte des envois futurs, sans passer par une ligne. */
+function ModeleAutomatique({ reglages, onChange }) {
+  const defaut = reglages.modele_defaut || { sujet: '', corps: '' };
+  const [texte, setTexte] = useState({ sujet: reglages.modele?.sujet || defaut.sujet, corps: reglages.modele?.corps || defaut.corps });
+  const [note, setNote] = useState('');
+  const [refus, setRefus] = useState('');
+
+  const garder = async () => {
+    setNote(''); setRefus('');
+    try {
+      await axios.put(`${API}/modele`, texte);
+      setNote('Modèle enregistré.');
+      onChange?.();
+    } catch (e) {
+      setRefus(detailErreur(e, "Le modèle n'a pas été enregistré.").message);
+    }
+  };
+  const effacer = async () => {
+    setNote(''); setRefus('');
+    try {
+      await axios.delete(`${API}/modele`);
+      setTexte({ sujet: defaut.sujet, corps: defaut.corps });
+      setNote('Texte d\'origine rétabli.');
+      onChange?.();
+    } catch (e) {
+      setRefus(detailErreur(e, "Le modèle n'a pas été réinitialisé.").message);
+    }
+  };
+
+  return (
+    <details className="text-xs" data-testid="v650-modele-auto">
+      <summary className="cursor-pointer font-semibold">Modèle des prochains envois</summary>
+      <div className="mt-2 space-y-2">
+        <EditeurTexte sujet={texte.sujet} corps={texte.corps} onChange={setTexte} />
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={garder} data-testid="v650-modele-garder"
+            className="px-2.5 py-1 rounded-md font-semibold" style={STYLE_BORD}>Enregistrer</button>
+          <button type="button" onClick={effacer} data-testid="v650-modele-effacer"
+            className="px-2.5 py-1 rounded-md text-white/80" style={{ border: '1px solid rgba(255,255,255,0.25)' }}>Réinitialiser</button>
+        </div>
+        {note && <p className="text-white/70" data-testid="v650-modele-note">{note}</p>}
+        {refus && <p className="text-red-400" data-testid="v650-modele-refus">{refus}</p>}
+      </div>
+    </details>
+  );
+}
+
+function ReglagesRappels({ enregistrer, reglages, erreur, enregistre, onModele }) {
   const [simulation, setSimulation] = useState(null);
   const [erreurSim, setErreurSim] = useState('');
   const [delaiSaisi, setDelaiSaisi] = useState(String(reglages.delai_relance_jours ?? 7));
+  const [demandeAuto, setDemandeAuto] = useState(false);
+  const delai = reglages.delai_relance_jours ?? 7;
 
   useEffect(() => { setDelaiSaisi(String(reglages.delai_relance_jours ?? 7)); }, [reglages.delai_relance_jours]);
 
@@ -306,25 +480,50 @@ function ReglagesRappels({ enregistrer, reglages, erreur, enregistre }) {
   return (
     <div className="space-y-3 text-sm text-white" data-testid="v648-reglages">
       {[['MANUEL', 'Manuel', 'Tu choisis quand envoyer chaque rappel.'],
-        ['AUTOMATIQUE', 'Automatique', 'Prévu pour plus tard : rien ne part tout seul pour le moment.']].map(([val, nom, aide]) => (
+        ['AUTOMATIQUE', 'Automatique', "Les rappels partent seuls, même si tu n'es pas connecté."]].map(([val, nom, aide]) => (
         <label key={val} className="flex items-start gap-2 cursor-pointer">
           <input type="radio" name="v648-mode" className="mt-1" checked={reglages.mode === val}
-            onChange={() => { setSimulation(null); enregistrer({ mode: val }); }} data-testid={`v648-mode-${val}`} />
+            onChange={() => {
+              setSimulation(null);
+              if (val === 'AUTOMATIQUE') { setDemandeAuto(true); return; }
+              setDemandeAuto(false);
+              enregistrer({ mode: val });
+            }} data-testid={`v648-mode-${val}`} />
           <span><span className="font-semibold">{nom}</span><br /><span className="text-xs text-white/60">{aide}</span></span>
         </label>
       ))}
 
+      {demandeAuto && reglages.mode !== 'AUTOMATIQUE' && (
+        <div className="rounded-md p-3 space-y-2 text-xs" style={STYLE_CARTE} data-testid="v650-auto-demande">
+          <p>De vrais e-mails partiront sans toi, du lundi au vendredi, de 8 h à 18 h. Les échéances déjà passées ne seront pas relancées.</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { setDemandeAuto(false); enregistrer({ mode: 'AUTOMATIQUE', confirmation_auto: true }); }}
+              data-testid="v650-auto-confirmer" className="px-2.5 py-1 rounded-md font-semibold" style={STYLE_ACTION}>Activer l'automatique</button>
+            <button type="button" onClick={() => setDemandeAuto(false)} data-testid="v650-auto-annuler"
+              className="px-2.5 py-1 rounded-md text-white/80" style={{ border: '1px solid rgba(255,255,255,0.25)' }}>Annuler</button>
+          </div>
+        </div>
+      )}
+
       <label className="block text-xs text-white/80">
-        Délai avant une nouvelle relance manuelle (7 à 60 jours, 3 rappels au plus par paiement)
+        Délai entre deux rappels (7 à 60 jours, 3 rappels au plus par paiement)
         <input type="number" min="7" max="60" value={delaiSaisi} onChange={(e) => setDelaiSaisi(e.target.value)} onBlur={validerDelai}
           className="block w-20 mt-1 px-2 py-1.5 rounded neon-input text-sm" data-testid="v648-delai-relance" />
       </label>
 
       {reglages.mode === 'AUTOMATIQUE' && (
         <div className="rounded-md p-3 space-y-2" style={STYLE_CARTE}>
-          <p className="text-xs font-semibold" data-testid="v648-auto-coupe">
-            L'automatique n'est pas activé. Aucun rappel ne part tout seul.
+          {reglages.automatisation_disponible ? (
+            <p className="text-xs font-semibold" data-testid="v650-auto-actif">Automatique activé.</p>
+          ) : (
+            <p className="text-xs font-semibold" data-testid="v648-auto-coupe">
+              Ton choix est enregistré. Aucun rappel ne part tant que l'administration n'a pas ouvert l'automatique.
+            </p>
+          )}
+          <p className="text-xs text-white/70" data-testid="v650-politique">
+            {`Premier rappel au plus tôt des délais cochés, puis tous les ${delai} jours, 3 au plus. J0 et J+3 ne suivent donc pas J-3 de quelques jours.`}
           </p>
+          <ModeleAutomatique reglages={reglages} onChange={onModele} />
           <div className="flex flex-wrap gap-3 text-xs">
             {DELAIS.map((d) => (
               <label key={d} className="inline-flex items-center gap-1.5 cursor-pointer">
@@ -457,7 +656,13 @@ export default function RappelsPaiementSection() {
     const fusion = { ...reglages, ...suivant };
     setReglages(fusion);
     try {
-      await axios.put(`${API}/reglages`, { mode: fusion.mode, delais: fusion.delais, delai_relance_jours: fusion.delai_relance_jours });
+      const { confirmation_auto: confirmationAuto, ...garde } = fusion;
+      setReglages(garde);
+      const r = await axios.put(`${API}/reglages`, {
+        mode: garde.mode, delais: garde.delais, delai_relance_jours: garde.delai_relance_jours,
+        ...(confirmationAuto ? { confirmation_auto: true } : {}),
+      });
+      if (r?.data?.auto_actif_depuis !== undefined) setReglages({ ...garde, auto_actif_depuis: r.data.auto_actif_depuis });
       setEnregistre(true);
       relire();
     } catch (e) {
@@ -480,7 +685,7 @@ export default function RappelsPaiementSection() {
       )}
 
       {reglages && (
-        <ReglagesRappels reglages={reglages} enregistrer={enregistrer} erreur={erreurReglages} enregistre={enregistre} />
+        <ReglagesRappels reglages={reglages} enregistrer={enregistrer} erreur={erreurReglages} enregistre={enregistre} onModele={relire} />
       )}
 
       <div>
