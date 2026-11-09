@@ -485,9 +485,9 @@ async def edition_evenement(inv_id: str, request: Request):
                     _max = 0
                 if not 1 <= _max <= EVT.CAPACITE_MAX:
                     raise HTTPException(status_code=422, detail="Indique une capacité maximum entre 1 et 10000.")
-                _pris = await EVT.places_prises(_db(), _offre)
+                _pris = await EVT.occupation(_db(), _offre)   # V657 : retenues Corporate / paiements comprises
                 if _max < _pris:
-                    raise HTTPException(status_code=422, detail="%d places sont déjà réservées : la capacité ne peut pas être plus petite." % _pris)
+                    raise HTTPException(status_code=422, detail="%d places sont déjà réservées ou retenues : la capacité ne peut pas être plus petite." % _pris)
                 _set_offre["capacite_max"] = _o["capacite_max"] = _max
             _set_offre["capacite_limitee"] = _o["capacite_limitee"] = _lim
         for _k in ("texte_urgence", "texte_urgence_visible", "capacite_limitee", "capacite_max"):
