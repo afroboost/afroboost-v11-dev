@@ -101,6 +101,54 @@ def texte(v, plafond):
     return v[:plafond] if v else None
 
 
+# ── V658 : messages alignés sur l'offre par abonnement (le classeur n'est jamais modifié) ──
+OFFRE = ("Le format : un abonnement d’entreprise avec un événement par mois, pour 5, 10 ou 20 collaborateurs, "
+         "sur 3, 6 ou 12 mois. Vous recevez un lien et un QR code personnalisés : vos collaborateurs s’inscrivent "
+         "eux-mêmes, sans payer les places couvertes par l’abonnement.")
+OFFRE_RESUME = ("En résumé : une séance mensuelle de cardio-danse afrobeat accessible aux débutants, avec ou sans casques "
+                "audio. Afroboost Corporate fonctionne par abonnement : un événement par mois, pour 5, 10 ou 20 "
+                "collaborateurs, avec un engagement de 3, 6 ou 12 mois (à partir de 300 CHF par mois). Vous recevez un "
+                "lien d’invitation personnalisé et un QR code : vos collaborateurs s’inscrivent eux-mêmes, sans payer les "
+                "places comprises dans votre abonnement. Musiciens live et Silent Live Fusion sur devis.")
+LIENS_A_VALIDER = "[À COMPLÉTER AVANT ENVOI : lien de la présentation PDF et lien de la vidéo, une fois validés]"
+
+
+def _apres_paragraphe(t, motif, ajout):
+    """Insère `ajout` après le premier paragraphe qui contient `motif`. Rend (texte, inséré ?)."""
+    if not t or OFFRE[:30] in t:
+        return t, bool(t and OFFRE[:30] in t)
+    blocs = t.split("\n\n")
+    for i, b in enumerate(blocs):
+        if motif in b:
+            # Si le paragraphe suivant détaille déjà le principe, l'offre vient après lui.
+            j = i + 1 if i + 1 < len(blocs) and blocs[i + 1].startswith("Le principe est simple") else i
+            return "\n\n".join(blocs[:j + 1] + [ajout] + blocs[j + 1:]), True
+    return t, False
+
+
+def adapter_premier(t):
+    t = (t or "").replace("autour d’une séance de cardio-danse", "autour de séances mensuelles de cardio-danse") \
+                 .replace("une séance de cardio-danse", "des séances mensuelles de cardio-danse") \
+                 .replace("afrobeat, accessible aux débutants", "afrobeat, accessibles aux débutants") \
+                 .replace("débutants, qui réunit", "débutants, qui réunissent") \
+                 .replace("pour une prochaine sortie d’équipe", "pour vos équipes")
+    return _apres_paragraphe(t, "Afroboost Corporate Experience", OFFRE)
+
+
+def adapter_documentation(t):
+    t = re.sub(r"Comme convenu, vous trouverez ci-joint notre présentation Afroboost Corporate Experience \(PDF, 6 pages\) "
+               r"et le lien vers notre vidéo de présentation\.",
+               "Comme convenu, voici notre présentation Afroboost Corporate Experience et notre vidéo :\n" + LIENS_A_VALIDER, t or "")
+    t, n = re.subn(r"En résumé :.*?sur devis\.", OFFRE_RESUME, t, flags=re.S)
+    t = re.sub(r"\n*Pièce jointe :[^\n]*", "", t)
+    t = re.sub(r"\n*Vidéo : \[LIEN À CRÉER[^\n]*", "", t)
+    return t.strip(), bool(n) and "ci-joint" not in t and "LIEN À CRÉER" not in t
+
+
+def adapter_relance1(t):
+    return _apres_paragraphe(t, "événements interentreprises", OFFRE.replace("Le format :", "Le format est simple :"))
+
+
 # ── Correspondance ─────────────────────────────────────────────────────────────
 def construire(classeur, niche_id) -> list:
     dossiers = {normaliser(d.get("Entreprise")): d for d in classeur.get("Dossiers", [])}
@@ -119,6 +167,12 @@ def construire(classeur, niche_id) -> list:
             "Pourquoi cette cible", "Format Afroboost adapté", "Besoins à vérifier en rendez-vous",
             "Qui pourrait décider", "Argument principal", "Offre suggérée (hypothèse)", "Documents à associer",
             "Historique réel") if dos.get(k))
+        # V658 : messages alignés sur l'abonnement ; la documentation (envoyée seulement après accord) va dans les notes.
+        j0, ok_j0 = adapter_premier(msg.get("Premier message (BROUILLON)"))
+        doc_msg, ok_doc = adapter_documentation(msg.get("Message avec documentation (si accord)"))
+        j3, ok_j3 = adapter_relance1(msg.get("Relance 1 (5 à 7 jours ouvrables)"))
+        if doc_msg:
+            notes = (notes + "\n\n" if notes else "") + "MESSAGE AVEC DOCUMENTATION (après accord, liens à compléter) :\n" + doc_msg
         try:
             num = int(float(p.get("N°") or 0))
         except ValueError:
@@ -136,9 +190,12 @@ def construire(classeur, niche_id) -> list:
             "contact_role": texte(p.get("Interlocuteur / service"), 120),
             "preferred_channel": texte(p.get("Canal recommandé"), 60),
             "source_url": texte(p.get("Source"), 500),
-            "j0_message": texte(msg.get("Premier message (BROUILLON)"), 4000),
+            "j0_message": texte(j0, 4000),
+            "j3_message": texte(j3, 4000),                                              # V658 : relance 1
+            "j7_message": texte(msg.get("Relance 2 (7 à 10 jours après relance 1)"), 4000),  # V658 : relance 2
             "notes": texte(notes, 4000),
             "deja_dans_la_base_selon_fichier": (p.get("Déjà dans la base ?") or "").strip(),
+            "_controle": {"j0": ok_j0, "doc": ok_doc, "j3": ok_j3, "notes_tronquees": len(notes) > 4000},
         })
     return fiches
 
@@ -184,9 +241,14 @@ def principal(argv):
     existants = list(db.partner_prospects.find({"coach_id": COACH}, {"_id": 0, "organisation_name": 1, "dedupe_key": 1,
                                                                     "public_email": 1, "public_phone": 1, "website_domain": 1,
                                                                     "website_registrable": 1, "ref": 1}))
+    # V658 : `--inclure=REF` crée une fiche signalée UNIQUEMENT par un domaine partagé (jamais si nom, e-mail ou téléphone coïncident).
+    inclure = {a.split("=", 1)[1].strip().upper() for a in argv if a.startswith("--inclure=")}
     a_creer, ignores = [], []
     for f in fiches:
         m = motifs_doublon(f, existants)
+        if m and (f.get("ref") or "").upper() in inclure and all(x.endswith("(domaine)") for x in m):
+            print("  ~ %s créée malgré le domaine partagé (%s)" % (f["ref"], "; ".join(m)[:120]))
+            m = []
         (ignores if m else a_creer).append((f, m))
         if not m:   # un doublon INTERNE au fichier est aussi détecté
             existants.append(dict(f, dedupe_key=normaliser(f["organisation_name"]) + "|" + normaliser(f["city"]),
@@ -196,13 +258,20 @@ def principal(argv):
         print("  + %-12s %s  [%s] %s" % (f.get("ref") or "-", f["organisation_name"], f.get("priority") or "-", f.get("public_email") or ""))
     for f, m in ignores:
         print("  = %-12s %s  -> déjà présent : %s" % (f.get("ref") or "-", f["organisation_name"], "; ".join(m)))
+    _c = [f["_controle"] for f, _ in a_creer]
+    print("\nMessages adaptés (fiches à créer) : premiers %d/%d, documentation %d/%d, relance 1 %d/%d, relance 2 présentes %d/%d, notes tronquées %d"
+          % (sum(x["j0"] for x in _c), len(_c), sum(x["doc"] for x in _c), len(_c), sum(x["j3"] for x in _c), len(_c),
+             sum(1 for f, _ in a_creer if f.get("j7_message")), len(_c), sum(x["notes_tronquees"] for x in _c)))
+    if not all(x["j0"] and x["doc"] and x["j3"] and not x["notes_tronquees"] for x in _c):
+        print("ARRÊT : un message n'a pas pu être adapté ; rien ne sera écrit.")
+        return 4
     if not appliquer:
         print("\nDRY-RUN : aucune écriture. Relancer avec --appliquer pour créer les fiches.")
         return 0
     maintenant = datetime.now(timezone.utc).isoformat()
     n = 0
     for f, _ in a_creer:
-        doc = {k: v for k, v in f.items() if k != "deja_dans_la_base_selon_fichier"}
+        doc = {k: v for k, v in f.items() if k not in ("deja_dans_la_base_selon_fichier", "_controle")}
         dom = domaine(f.get("website"))
         doc.update({"id": str(uuid.uuid4()), "coach_id": COACH, "created_by": COACH,
                     "dedupe_key": normaliser(f["organisation_name"]) + "|" + normaliser(f["city"]),
