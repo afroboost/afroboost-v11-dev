@@ -3285,6 +3285,15 @@ def t165_v647_seance_physique_et_bouton_seo():
            ok_paires and ok_dates and ok_seo, f"paires={ok_paires} dates={ok_dates} seo={ok_seo}")
 
 
+def t167_v656_factures_sans_jeton():
+    """V656 : la génération de factures refuse l'anonyme et l'en-tête e-mail seul, AVANT de lire le corps :
+    aucune facture n'est produite ni écrite par ce test."""
+    corps = {"recipient": {"name": "Nonregression"}, "items": [{"description": "t167", "quantity": 1, "unit_price": 1}]}
+    statuts = [requests.post(_url("/api/invoices/generate"), json=corps, headers=h, timeout=TIMEOUT).status_code
+               for h in ({}, {"X-User-Email": ADMIN})]
+    record(167, "V656 factures : anonyme et en-tête seul refusés", statuts == [403, 403], f"{statuts}")
+
+
 def t166_v648_rappel_paiement_ferme():
     """V648 : identifiant FICTIF. Prouve que les routes refusent l'anonyme et que l'envoi réel est coupé."""
     r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
@@ -3387,6 +3396,7 @@ def main():
                    t160_v646_vitrines_actives_bannieres_publiques,
                    t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
                    t164_v646_bot_reserve_super_admin, t165_v647_seance_physique_et_bouton_seo, t166_v648_rappel_paiement_ferme,
+                   t167_v656_factures_sans_jeton,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

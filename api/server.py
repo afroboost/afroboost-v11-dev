@@ -55789,7 +55789,11 @@ async def v197b_seed_quick_replies():
 @api_router.post("/invoices/generate")
 async def v199_generate_invoice(request: Request):
     """V199: Génère un PDF de facture Afroboost et le retourne en streaming.
-    Sauvegarde aussi un enregistrement dans la collection `invoices`."""
+    Sauvegarde aussi un enregistrement dans la collection `invoices`.
+
+    V656 : réservé à un coach ou au super-admin, prouvé par un JWT signé. Avant, la route ne
+    vérifiait personne : n'importe qui pouvait produire une facture et l'écrire en base."""
+    _inv_email = await _v309_require_coach_or_admin(request)
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.units import cm
@@ -55814,7 +55818,6 @@ async def v199_generate_invoice(request: Request):
     # quoi, et `HexColor()` leve sur une valeur illisible. Une couleur fautive
     # ne doit jamais empecher une facture d'etre emise : on retombe alors sur le
     # rose historique, exactement le rendu d'avant la V259b.
-    _inv_email = request.headers.get("X-User-Email", "").lower().strip() or _email_from_jwt(request)
     invoice_color = (await _v259_primary_color(_inv_email) or "").strip()
     if not (len(invoice_color) == 7
             and invoice_color[0] == "#"
@@ -55981,6 +55984,7 @@ async def v199_generate_invoice(request: Request):
             "total": grand_total,
             "notes": notes,
             "created_at": datetime.utcnow().isoformat(),
+            "cree_par": _inv_email,  # V656 : qui a émis la facture, prouvé par le jeton
         })
     except Exception as e:
         logger.warning(f"[V199] insert invoice failed: {e}")
