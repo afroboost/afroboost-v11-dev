@@ -822,7 +822,12 @@ def peut_voir_facture(rec, email) -> bool:
 async def enregistrer_paiement(numero, body, auteur) -> dict:
     """Paiement (partiel admis) d'UNE facture Entreprise, validé par `b_valider_encaissement`.
     Concurrence : mise à jour conditionnée au montant déjà payé lu (aucun double comptage)."""
-    _rec = await db[COLL_FACTURES].find_one({"invoice_number": str(numero)[:40]}, {"_id": 0})
+    # V657c : seulement le document Entreprise de ce numéro, jamais un homonyme ancien.
+    _rec = await db[COLL_FACTURES].find_one({"invoice_number": str(numero)[:40], "type": "corporate"}, {"_id": 0})
+    if not _rec:
+        _autre = await db[COLL_FACTURES].find_one({"invoice_number": str(numero)[:40]}, {"_id": 0})
+        if _autre and peut_voir_facture(_autre, auteur):
+            raise HTTPException(status_code=409, detail="Paiement réservé aux factures suivies (Entreprise).")
     if not _rec or not peut_voir_facture(_rec, auteur):
         raise HTTPException(status_code=404, detail="Facture introuvable")
     if _rec.get("type_document") != "facture" or "statut" not in _rec:
@@ -845,13 +850,13 @@ async def enregistrer_paiement(numero, body, auteur) -> dict:
           "devise": _v["devise"], "date": _date, "reference": str(body.get("reference") or "").strip()[:80] or None,
           "saisi_par": auteur, "saisi_le": _iso()}
     _r = await db[COLL_FACTURES].update_one(
-        {"invoice_number": _rec["invoice_number"], "statut": "emise", "montant_paye": _rec.get("montant_paye", 0)},
+        {"invoice_number": _rec["invoice_number"], "type": "corporate", "statut": "emise", "montant_paye": _rec.get("montant_paye", 0)},
         {"$set": {"montant_paye": _nouveau,
                   "statut": "payee" if _nouveau >= round(float(_rec.get("total") or 0), 2) - 0.005 else "emise"},
          "$push": {"paiements": _p}})
     if not _r.modified_count:
         raise HTTPException(status_code=409, detail="La facture vient d'être modifiée : recharge et réessaie.")
-    return await db[COLL_FACTURES].find_one({"invoice_number": _rec["invoice_number"]}, {"_id": 0})
+    return await db[COLL_FACTURES].find_one({"invoice_number": _rec["invoice_number"], "type": "corporate"}, {"_id": 0})
 
 
 def texte_rappel(rec, contrat) -> str:

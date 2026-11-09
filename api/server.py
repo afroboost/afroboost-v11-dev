@@ -56065,6 +56065,11 @@ async def v199_generate_invoice(request: Request):
         return await _v657_emettre_document(body, _inv_email, invoice_color)
 
     invoice_number = body.get("invoice_number") or f"AF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    # V657c : un numéro est un texte. Une liste ou un objet passerait le contrôle des préfixes, puis la base
+    # le retrouverait comme un vrai numéro (une liste correspond à chacun de ses éléments).
+    if not isinstance(invoice_number, str) or not invoice_number.strip():
+        raise HTTPException(status_code=400, detail="Numéro de facture illisible.")
+    invoice_number = invoice_number.strip()[:40]
     # V657b : les préfixes Entreprise sont réservés à la numérotation du serveur : un numéro saisi à la main
     # ne peut pas se faire passer pour une facture ou un devis Corporate.
     if str(invoice_number).strip().upper().startswith(("AF-CORP-", "DEVIS-")):
@@ -56272,7 +56277,7 @@ async def v657_annuler_facture(numero: str, request: Request):
     _rec = await _v657_facture_autorisee(numero, _email)
     if _rec.get("type") != "corporate" or not is_super_admin(_email):
         raise HTTPException(status_code=403, detail="Annulation réservée aux documents Entreprise (super-admin)")
-    _r = await db.invoices.update_one({"invoice_number": _rec["invoice_number"], "statut": "emise", "montant_paye": 0},
+    _r = await db.invoices.update_one({"invoice_number": _rec["invoice_number"], "type": "corporate", "statut": "emise", "montant_paye": 0},
                                       {"$set": {"statut": "annulee", "annulee_le": datetime.now(timezone.utc).isoformat(),
                                                 "annulee_par": _email}, "$unset": {"cle_unicite": ""}})
     if not _r.modified_count:
@@ -56291,7 +56296,7 @@ async def v657_preparer_rappel(numero: str, request: Request):
         raise HTTPException(status_code=409, detail="Rappel réservé aux factures Entreprise émises non soldées.")
     _texte = _v657.texte_rappel(_rec, None)
     _r = {"le": datetime.now(timezone.utc).isoformat(), "par": _email, "texte": _texte}
-    await db.invoices.update_one({"invoice_number": _rec["invoice_number"]},
+    await db.invoices.update_one({"invoice_number": _rec["invoice_number"], "type": "corporate"},
                                  {"$push": {"rappels": {"$each": [_r], "$slice": -20}}})
     return _r
 
