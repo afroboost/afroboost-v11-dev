@@ -535,7 +535,8 @@ async def invitation_publique(token: str):
                 _sortie["message_places"] = _txt
             _cap = _v618m_evt.capacite(_o618)
             if _cap is not None:
-                _pris = await _v618m_evt.places_prises(_base(), _o618)
+                # V657 : occupation = réservées + retenues (paiements en cours, places Corporate).
+                _pris = await _v618m_evt.occupation(_base(), _o618)
                 _sortie["places_restantes"] = max(0, _cap - _pris)
                 _sortie["complet"] = _pris >= _cap
         except Exception as _e:  # noqa: BLE001

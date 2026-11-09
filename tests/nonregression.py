@@ -3285,6 +3285,54 @@ def t165_v647_seance_physique_et_bouton_seo():
            ok_paires and ok_dates and ok_seo, f"paires={ok_paires} dates={ok_dates} seo={ok_seo}")
 
 
+def t168_v657_corporate_sans_jeton():
+    """V657 : routes Corporate et factures Entreprise — identifiants FICTIFS, AUCUNE écriture.
+    Admin : 403 sans jeton et avec le seul en-tête e-mail. Invitation publique fictive : 404."""
+    r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
+    m = re.search(r"CACHE_NAME = 'afroboost-v(\d+)", r.text or "")
+    if not m or int(m.group(1)) < 657:
+        skip(168, "V657 Corporate", "V657 pas encore en ligne")
+        return
+    fictif = "nonregression-v657"
+    routes = [("GET", "/api/corporate/grille", None), ("GET", "/api/corporate/prix?places=10&mois=6", None),
+              ("GET", "/api/corporate/contrats", None), ("POST", "/api/corporate/contrats", {}),
+              ("GET", "/api/corporate/contrats/" + fictif, None),
+              ("POST", "/api/corporate/contrats/%s/signer" % fictif, {}),
+              ("POST", "/api/corporate/contrats/%s/lien" % fictif, {"action": "regenerer"}),
+              ("POST", "/api/corporate/contrats/%s/editions/2099-01/lier" % fictif, {}),
+              ("GET", "/api/corporate/contrats/%s/editions/2099-01/inscriptions" % fictif, None),
+              ("DELETE", "/api/corporate/contrats/%s/inscriptions/x" % fictif, None),
+              ("GET", "/api/corporate/prospects/%s/suivi-financier" % fictif, None),
+              ("GET", "/api/invoices", None), ("GET", "/api/invoices/AF-CORP-0000-0000/pdf", None),
+              ("POST", "/api/invoices/AF-CORP-0000-0000/paiement", {"montant": 1}),
+              ("POST", "/api/invoices/AF-CORP-0000-0000/rappel", {}),
+              ("GET", "/api/invoices/corporate/a-relancer", None),
+              ("GET", "/api/invoices/reglages-facturation", None), ("PUT", "/api/invoices/reglages-facturation", {}),
+              ("POST", "/api/invoices/generate", {"type_document": "devis", "corporate_contract_id": fictif})]
+    mauvais = []
+    for meth, chemin, corps in routes:
+        for h in ({}, {"X-User-Email": ADMIN}):
+            sc = requests.request(meth, _url(chemin), json=corps, headers=h, timeout=TIMEOUT).status_code
+            if sc != 403:
+                mauvais.append("%s %s -> %s" % (meth, chemin, sc))
+    jeton = "x" * 32
+    pub = [requests.get(_url("/api/corporate/invitation/" + jeton), timeout=TIMEOUT).status_code,
+           requests.post(_url("/api/corporate/invitation/%s/inscription" % jeton),
+                         json={"mois": "2099-01", "nom": "Nonregression", "email": "nonregression@example.invalid"},
+                         timeout=TIMEOUT).status_code]
+    record(168, "V657 Corporate : admin 403 sans jeton, invitation fictive 404",
+           not mauvais and pub == [404, 404], "; ".join(mauvais[:4]) + " public=%s" % pub)
+
+
+def t167_v656_factures_sans_jeton():
+    """V656 : la génération de factures refuse l'anonyme et l'en-tête e-mail seul, AVANT de lire le corps :
+    aucune facture n'est produite ni écrite par ce test."""
+    corps = {"recipient": {"name": "Nonregression"}, "items": [{"description": "t167", "quantity": 1, "unit_price": 1}]}
+    statuts = [requests.post(_url("/api/invoices/generate"), json=corps, headers=h, timeout=TIMEOUT).status_code
+               for h in ({}, {"X-User-Email": ADMIN})]
+    record(167, "V656 factures : anonyme et en-tête seul refusés", statuts == [403, 403], f"{statuts}")
+
+
 def t166_v648_rappel_paiement_ferme():
     """V648 : identifiant FICTIF. Prouve que les routes refusent l'anonyme et que l'envoi réel est coupé."""
     r = requests.get(_url("/sw.js"), timeout=TIMEOUT)
@@ -3387,6 +3435,8 @@ def main():
                    t160_v646_vitrines_actives_bannieres_publiques,
                    t161_v646_coach_register_ferme, t162_v646_entete_seul_refuse, t163_v646_donnees_partenaire_entete_seul_refuse,
                    t164_v646_bot_reserve_super_admin, t165_v647_seance_physique_et_bouton_seo, t166_v648_rappel_paiement_ferme,
+                   t167_v656_factures_sans_jeton,
+                   t168_v657_corporate_sans_jeton,
                    t39_redos_input, t40_nosql_injection):
             fn()
     finally:

@@ -79,7 +79,8 @@ const InvoiceGenerator = ({ coachEmail }) => {
     try {
       const res = await fetch(`${API}/invoices/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '' },
+        // V656 : la route exige un jeton signé ; l'en-tête e-mail seul est refusé.
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': coachEmail || '', Authorization: `Bearer ${(() => { try { return localStorage.getItem('afroboost_jwt') || ''; } catch (e) { return ''; } })()}` },
         body: JSON.stringify({
           emitter,
           recipient,

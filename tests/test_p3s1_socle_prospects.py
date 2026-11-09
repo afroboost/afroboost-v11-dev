@@ -43,6 +43,7 @@ except Exception:  # noqa: BLE001
 import ast
 import asyncio
 import os
+import re  # V657
 import sys
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -350,6 +351,10 @@ PROSPECT = {
 
 def creer(base, jeton_, **surcharges):
     corps = dict(PROSPECT)
+    # V657 : le domaine du site officiel est désormais un signal de doublon. Une fixture qui
+    # change d'organisation reçoit donc son PROPRE site (sinon toutes partageraient festineuch.ch).
+    if "organisation_name" in surcharges and "website" not in surcharges:
+        corps["website"] = "https://www.%s.test" % re.sub(r"[^a-z0-9]+", "-", str(surcharges["organisation_name"] or "x").lower()).strip("-")
     corps.update(surcharges)
     return lancer(S.p3s1_creer_prospect(RequeteFictive(jeton_=jeton_, corps=corps)))
 
@@ -645,7 +650,7 @@ verifier("R-11. un prospect SANS aucune coordonnee ne declenche aucun faux signa
          statut_http(S.p3s1_creer_prospect(RequeteFictive(
              jeton_=JETON_A, corps=dict(PROSPECT, ref=None, organisation_name="Sans coordonnees",
                                         city="Bienne", public_email=None,
-                                        public_phone=None)))) == 200)
+                                        public_phone=None, website=None)))) == 200)   # V657 : un site est une coordonnée
 
 print("\n8. INDEX ET CONVENTIONS")
 
@@ -686,11 +691,12 @@ verifier("S-8. les 8 categories du socle sont TOUJOURS couvertes",
          set(S.P3S1_CATEGORIES) >= {"festival", "ecole_danse", "restaurant", "bar",
                                     "commerce", "organisateur_evenement",
                                     "communaute_etudiante", "influenceur"})
-verifier("S-8-bis. P3-S2B a ajoute « association » et « fitness », et rien d'autre",
+# V657 : « entreprise » (Afroboost Corporate) ELARGIT la liste, comme P3-S2B avant lui.
+verifier("S-8-bis. P3-S2B a ajoute « association » et « fitness », V657 « entreprise », et rien d'autre",
          set(S.P3S1_CATEGORIES) == {"festival", "ecole_danse", "restaurant", "bar",
                                     "commerce", "organisateur_evenement",
                                     "communaute_etudiante", "influenceur",
-                                    "association", "fitness"})
+                                    "association", "fitness", "entreprise"})
 verifier("S-9. aucune route DELETE — hors lot, comme convenu",
          "p3s1_supprimer" not in SOURCE and 'delete("/partner-prospects' not in SOURCE)
 verifier("S-10. la collection est distincte des sept collections metier",

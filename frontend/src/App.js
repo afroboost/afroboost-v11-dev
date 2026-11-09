@@ -274,6 +274,7 @@ const CentreParrainage = lazy(() => import("./components/parrainage/CentreParrai
 const InvitationDuo = lazy(() => import("./components/parrainage/InvitationDuo"));
 const EntreeCampagne = lazy(() => import("./components/parrainage/EntreeCampagne")); // PAR-3 : /duo/c/<token>
 const InvitationPublique = lazy(() => import("./components/InvitationPublique")); // V607 : /i/<jeton> (lien court)
+const CorporateInvitation = lazy(() => import("./components/CorporateInvitation")); // V657 : /entreprise/<jeton>
 const PartnerView = lazy(() => import("./components/partenaire/PartnerView")); // V637 : /partenaire/<jeton>
 const InviterMesAmis = lazy(() => import("./components/InviterMesAmis")); // V607 : lien perso après un événement
 const AccesMembreEvenement = lazy(() => import("./components/AccesMembreEvenement")); // V610b : gratuité = espace membre
@@ -5119,6 +5120,11 @@ function App() {
     const m = typeof window !== 'undefined' && window.location.pathname.match(/^\/rdv\/([A-Za-z0-9_-]{16,64})\/?$/);
     return m ? m[1] : '';
   });
+  // V657 : /entreprise/<token> — lien privé Afroboost Corporate (lu une fois, chaîne primitive).
+  const [corporateToken] = useState(() => {
+    const m = typeof window !== 'undefined' && window.location.pathname.match(/^\/entreprise\/([A-Za-z0-9_-]{24,64})\/?$/);
+    return m ? m[1] : '';
+  });
   const [coachVitrineLoaded, setCoachVitrineLoaded] = useState(false); // v160: flag data coach chargee
   const [currentCoachVitrineEmail, setCurrentCoachVitrineEmail] = useState(null); // v160.5: Email du coach dont on affiche la vitrine (pour isolation commentaires/likes et Reserve button)
   const [currentCoachVitrineName, setCurrentCoachVitrineName] = useState(null); // v160.7: Nom du coach de la vitrine (pour ChatWidget header)
@@ -8395,6 +8401,13 @@ function App() {
   // V534: Centre Parrainage (/parrainage) et invitation publique (/duo/<token>) —
   // AVANT l'espace abonné, comme lui en retour anticipé. Le repli Suspense est
   // un fond noir muet : la page pose elle-même son écran de chargement.
+  if (corporateToken) {
+    return (
+      <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(8,4,12)' }} />}>
+        <CorporateInvitation token={corporateToken} />
+      </Suspense>
+    );
+  }
   if (rdvToken) {
     return (
       <Suspense fallback={<div style={{ minHeight: '100vh', background: 'rgb(0,0,0)' }} />}>
