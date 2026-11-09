@@ -56065,6 +56065,10 @@ async def v199_generate_invoice(request: Request):
         return await _v657_emettre_document(body, _inv_email, invoice_color)
 
     invoice_number = body.get("invoice_number") or f"AF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    # V657b : les préfixes Entreprise sont réservés à la numérotation du serveur : un numéro saisi à la main
+    # ne peut pas se faire passer pour une facture ou un devis Corporate.
+    if str(invoice_number).strip().upper().startswith(("AF-CORP-", "DEVIS-")):
+        raise HTTPException(status_code=400, detail="Ce préfixe de numéro est réservé aux documents Entreprise.")
     invoice_date = body.get("invoice_date") or datetime.utcnow().strftime("%d.%m.%Y")
 
     emitter = body.get("emitter") or {}
@@ -56232,7 +56236,10 @@ async def v657_lister_factures(request: Request):
 
 async def _v657_facture_autorisee(numero, email):
     from api.routes import corporate as _v657
-    _rec = await db.invoices.find_one({"invoice_number": str(numero or "")[:40]}, {"_id": 0})
+    _n = str(numero or "")[:40]
+    # V657b : un numéro Entreprise désigne TOUJOURS le document Entreprise, jamais un homonyme ancien.
+    _rec = (await db.invoices.find_one({"invoice_number": _n, "type": "corporate"}, {"_id": 0})
+            or await db.invoices.find_one({"invoice_number": _n}, {"_id": 0}))
     if not _rec or not _v657.peut_voir_facture(_rec, email):
         raise HTTPException(status_code=404, detail="Facture introuvable")
     return _rec

@@ -555,6 +555,16 @@ async def principal():
                  and r.json()["campaign"]["nb_fiches"] == await db.partner_prospects.count_documents({}), r.text[:200])
         verifier("17h dry-run : aucune campagne écrite", await db.prospect_campaigns.count_documents({}) == 0)
 
+        # ── V657b : corrections de la revue de sécurité
+        for _pref in ("AF-CORP-2026-9999", "devis-2026-9999"):
+            r = await cl.post("/api/invoices/generate", headers=HA, json={"invoice_number": _pref, "recipient": {"name": "X"},
+                                                                          "items": [{"description": "x", "quantity": 1, "unit_price": 1}]})
+            verifier("18a numéro réservé saisi à la main (%s) : 400, rien d'écrit" % _pref,
+                     r.status_code == 400 and await db.invoices.count_documents({"invoice_number": _pref}) == 0, r.text[:200])
+        verifier("18b retenue de paiement : 35 minutes au plus", E.RETENUE_STRIPE_DUREE_S <= 35 * 60, E.RETENUE_STRIPE_DUREE_S)
+        import inspect as _insp
+        verifier("18c nom public : caractères HTML retirés avant tout e-mail", "[<>&" in _insp.getsource(C.v657_inscrire))
+
     await asyncio.sleep(0.3)
     await S.client.drop_database(BASE)
     print("\n%d/%d PASS" % (sum(RES), len(RES)))

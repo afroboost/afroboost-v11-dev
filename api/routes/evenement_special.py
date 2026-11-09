@@ -215,9 +215,10 @@ COLL_RETENUES = "evenement_retenues"
 COLL_VERROUS = "evenement_verrous"
 RETENUE_STRIPE = "stripe"
 RETENUE_CORPORATE = "corporate"
-# Une session Stripe Checkout vit 24 h par défaut (on ne change PAS l'appel Stripe) :
-# la retenue survit à la session, puis `checkout.session.expired` la libère.
-RETENUE_STRIPE_DUREE_S = 24 * 3600 + 15 * 60
+# V657b : une retenue de paiement ne bloque une place que 35 minutes, pas toute la vie de la session Stripe
+# (24 h) : sinon quelques paiements abandonnés suffiraient à vider la jauge. L'appel Stripe ne change pas ;
+# un paiement payé après expiration reste honoré par le webhook (signalé s'il dépasse la jauge).
+RETENUE_STRIPE_DUREE_S = 35 * 60
 VERROU_DUREE_S = 15
 MSG_OCCUPE = "Beaucoup de demandes en même temps pour cet événement. Réessaie dans un instant."
 

@@ -604,7 +604,8 @@ async def v657_inscrire(token: str, request: Request):
         raise HTTPException(status_code=429, detail="Trop de tentatives. Réessaie dans un moment.")
     _b = await _corps(request)
     _email = normaliser_email(str(_b.get("email") or "")[:254])
-    _nom = re.sub(r"\s+", " ", str(_b.get("nom") or "")).strip()[:80]
+    # V657b : route publique dont le nom part dans un e-mail : aucun caractère HTML n'y entre.
+    _nom = re.sub(r"\s+", " ", re.sub(r"[<>&\"'`]", "", str(_b.get("nom") or ""))).strip()[:80]
     _whatsapp = re.sub(r"[^0-9+ ]", "", str(_b.get("whatsapp") or ""))[:30].strip()
     _mois = str(_b.get("mois") or "")[:7]
     if not RE_EMAIL.match(_email):
