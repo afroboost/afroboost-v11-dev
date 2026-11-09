@@ -664,8 +664,10 @@ async def place_bloquee(db, *, offre, session_id, email, montant, code, subscrip
         await db["notifications"].update_one({"id": "evt_bloquee_%s" % session_id}, {"$setOnInsert": {
             "id": "evt_bloquee_%s" % session_id, "type": TYPE_NOTIF_BLOQUEE,
             "title": "Paiement reçu sans place disponible — à traiter",
-            "message": "Un billet payé pour « %s » n'a pas pu recevoir de place (événement complet). "
-                       "Aucun billet n'a été émis ; décide d'une place ou d'un remboursement." % ((offre or {}).get("name") or ""),
+            # V657e : de quoi identifier le paiement sans donnée personnelle (ni e-mail, ni code d'accès).
+            "message": "Paiement de %.2f CHF (réf. Stripe …%s) pour « %s » : aucune place disponible, événement complet. "
+                       "Réservation en attente, aucun billet émis. Action : attribuer une place ou rembourser depuis Stripe."
+                       % (float(montant or 0), str(session_id)[-8:], (offre or {}).get("name") or ""),
             "coach_id": proprietaire_evenement(offre) or "contact.artboost@gmail.com",
             "read": False, "created_at": _now}}, upsert=True)
     except Exception as _err:  # noqa: BLE001
