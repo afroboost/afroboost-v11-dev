@@ -216,9 +216,12 @@ COLL_VERROUS = "evenement_verrous"
 RETENUE_STRIPE = "stripe"
 RETENUE_CORPORATE = "corporate"
 # V657b : une retenue de paiement ne bloque une place que 35 minutes, pas toute la vie de la session Stripe
-# (24 h) : sinon quelques paiements abandonnés suffiraient à vider la jauge. L'appel Stripe ne change pas ;
-# un paiement payé après expiration reste honoré par le webhook (signalé s'il dépasse la jauge).
+# (24 h) : sinon quelques paiements abandonnés suffiraient à vider la jauge. V657d : un paiement tardif
+# n'est confirmé que s'il reste une place ; sinon il est tracé, signalé, et la place n'est PAS donnée.
 RETENUE_STRIPE_DUREE_S = 35 * 60
+# V657d : la session Stripe d'un événement à capacité expire à 31 min (minimum Stripe : 30) ;
+# la retenue (35 min) lui survit toujours : un paiement dans les temps trouve sa place.
+SESSION_STRIPE_DUREE_S = 31 * 60
 VERROU_DUREE_S = 15
 MSG_OCCUPE = "Beaucoup de demandes en même temps pour cet événement. Réessaie dans un instant."
 
@@ -588,11 +591,15 @@ async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscrip
     l'appelant (webhook) l'enveloppe — le paiement encaissé ne dépend jamais de ceci.
 
     V657 — événement À CAPACITÉ : la place a été RETENUE à l'ouverture du paiement
-    (`retenue_id`, metadata Stripe). Sous verrou : la retenue vivante est CONVERTIE en
-    réservation (puis consommée) ; sans retenue vivante, la place n'est prise que s'il en
-    reste. Un billet DÉJÀ PAYÉ n'est jamais refusé : s'il n'y a vraiment plus de place
-    (cas qui exige une retenue disparue), la réservation est créée et MARQUÉE
-    `surreservation: true` + journal d'erreur, pour que l'admin tranche (remboursement)."""
+    (`retenue_id`, metadata Stripe ; la retenue vit 35 min, la session Stripe 31 min).
+    Sous verrou :
+      * retenue VIVANTE -> convertie en réservation, une seule fois ;
+      * pas de retenue vivante (paiement tardif) -> confirmée SEULEMENT s'il reste une place ;
+      * sinon (V657d) la place n'est PAS confirmée : le paiement reste enregistré tel quel par
+        le webhook (code, souscription, transaction), une réclamation `en_attente_place` garde
+        la trace (aucun billet, aucun QR d'entrée), journal d'erreur + notification du tableau
+        de bord. Aucun remboursement automatique : l'admin décide.
+    Un rejeu du même webhook retrouve la même réclamation : jamais une deuxième place."""
     if not session_id or not offre_id:
         return None, False
     _offre = await db.offers.find_one({"id": str(offre_id)}, {"_id": 0})
@@ -609,29 +616,60 @@ async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscrip
                extra={"stripe_session_id": str(session_id), "paiement": "stripe"})
     if capacite(_offre) is None:
         return await reserver(db, **_kw)
-    _v = verrou_capacite(db, _offre, attente_s=20)
     try:
-        await _v.__aenter__()
+        async with verrou_capacite(db, _offre, attente_s=20):
+            _resa, _existe = await _deja(db, _kw["cle"])
+            if _existe:
+                await liberer_retenue(db, retenue_id, "deja_traite")
+                return _resa, False
+            if await retenue_vivante(db, retenue_id) or not await complet(db, _offre):
+                _r = await reserver(db, **_kw)
+                await db[COLL_RETENUES].update_one({"_id": str(retenue_id or "")[:80], "statut": "active"},
+                                                   {"$set": {"statut": "convertie", "session_id": str(session_id),
+                                                             "convertie_le": datetime.now(timezone.utc)}})
+                return _r
+            await place_bloquee(db, offre=_offre, session_id=session_id, email=email, montant=montant,
+                                code=code, subscription_id=subscription_id, retenue_id=retenue_id, motif="complet")
+            return None, False
     except VerrouIndisponible:
-        _v = None   # le paiement est encaissé : on n'abandonne pas la place pour un verrou
-        logger.error("%s verrou indisponible au webhook — offre %s, poursuite sans verrou", PREFIXE, str(offre_id)[:8])
+        # Jamais de place sans verrou (elle pourrait être donnée deux fois) : le paiement est tracé.
+        await place_bloquee(db, offre=_offre, session_id=session_id, email=email, montant=montant,
+                            code=code, subscription_id=subscription_id, retenue_id=retenue_id, motif="verrou")
+        return None, False
+
+
+STATUT_EN_ATTENTE = "en_attente_place"
+TYPE_NOTIF_BLOQUEE = "evenement_place_bloquee"
+
+
+async def place_bloquee(db, *, offre, session_id, email, montant, code, subscription_id, retenue_id, motif):
+    """V657d — paiement reçu SANS place confirmable : trace idempotente (réclamation
+    `stripe:<session>` au statut `en_attente_place`, jamais comptée comme place), journal
+    d'erreur et notification du tableau de bord (sans e-mail ni code). Aucun remboursement."""
+    _now = datetime.now(timezone.utc).isoformat()
     try:
-        _resa, _existe = await _deja(db, _kw["cle"])
-        if _existe:
-            await liberer_retenue(db, retenue_id, "deja_reserve")
-            return _resa, False
-        if not await retenue_vivante(db, retenue_id) and await complet(db, _offre):
-            _kw["extra"] = dict(_kw["extra"], surreservation=True)
-            logger.error("%s SURRÉSERVATION : billet payé sans place (session %s, offre %s) — à traiter par l'admin",
-                         PREFIXE, str(session_id)[:24], str(offre_id)[:8])
-        _r = await reserver(db, **_kw)
-        await db[COLL_RETENUES].update_one({"_id": str(retenue_id or "")[:80], "statut": "active"},
-                                           {"$set": {"statut": "convertie", "session_id": str(session_id),
-                                                     "convertie_le": datetime.now(timezone.utc)}})
-        return _r
-    finally:
-        if _v is not None:
-            await _v.__aexit__(None, None, None)
+        await db[COLL_PLACES].insert_one({
+            "_id": "stripe:%s" % session_id, "offer_id": (offre or {}).get("id"), "source": SOURCE_PAYANT,
+            "statut": STATUT_EN_ATTENTE, "surreservation_bloquee": True, "motif": motif,
+            "stripe_session_id": str(session_id), "email": str(email or "").strip().lower(),
+            "montant": float(montant or 0), "code": str(code or "").upper(), "subscription_id": subscription_id,
+            "retenue_id": retenue_id, "created_at": _now})
+    except Exception as _err:  # noqa: BLE001
+        if not _doublon(_err):
+            raise
+        return
+    logger.error("%s PAIEMENT SANS PLACE : session %s, offre %s (%s) — place NON confirmée, à traiter par l'admin",
+                 PREFIXE, str(session_id)[:24], str((offre or {}).get("id"))[:8], motif)
+    try:
+        await db["notifications"].update_one({"id": "evt_bloquee_%s" % session_id}, {"$setOnInsert": {
+            "id": "evt_bloquee_%s" % session_id, "type": TYPE_NOTIF_BLOQUEE,
+            "title": "Paiement reçu sans place disponible — à traiter",
+            "message": "Un billet payé pour « %s » n'a pas pu recevoir de place (événement complet). "
+                       "Aucun billet n'a été émis ; décide d'une place ou d'un remboursement." % ((offre or {}).get("name") or ""),
+            "coach_id": proprietaire_evenement(offre) or "contact.artboost@gmail.com",
+            "read": False, "created_at": _now}}, upsert=True)
+    except Exception as _err:  # noqa: BLE001
+        logger.warning("%s notification non écrite (%s)", PREFIXE, type(_err).__name__)
 
 
 # ── GARDE : un cours d'événement à billet ne se réserve JAMAIS avec une séance ──

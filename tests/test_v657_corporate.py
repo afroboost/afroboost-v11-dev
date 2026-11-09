@@ -514,7 +514,10 @@ async def principal():
                  and await db.reservations.count_documents({"offerId": EVT_D}) == 1)
         _r3, _c3 = await E.apres_paiement(db, session_id="cs_sans_retenue", offre_id=EVT_D, email="tardif@test.local", nom="T",
                                           code="", subscription_id=None, montant=30, retenue_id=None)
-        verifier("16g billet payé sans retenue sur événement plein : honoré mais MARQUÉ surréservation", _c3 and _r3.get("surreservation") is True)
+        _p3 = await db[E.COLL_PLACES].find_one({"_id": "stripe:cs_sans_retenue"})
+        verifier("16g (V657d) billet payé sans retenue sur événement plein : place NON confirmée, trace « en_attente_place »",
+                 _r3 is None and not _c3 and (_p3 or {}).get("statut") == E.STATUT_EN_ATTENTE
+                 and await db.reservations.count_documents({"stripe_session_id": "cs_sans_retenue"}) == 0, _p3)
         _offL = await db.offers.find_one({"id": EVT_L}, {"_id": 0})
         rs = await asyncio.gather(*[cl.post("/api/create-checkout-session", json={"amount": 30, "productName": "Libre", "originUrl": "http://127.0.0.1",
                                                                                  "offerId": EVT_L, "quantity": 1, "customerEmail": "l%d@test.local" % i}) for i in range(5)])

@@ -9071,6 +9071,8 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             raise HTTPException(status_code=409, detail=_v610_evt.MSG_COMPLET)
         if _v657_retenue:
             metadata["evenement_retenue"] = _v657_retenue
+    # V657d : la session de CE paiement expire avant sa retenue (31 min < 35 min). Autres paiements : inchangés.
+    _v657_expire = {"expires_at": int(datetime.now(timezone.utc).timestamp()) + _v610_evt.SESSION_STRIPE_DUREE_S} if _v657_retenue else {}
     try:
         # V221: Passer api_key en paramètre au lieu de muter stripe.api_key global
         if _hiver_mode != _hiver.BILLING_UNIQUE:
@@ -9101,6 +9103,7 @@ async def create_checkout_session(request: CreateCheckoutRequest,
             api_key=active_stripe_key,
             **v226_shipping,  # V226: vide si collectShipping est False
             **_v610i_tel,     # V610i : WhatsApp du participant demandé par Stripe (billet d'événement)
+            **_v657_expire,   # V657d : événement à capacité seulement
           )
 
         # V237: rattachement du paiement a son coach, via l'offre achetee.
@@ -9235,6 +9238,7 @@ async def create_checkout_session(request: CreateCheckoutRequest,
                 # active — donc des commandes non expediables.
                 **v226_shipping,
                 **_v610i_tel,     # V610i : identique au chemin nominal
+                **_v657_expire,   # V657d : identique au chemin nominal
             )
 
             # Créer l'entrée dans payment_transactions
@@ -43640,7 +43644,8 @@ C17J_PROJECTION = {
 # d'e-mail. C'est la meme discipline que `task_due`, qui ne porte qu'un titre.
 C17J_TYPES = ("new_lead", "new_reservation", "task_due", "prospect_reply",
               "ambassadeur_palier",    # V610o
-              "abonnement_integrite")  # V618 : plusieurs abonnements actifs pour un client (codes seuls)   # V610o : palier ambassadeur débloqué / cas à vérifier (prénom seul)
+              "abonnement_integrite",  # V618 : plusieurs abonnements actifs pour un client (codes seuls)   # V610o : palier ambassadeur débloqué / cas à vérifier (prénom seul)
+              "evenement_place_bloquee")  # V657d : billet payé sans place (événement complet), à traiter
 
 
 @api_router.get("/coach/notifications")
