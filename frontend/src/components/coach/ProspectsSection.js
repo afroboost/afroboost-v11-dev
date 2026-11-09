@@ -36,6 +36,7 @@ import SvgIcon from '../SvgIcon';
 import useChargement, { SECTION } from '../../hooks/useChargement';
 import { SectionErreur } from '../ui/EtatChargement';
 import PartenaireProspect from './PartenaireProspect';
+import SuiviFinancierCorporate from './SuiviFinancierCorporate'; // V657
 import FilConversation from './FilConversation'; // V619 — fil complet (projection serveur)
 import MediaReponse, { CarteMedia, referenceMedia, mediasDe } from './prospection/MediaReponse'; // V620 / V625 — plusieurs fichiers par réponse
 import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
@@ -109,6 +110,8 @@ export const CATEGORIES = [
   // faîtière de la diaspora qu'à un bureau des étudiants.
   { cle: 'association', libelle: 'Association' },
   { cle: 'fitness', libelle: 'Fitness' },
+  // V657 — Afroboost Corporate : les entreprises (offre et message distincts).
+  { cle: 'entreprise', libelle: 'Entreprise' },
 ];
 
 /* V625 — LA CATÉGORIE D'UNE CONVERSATION = celle de SA fiche (renvoyée par le serveur,
@@ -3623,6 +3626,12 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                   (prec && prec.id) === (p && p.id) ? prec : p))}
               />
             </Bloc>
+            {/* V657 : suivi financier Corporate (lecture seule, super-admin ; rien si aucun contrat). */}
+            {ouvert.category === 'entreprise' ? (
+              <Bloc titre="Suivi financier">
+                <SuiviFinancierCorporate key={'sf-' + ouvert.id} prospectId={ouvert.id} />
+              </Bloc>
+            ) : null}
             </div>
 
             <div data-testid="fiche-section-plus" role="tabpanel"

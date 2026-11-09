@@ -68,6 +68,7 @@ const CATEGORIE_NICHE = {
   festival: 'C', organisateur_evenement: 'C',
   communaute_etudiante: 'B', association: 'B',
   restaurant: 'A', bar: 'A', commerce: 'A', fitness: 'A', influenceur: 'A',
+  entreprise: 'E',   // V657 : niche E « Entreprises »
 };
 
 function txt(v) { return typeof v === 'string' ? v.trim() : ''; }

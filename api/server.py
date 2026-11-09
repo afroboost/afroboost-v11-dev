@@ -9059,6 +9059,18 @@ async def create_checkout_session(request: CreateCheckoutRequest,
         if _hiver.echeancier_personnalise(_hiver_offre) and _v536_intervalle:
             metadata[_hiver.CHAMP_INTERVALLE] = str(_v536_intervalle)
 
+    # V657 — ÉVÉNEMENT À CAPACITÉ : une place est RETENUE (sous verrou) avant d'ouvrir le paiement ;
+    # le webhook la convertit, `checkout.session.expired` la rend. Sans capacité : rien ne change.
+    _v657_retenue = None
+    if _offer and _v610_evt.reservation_auto(_offer) and _v610_evt.capacite(_offer) is not None:
+        try:
+            _v657_retenue = await _v610_evt.retenir_place_paiement(db, _offer)
+        except _v610_evt.VerrouIndisponible:
+            raise HTTPException(status_code=409, detail=_v610_evt.MSG_OCCUPE)
+        except ValueError:
+            raise HTTPException(status_code=409, detail=_v610_evt.MSG_COMPLET)
+        if _v657_retenue:
+            metadata["evenement_retenue"] = _v657_retenue
     try:
         # V221: Passer api_key en paramètre au lieu de muter stripe.api_key global
         if _hiver_mode != _hiver.BILLING_UNIQUE:
@@ -9255,10 +9267,12 @@ async def create_checkout_session(request: CreateCheckoutRequest,
 
         except stripe.error.StripeError as fallback_error:
             logger.error(f"Stripe fallback error: {str(fallback_error)}")
+            await _v610_evt.liberer_retenue(db, _v657_retenue, "echec_stripe")   # V657
             raise HTTPException(status_code=500, detail=f"Payment error: {str(fallback_error)}")
 
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error: {str(e)}")
+        await _v610_evt.liberer_retenue(db, _v657_retenue, "echec_stripe")   # V657
         raise HTTPException(status_code=500, detail=f"Payment error: {str(e)}")
 
 @api_router.get("/checkout-status/{session_id}")
@@ -10212,6 +10226,7 @@ async def stripe_webhook(request: Request):
                         email=customer_email, nom=subscription_data.get("name") or "",
                         code=new_code, subscription_id=subscription_data.get("id"),
                         montant=amount_chf or _montant_paye,
+                        retenue_id=(metadata or {}).get("evenement_retenue"),   # V657 : place retenue au checkout
                         whatsapp=(metadata or {}).get("customer_phone")
                         or (session.get("customer_details") or {}).get("phone") or "")  # V610i : numéro saisi chez Stripe
                     if _v610_resa and _v610_creee:
@@ -10728,6 +10743,16 @@ async def stripe_webhook(request: Request):
                 logger.warning(f"[V400] Rappel invoice.upcoming ignore: {_e400}")
         elif event.type == 'checkout.session.expired':
             session = event.data.object
+            try:   # V657 : la place retenue pour ce paiement abandonné est rendue
+                from api.routes import evenement_special as _v657_evt
+                _v657_md = getattr(session, "metadata", None) or {}   # même lecture que `completed` (session.metadata)
+                try:
+                    _v657_rid = _v657_md["evenement_retenue"]   # StripeObject : accès par clé (pas de .get)
+                except (KeyError, TypeError):
+                    _v657_rid = None
+                await _v657_evt.liberer_retenue(db, _v657_rid, "session_expiree")
+            except Exception as _v657e:  # noqa: BLE001 — la retenue expire d'elle-même
+                logger.warning("[V657] retenue non rendue (%s)", type(_v657e).__name__)
             await db.payment_transactions.update_one({"session_id": session.id}, {"$set": {"status": "expired", "webhook_received_at": datetime.now(timezone.utc).isoformat()}})
         elif event.type == 'payment_intent.payment_failed':
             # V195: échec d'un PaymentIntent — désactive auto_renew si la tentative
@@ -20894,17 +20919,20 @@ async def v610_reserver_evenement_offert(access_code: str, offer_id: str, reques
         # V618M : plus de « 8 mois » écrit en dur — la règle est celle que le coach a réglée.
         raise HTTPException(status_code=403, detail=("Ton abonnement actuel ne donne pas de place offerte "
                                                      "pour cet événement."))
-    _v618m_deja, _ = await _v610_evt._deja(db, "membre:%s:%s" % (_offre.get("id"), _email))
-    if not _v618m_deja and await _v610_evt.complet(db, _offre):
-        raise HTTPException(status_code=409, detail=_v610_evt.MSG_COMPLET)
     _nom = _droit.get("name") or ""
-    _resa, _creee = await _v610_evt.reserver(
-        db, cle="membre:%s:%s" % (_offre.get("id"), _email), offre=_offre, cours=_cours, occ=_occ,
-        email=_email, nom=_nom, prix=0, source=_v610_evt.SOURCE_MEMBRE, code=code_upper,
-        whatsapp=_droit.get("whatsapp") or "",
-        extra={"member_slug": member_slug, "paiement": "aucun",
-               "droit_subscription_id": _droit.get("id"), "droit_offer_id": _droit.get("offer_id"),
-               "droit_code": _droit.get("code")})
+    # V657 : contrôle de capacité ET prise de place sous le MÊME verrou (plus de « compter puis écrire »).
+    try:
+        _resa, _creee, _v657_refus = await _v610_evt.reserver_si_place(
+            db, cle="membre:%s:%s" % (_offre.get("id"), _email), offre=_offre, cours=_cours, occ=_occ,
+            email=_email, nom=_nom, prix=0, source=_v610_evt.SOURCE_MEMBRE, code=code_upper,
+            whatsapp=_droit.get("whatsapp") or "",
+            extra={"member_slug": member_slug, "paiement": "aucun",
+                   "droit_subscription_id": _droit.get("id"), "droit_offer_id": _droit.get("offer_id"),
+                   "droit_code": _droit.get("code")})
+    except _v610_evt.VerrouIndisponible:
+        raise HTTPException(status_code=409, detail=_v610_evt.MSG_OCCUPE)
+    if _v657_refus:
+        raise HTTPException(status_code=409, detail=_v657_refus)
     if not _resa:
         raise HTTPException(status_code=409, detail="Ta réservation est en cours. Réessaie dans un instant.")
     if _creee:
@@ -21022,6 +21050,9 @@ async def v628_place_evenement_par_code(offer_id: str, request: Request):
                           (_cours or {}).get("coach_id") or _offre.get("coach_id") or "")
 
     _fiche, _motif = await _evt.fiche_code_evenement(db, _saisie, _offre)
+    if _fiche and _fiche.get("corporate_contract_id"):
+        # V657 : un code Entreprise ne s'utilise QUE par le lien privé du contrat (délai, une place par édition).
+        _fiche, _motif = None, "code_corporate"
     if not _fiche:
         logger.info("[V628] code refusé (%s) — offre %s", _motif, str(_offre.get("id"))[:8])
         await _v628_echec(_offre.get("id"))
@@ -21062,26 +21093,31 @@ async def v628_place_evenement_par_code(offer_id: str, request: Request):
             {"offerId": _offre.get("id"), "userEmail": _email, "status": {"$ne": "cancelled"}}, {"_id": 0})
     if _deja:
         return {"success": True, "deja_reserve": True, "prix": 0, "reservation": _dto(_deja, True)}
-    if await _evt.complet(db, _offre):
-        raise HTTPException(status_code=409, detail=_evt.MSG_COMPLET)
 
     from api.routes.shared import seances_consommer as _v628_consommer, seances_restituer as _v628_rendre
     _rid = str(uuid.uuid4())
-    _debit = await _v628_consommer(db, _code, 1, reservation_id=_rid, source="evenement_code")
-    if not _debit.get("debite"):
-        logger.info("[V628] code %s : débit refusé (%s)", _code[:24], _debit.get("motif"))
-        raise HTTPException(status_code=409, detail=_evt.MSG_CODE_UTILISE)
+    # V657 : capacité, débit et réservation sous le MÊME verrou court de l'offre (événement à capacité).
     try:
-        _resa, _creee = await _evt.reserver(
-            db, cle=_cle, offre=_offre, cours=_cours, occ=_occ, email=_email, nom=_nom, prix=0,
-            source=_evt.SOURCE_CODE, code=_code, whatsapp=_whatsapp, reservation_id=_rid,
-            extra=dict(_t1, paiement="code_promo", code_fiche_id=_fiche.get("id"), userFirstName=_prenom,
-                       userLastName=_nom_famille))
-    except Exception:
-        # Ne rendre le code QUE si la réservation n'a pas été écrite (sinon 2e place possible).
-        if not await db.reservations.find_one({"id": _rid}, {"_id": 1}):
-            await _v628_rendre(db, _code, 1, reservation_id=_rid, source="evenement_code_echec")
-        raise
+        async with _evt.verrou_capacite(db, _offre):
+            if await _evt.complet(db, _offre):
+                raise HTTPException(status_code=409, detail=_evt.MSG_COMPLET)
+            _debit = await _v628_consommer(db, _code, 1, reservation_id=_rid, source="evenement_code")
+            if not _debit.get("debite"):
+                logger.info("[V628] code %s : débit refusé (%s)", _code[:24], _debit.get("motif"))
+                raise HTTPException(status_code=409, detail=_evt.MSG_CODE_UTILISE)
+            try:
+                _resa, _creee = await _evt.reserver(
+                    db, cle=_cle, offre=_offre, cours=_cours, occ=_occ, email=_email, nom=_nom, prix=0,
+                    source=_evt.SOURCE_CODE, code=_code, whatsapp=_whatsapp, reservation_id=_rid,
+                    extra=dict(_t1, paiement="code_promo", code_fiche_id=_fiche.get("id"), userFirstName=_prenom,
+                               userLastName=_nom_famille))
+            except Exception:
+                # Ne rendre le code QUE si la réservation n'a pas été écrite (sinon 2e place possible).
+                if not await db.reservations.find_one({"id": _rid}, {"_id": 1}):
+                    await _v628_rendre(db, _code, 1, reservation_id=_rid, source="evenement_code_echec")
+                raise
+    except _evt.VerrouIndisponible:
+        raise HTTPException(status_code=409, detail=_evt.MSG_OCCUPE)
     if not _creee:
         # La réclamation existait (double clic de la MÊME personne) : son débit est rendu.
         await _v628_rendre(db, _code, 1, reservation_id=_rid, source="evenement_code_doublon")
@@ -27400,6 +27436,9 @@ P3S1_CATEGORIES = (
     # qu'a un bureau des etudiants.
     "association",
     "fitness",
+    # V657 : AFROBOOST CORPORATE — les entreprises (Neuchâtel d'abord). Ni « commerce »
+    # (un client final), ni « association » : le message et l'offre ne sont pas les mêmes.
+    "entreprise",
 )
 
 # LE PIPELINE AMONT, ET LUI SEUL. `decouverte`, `actif` et `ambassadeur`
@@ -27510,6 +27549,26 @@ def p3s1_domaine(url) -> str:
     return texte if "." in texte else ""
 
 
+# V657 : suffixes publics à deux niveaux les plus courants (liste courte, volontairement).
+V657_SUFFIXES_2 = {"co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "co.jp", "com.br", "co.za", "com.fr", "co.nz"}
+# Plateformes où des organisations DIFFÉRENTES partagent un domaine : jamais un signal.
+V657_DOMAINES_PARTAGES = {"facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com",
+                          "google.com", "linktr.ee", "wixsite.com", "wix.com", "business.site", "jimdo.com",
+                          "jimdofree.com", "wordpress.com", "blogspot.com", "squarespace.com", "webnode.ch",
+                          "webnode.com", "x.com", "twitter.com", "local.ch", "search.ch", "github.io"}
+
+
+def v657_domaine_enregistrable(domaine) -> str:
+    """« rh.groupe.ch » -> « groupe.ch ». '' si vide ou plateforme partagée."""
+    _d = str(domaine or "").strip().lower().rstrip(".")
+    if not _d or "." not in _d:
+        return ""
+    _p = _d.split(".")
+    _n = 3 if ".".join(_p[-2:]) in V657_SUFFIXES_2 and len(_p) >= 3 else 2
+    _r = ".".join(_p[-_n:])
+    return "" if _r in V657_DOMAINES_PARTAGES else _r
+
+
 def p3s1_cle_doublon(organisation, ville) -> str:
     """L'empreinte « meme etablissement, meme ville ».
 
@@ -27538,6 +27597,17 @@ async def p3s1_signaux_doublon(coach: str, prospect: dict, exclure_id=None) -> l
     cle = prospect.get("dedupe_key") or ""
     if cle:
         ou.append({"dedupe_key": cle})
+    # V657 — LE DOMAINE ENREGISTRABLE DU SITE OFFICIEL devient un signal (jamais une fusion) :
+    # « rh.entreprise.ch » et « www.entreprise.ch » désignent la même organisation. Les
+    # plateformes partagées (réseaux sociaux, hébergeurs de pages) sont exclues : elles ne
+    # disent rien de l'organisation. Une ville différente reste signalée — peut-être un
+    # autre établissement du même groupe : l'humain tranche (`allow_duplicate`).
+    domaine = v657_domaine_enregistrable(prospect.get("website_domain") or p3s1_domaine(prospect.get("website")))
+    if domaine:
+        # Égalités strictes, aucune expression régulière : le domaine enregistrable stocké
+        # (fiches créées/modifiées depuis V657) ou le domaine nu des fiches plus anciennes.
+        ou.append({"website_registrable": domaine})
+        ou.append({"website_domain": {"$in": [domaine, "www." + domaine]}})
     # Egalite stricte, jamais de `$regex` : une entree utilisateur n'entre pas
     # dans une expression reguliere Mongo (regle du depot).
     for champ in ("public_email", "public_phone"):
@@ -27555,6 +27625,7 @@ async def p3s1_signaux_doublon(coach: str, prospect: dict, exclure_id=None) -> l
                 filtre,
                 {"_id": 0, "id": 1, "ref": 1, "organisation_name": 1,
                  "city": 1, "dedupe_key": 1, "public_email": 1, "public_phone": 1,
+                 "website_domain": 1,   # V657
                  "corbeille": 1, "ne_plus_contacter": 1}):   # V627 : la corbeille compte aussi
             if exclure_id and autre.get("id") == exclure_id:
                 continue
@@ -27565,6 +27636,12 @@ async def p3s1_signaux_doublon(coach: str, prospect: dict, exclure_id=None) -> l
                 motifs.append("email")
             if prospect.get("public_phone") and autre.get("public_phone") == prospect["public_phone"]:
                 motifs.append("telephone")
+            if domaine and v657_domaine_enregistrable(autre.get("website_domain")) == domaine:
+                motifs.append("domaine")
+                if p3s1_normaliser(autre.get("city")) != p3s1_normaliser(prospect.get("city")):
+                    motifs.append("ville_differente")   # V657 : autre établissement possible — jamais fusionné
+            if not motifs:
+                continue
             trouves.append({"id": autre.get("id"), "ref": autre.get("ref"),
                             "organisation_name": autre.get("organisation_name"),
                             "city": autre.get("city"), "matched_on": motifs,
@@ -27884,6 +27961,7 @@ async def p3s1_creer_prospect(request: Request):
     prospect["dedupe_key"] = p3s1_cle_doublon(champs.get("organisation_name"), champs.get("city"))
     prospect["city_key"] = p3s1_normaliser(champs.get("city"))
     prospect["website_domain"] = p3s1_domaine(champs.get("website"))
+    prospect["website_registrable"] = v657_domaine_enregistrable(prospect["website_domain"]) or None   # V657
     prospect["created_at"] = maintenant
     prospect["updated_at"] = maintenant
     prospect["created_by"] = appelant
@@ -27975,6 +28053,7 @@ async def p3s1_modifier_prospect(prospect_id: str, request: Request):
         champs["city_key"] = p3s1_normaliser(ville)
     if "website" in champs:
         champs["website_domain"] = p3s1_domaine(champs.get("website"))
+        champs["website_registrable"] = v657_domaine_enregistrable(champs["website_domain"]) or None   # V657
 
     champs["updated_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -29056,6 +29135,13 @@ async def p3s3_preparer_campagne_pour(appelant: str, corps: dict,
         ville = p3s1_normaliser(corps.get("city"))
         if ville:
             filtre["city_key"] = ville
+    # V657 — LA NICHE FILTRAIT L'ÉCRAN MAIS PAS LA PRÉPARATION : l'écran envoie `niche_id`,
+    # la route l'ignorait, et une campagne « niche X » embarquait toutes les niches. Désormais
+    # une préparation filtrée par niche n'inclut JAMAIS une fiche hors de cette niche (égalité
+    # stricte, aussi sur une sélection explicite). Sans `niche_id` : comportement d'avant.
+    niche_demandee = p3s1_texte(corps.get("niche_id"), 64)
+    if niche_demandee:
+        filtre["niche_id"] = niche_demandee
 
     fiches = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}) \
         .sort([("created_at", -1), ("id", 1)]).to_list(2000)
@@ -55786,63 +55872,20 @@ async def v197b_seed_quick_replies():
 
 
 # V199: Générateur de factures PDF — utilise reportlab (pure Python, OK Vercel)
-@api_router.post("/invoices/generate")
-async def v199_generate_invoice(request: Request):
-    """V199: Génère un PDF de facture Afroboost et le retourne en streaming.
-    Sauvegarde aussi un enregistrement dans la collection `invoices`.
-
-    V656 : réservé à un coach ou au super-admin, prouvé par un JWT signé. Avant, la route ne
-    vérifiait personne : n'importe qui pouvait produire une facture et l'écrire en base."""
-    _inv_email = await _v309_require_coach_or_admin(request)
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import cm
-        from reportlab.lib.colors import HexColor
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER
-    except ImportError:
-        return JSONResponse({"error": "reportlab non installé"}, status_code=500)
-
+def v657_pdf_document(*, invoice_number, invoice_date, emitter_name, emitter_address, emitter_city,
+                      emitter_iban, emitter_contact, emitter_ide, recipient_name, recipient_address,
+                      recipient_city, items, notes, invoice_color, titre="FACTURE",
+                      total_libelle="Total à payer :", notes_titre="Modalités de paiement :", lignes_info=None):
+    """V657 — le rendu PDF du générateur V199, extrait SANS changement pour être réutilisé :
+    émission (facture classique, devis, facture Entreprise) et re-téléchargement. Les valeurs
+    par défaut reproduisent exactement la facture d'avant V657. Rend (buffer, total)."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
     from io import BytesIO
-    from starlette.responses import StreamingResponse
-
-    body = await request.json()
-
-    # V259b: couleur d'accent de la facture, alignee sur la marque du coach.
-    # Scopee par coach comme les emails (V259) : le concept est multi-tenant,
-    # une facture de partenaire ne doit pas sortir aux couleurs d'un autre.
-    #
-    # GARDE : `primaryColor` n'est pas valide en base — l'input du dashboard est
-    # un selecteur de couleur, mais un PUT direct pourrait y poser n'importe
-    # quoi, et `HexColor()` leve sur une valeur illisible. Une couleur fautive
-    # ne doit jamais empecher une facture d'etre emise : on retombe alors sur le
-    # rose historique, exactement le rendu d'avant la V259b.
-    invoice_color = (await _v259_primary_color(_inv_email) or "").strip()
-    if not (len(invoice_color) == 7
-            and invoice_color[0] == "#"
-            and all(c in "0123456789abcdefABCDEF" for c in invoice_color[1:])):
-        invoice_color = _V259_DEFAULT_COLOR
-
-    invoice_number = body.get("invoice_number") or f"AF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
-    invoice_date = body.get("invoice_date") or datetime.utcnow().strftime("%d.%m.%Y")
-
-    emitter = body.get("emitter") or {}
-    emitter_name = emitter.get("name", "Association Afroboosteur")
-    emitter_address = emitter.get("address", "Rue de Maillefer 39")
-    emitter_city = emitter.get("city", "2000 Neuchâtel")
-    emitter_iban = emitter.get("iban", "CH77 0900 0000 1688 2939 4")
-    emitter_contact = emitter.get("contact", "Bassi Henri")
-    emitter_ide = emitter.get("ide", "CHE-407.097.646")
-
-    recipient = body.get("recipient") or {}
-    recipient_name = recipient.get("name", "")
-    recipient_address = recipient.get("address", "")
-    recipient_city = recipient.get("city", "")
-
-    items = body.get("items") or []
-    notes = body.get("notes") or "Paiement à l'avance par virement bancaire.\nUtilisation des séances dès réception du paiement."
-
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
@@ -55871,7 +55914,7 @@ async def v199_generate_invoice(request: Request):
     if logo_path:
         try:
             logo = Image(logo_path, width=50, height=50)
-            header_data = [[logo, Paragraph("FACTURE", title_style)]]
+            header_data = [[logo, Paragraph(titre, title_style)]]
             header_table = Table(header_data, colWidths=[60, 400])
             header_table.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -55879,12 +55922,14 @@ async def v199_generate_invoice(request: Request):
             ]))
             elements.append(header_table)
         except Exception:
-            elements.append(Paragraph("FACTURE", title_style))
+            elements.append(Paragraph(titre, title_style))
     else:
-        elements.append(Paragraph("FACTURE", title_style))
+        elements.append(Paragraph(titre, title_style))
 
     elements.append(Spacer(1, 10))
     elements.append(Paragraph(f"<b>N° :</b> {invoice_number} &nbsp;&nbsp;&nbsp; <b>Date :</b> {invoice_date}", normal_style))
+    for _v657_ligne in (lignes_info or []):   # V657 : échéance / validité (documents Entreprise)
+        elements.append(Paragraph(_v657_ligne, normal_style))
     elements.append(Spacer(1, 20))
 
     emitter_text = (
@@ -55892,8 +55937,8 @@ async def v199_generate_invoice(request: Request):
         f"{emitter_name}<br/>"
         f"{emitter_address}<br/>"
         f"{emitter_city}<br/>"
-        f"N° IDE : {emitter_ide}<br/>"
-        f"IBAN : {emitter_iban}<br/>"
+        + (f"N° IDE : {emitter_ide}<br/>" if emitter_ide else "")   # V657 : jamais un IDE inventé
+        + f"IBAN : {emitter_iban}<br/>"
         f"Contact : {emitter_contact}"
     )
     recipient_text = (
@@ -55932,7 +55977,7 @@ async def v199_generate_invoice(request: Request):
             f"{unit_price:.2f} CHF",
             f"{total_val:.2f} CHF",
         ])
-    table_data.append(["", "", "Total à payer :", f"{grand_total:.2f} CHF"])
+    table_data.append(["", "", total_libelle, f"{grand_total:.2f} CHF"])
 
     table = Table(table_data, colWidths=[220, 60, 100, 100])
     table.setStyle(TableStyle([
@@ -55956,7 +56001,7 @@ async def v199_generate_invoice(request: Request):
     elements.append(Spacer(1, 25))
 
     if notes:
-        elements.append(Paragraph("<b>Modalités de paiement :</b>", subtitle_style))
+        elements.append(Paragraph(f"<b>{notes_titre}</b>", subtitle_style))
         for line in notes.split("\n"):
             line = line.strip()
             if line:
@@ -55972,6 +56017,78 @@ async def v199_generate_invoice(request: Request):
 
     doc.build(elements)
     buffer.seek(0)
+    return buffer, grand_total
+
+
+@api_router.post("/invoices/generate")
+async def v199_generate_invoice(request: Request):
+    """V199: Génère un PDF de facture Afroboost et le retourne en streaming.
+    Sauvegarde aussi un enregistrement dans la collection `invoices`.
+
+    V656 : réservé à un coach ou au super-admin, prouvé par un JWT signé. Avant, la route ne
+    vérifiait personne : n'importe qui pouvait produire une facture et l'écrire en base."""
+    _inv_email = await _v309_require_coach_or_admin(request)
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.lib.colors import HexColor
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER
+    except ImportError:
+        return JSONResponse({"error": "reportlab non installé"}, status_code=500)
+
+    from io import BytesIO
+    from starlette.responses import StreamingResponse
+
+    body = await request.json()
+
+    # V259b: couleur d'accent de la facture, alignee sur la marque du coach.
+    # Scopee par coach comme les emails (V259) : le concept est multi-tenant,
+    # une facture de partenaire ne doit pas sortir aux couleurs d'un autre.
+    #
+    # GARDE : `primaryColor` n'est pas valide en base — l'input du dashboard est
+    # un selecteur de couleur, mais un PUT direct pourrait y poser n'importe
+    # quoi, et `HexColor()` leve sur une valeur illisible. Une couleur fautive
+    # ne doit jamais empecher une facture d'etre emise : on retombe alors sur le
+    # rose historique, exactement le rendu d'avant la V259b.
+    invoice_color = (await _v259_primary_color(_inv_email) or "").strip()
+    if not (len(invoice_color) == 7
+            and invoice_color[0] == "#"
+            and all(c in "0123456789abcdefABCDEF" for c in invoice_color[1:])):
+        invoice_color = _V259_DEFAULT_COLOR
+
+    # V657 — EXTENSION (rétrocompatible) : `type_document` « devis » et documents Entreprise
+    # (`corporate_contract_id`). Un appel SANS ces champs suit exactement le chemin d'avant.
+    from api.routes import corporate as _v657
+    if _v657.demande_etendue(body):
+        return await _v657_emettre_document(body, _inv_email, invoice_color)
+
+    invoice_number = body.get("invoice_number") or f"AF-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    invoice_date = body.get("invoice_date") or datetime.utcnow().strftime("%d.%m.%Y")
+
+    emitter = body.get("emitter") or {}
+    emitter_name = emitter.get("name", "Association Afroboosteur")
+    emitter_address = emitter.get("address", "Rue de Maillefer 39")
+    emitter_city = emitter.get("city", "2000 Neuchâtel")
+    emitter_iban = emitter.get("iban", "CH77 0900 0000 1688 2939 4")
+    emitter_contact = emitter.get("contact", "Bassi Henri")
+    emitter_ide = emitter.get("ide", "CHE-407.097.646")
+
+    recipient = body.get("recipient") or {}
+    recipient_name = recipient.get("name", "")
+    recipient_address = recipient.get("address", "")
+    recipient_city = recipient.get("city", "")
+
+    items = body.get("items") or []
+    notes = body.get("notes") or "Paiement à l'avance par virement bancaire.\nUtilisation des séances dès réception du paiement."
+
+    buffer, grand_total = v657_pdf_document(
+        invoice_number=invoice_number, invoice_date=invoice_date, emitter_name=emitter_name,
+        emitter_address=emitter_address, emitter_city=emitter_city, emitter_iban=emitter_iban,
+        emitter_contact=emitter_contact, emitter_ide=emitter_ide, recipient_name=recipient_name,
+        recipient_address=recipient_address, recipient_city=recipient_city, items=items, notes=notes,
+        invoice_color=invoice_color)
 
     # Sauvegarde dans MongoDB (best effort)
     try:
@@ -55996,6 +56113,201 @@ async def v199_generate_invoice(request: Request):
             "Content-Disposition": f'attachment; filename="facture_{invoice_number}.pdf"'
         },
     )
+
+
+async def _v657_couleur(email):
+    _c = (await _v259_primary_color(email) or "").strip()
+    if not (len(_c) == 7 and _c[0] == "#" and all(c in "0123456789abcdefABCDEF" for c in _c[1:])):
+        _c = _V259_DEFAULT_COLOR
+    return _c
+
+
+def _v657_rendre(rec, couleur):
+    """Rend le PDF d'un enregistrement `invoices` (émission ou re-téléchargement)."""
+    import html as _h
+    _corp = rec.get("type") == "corporate"
+    _e = lambda v: _h.escape(str(v or "")) if _corp else (v if v is not None else "")  # noqa: E731
+    _em, _de = rec.get("emitter") or {}, rec.get("recipient") or {}
+    _devis = rec.get("type_document") == "devis"
+    _lignes = []
+    if rec.get("echeance"):
+        try:
+            _lignes.append("<b>Échéance :</b> %s" % datetime.fromisoformat(rec["echeance"]).strftime("%d.%m.%Y"))
+        except ValueError:
+            pass
+    if rec.get("valide_jusquau"):
+        _lignes.append("<b>Valable jusqu'au :</b> %s" % datetime.fromisoformat(rec["valide_jusquau"]).strftime("%d.%m.%Y"))
+    if rec.get("entreprise") and rec.get("mois"):
+        _lignes.append("<b>Période :</b> édition %s" % _e(rec.get("mois")))
+    if _corp:
+        _vals = {"emitter_name": _em.get("name"), "emitter_address": _em.get("address"), "emitter_city": _em.get("city"),
+                 "emitter_iban": _em.get("iban"), "emitter_contact": _em.get("contact"), "emitter_ide": _em.get("ide")}
+    else:   # facture ou devis classique : mêmes valeurs par défaut que l'émission d'origine
+        _vals = {"emitter_name": _em.get("name", "Association Afroboosteur"),
+                 "emitter_address": _em.get("address", "Rue de Maillefer 39"),
+                 "emitter_city": _em.get("city", "2000 Neuchâtel"),
+                 "emitter_iban": _em.get("iban", "CH77 0900 0000 1688 2939 4"),
+                 "emitter_contact": _em.get("contact", "Bassi Henri"), "emitter_ide": _em.get("ide", "CHE-407.097.646")}
+    _vals = {k: _e(v) for k, v in _vals.items()}
+    return v657_pdf_document(
+        invoice_number=rec.get("invoice_number"), invoice_date=rec.get("date"),
+        recipient_name=_e(_de.get("name")), recipient_address=_e(_de.get("address")),
+        recipient_city=_e(_de.get("city")), items=rec.get("items") or [],
+        notes=rec.get("notes") or "", invoice_color=couleur,
+        titre="DEVIS" if _devis else "FACTURE",
+        total_libelle="Total du devis :" if _devis else "Total à payer :",
+        notes_titre="Conditions :" if _devis else "Modalités de paiement :",
+        lignes_info=_lignes, **_vals)
+
+
+def _v657_pdf_reponse(buffer, rec):
+    from starlette.responses import StreamingResponse
+    _nom = ("devis_" if rec.get("type_document") == "devis" else "facture_") + re.sub(r"[^A-Za-z0-9_-]", "", str(rec.get("invoice_number")))
+    return StreamingResponse(buffer, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{_nom}.pdf"',
+                                      "X-Invoice-Number": str(rec.get("invoice_number"))})
+
+
+async def _v657_emettre_document(body, auteur, couleur):
+    """V657 — devis (numéro DEVIS-AAAA-NNNN) ou document Entreprise (AF-CORP-AAAA-NNNN).
+    Enregistré dans `invoices` avec statut, paiements et rappels ; rendu par le même PDF."""
+    from api.routes import corporate as _v657
+    _doc = await _v657.preparer_document(body, auteur)
+    _date = datetime.utcnow().strftime("%d.%m.%Y")
+    if _doc.get("corporate_contract_id") is None and not _doc.get("items"):
+        # Devis classique : contenu du formulaire, émetteur du formulaire (mêmes défauts qu'une facture).
+        _doc.update({"emitter": body.get("emitter") or {}, "recipient": body.get("recipient") or {},
+                     "items": body.get("items") or [], "notes": body.get("notes") or ""})
+        _valid = (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat()
+        _doc["valide_jusquau"] = _valid
+    _rec = {"invoice_number": _doc["numero"], "date": _date, "emitter": _doc.get("emitter"),
+            "recipient": _doc.get("recipient"), "items": _doc.get("items"), "notes": _doc.get("notes"),
+            "type_document": _doc["type_document"], "echeance": _doc.get("echeance"),
+            "valide_jusquau": _doc.get("valide_jusquau"), "mois": _doc.get("mois"),
+            "entreprise": _doc.get("entreprise"),
+            "type": "corporate" if _doc.get("corporate_contract_id") else None}
+    _buffer, _total = _v657_rendre(_rec, couleur)
+    await _v657.enregistrer_document(_doc, _total, _date, auteur)
+    return _v657_pdf_reponse(_buffer, _rec)
+
+
+@api_router.get("/invoices")
+async def v657_lister_factures(request: Request):
+    """V657 — liste des documents (JWT signé ; un partenaire ne voit que les siens). ≤ 50 par page.
+    Filtres : type=corporate, statut, contrat, type_document."""
+    _email = await _v309_require_coach_or_admin(request)
+    _p = request.query_params
+    _q = {} if is_super_admin(_email) else {"cree_par": _email}
+    if (_p.get("type") or "") == "corporate":
+        _q["type"] = "corporate"
+    if (_p.get("statut") or "") in ("emise", "payee", "annulee"):
+        _q["statut"] = _p.get("statut")
+    if (_p.get("type_document") or "") in ("facture", "devis"):
+        _q["type_document"] = _p.get("type_document")
+    if _p.get("contrat"):
+        _q["corporate_contract_id"] = str(_p.get("contrat"))[:64]
+    try:
+        _page = max(1, int(_p.get("page") or 1))
+    except ValueError:
+        _page = 1
+    _total = await db.invoices.count_documents(_q)
+    _liste = await db.invoices.find(_q, {"_id": 0, "items": 0, "notes": 0, "emitter": 0}).sort(
+        "created_at", -1).skip((_page - 1) * 50).to_list(50)
+    _ids = list({x.get("corporate_contract_id") for x in _liste if x.get("corporate_contract_id")})
+    _contrats = {c["id"]: c for c in await db.corporate_contracts.find(
+        {"id": {"$in": _ids}}, {"_id": 0, "id": 1, "duree_mois": 1, "prix_mensuel": 1, "total": 1, "places": 1,
+                                "entreprise": 1, "statut": 1}).to_list(50)} if _ids else {}
+    for _x in _liste:
+        _c = _contrats.get(_x.get("corporate_contract_id"))
+        if _c:
+            _x["contrat"] = {"id": _c["id"], "entreprise": (_c.get("entreprise") or {}).get("nom"),
+                             "duree_mois": _c.get("duree_mois"), "prix_mensuel": _c.get("prix_mensuel"),
+                             "total": _c.get("total"), "places": _c.get("places"), "statut": _c.get("statut")}
+        _r = _x.get("rappels") or []
+        _x["dernier_rappel"] = _r[-1].get("le") if _r else None
+        _x.pop("rappels", None)
+        _x.pop("cle_unicite", None)
+    return {"factures": _liste, "total": _total, "page": _page, "par_page": 50}
+
+
+async def _v657_facture_autorisee(numero, email):
+    from api.routes import corporate as _v657
+    _rec = await db.invoices.find_one({"invoice_number": str(numero or "")[:40]}, {"_id": 0})
+    if not _rec or not _v657.peut_voir_facture(_rec, email):
+        raise HTTPException(status_code=404, detail="Facture introuvable")
+    return _rec
+
+
+@api_router.get("/invoices/{numero}/pdf")
+async def v657_telecharger_facture(numero: str, request: Request):
+    """V657 — re-télécharge un document (re-rendu depuis l'enregistrement). Auteur ou super-admin."""
+    _email = await _v309_require_coach_or_admin(request)
+    _rec = await _v657_facture_autorisee(numero, _email)
+    _buffer, _ = _v657_rendre(_rec, await _v657_couleur(_rec.get("cree_par") or _email))
+    return _v657_pdf_reponse(_buffer, _rec)
+
+
+@api_router.post("/invoices/{numero}/paiement")
+async def v657_paiement_facture(numero: str, request: Request):
+    """V657 — paiement (partiel admis) d'une facture Entreprise ; n'affecte QUE cette facture."""
+    from api.routes import corporate as _v657
+    _email = await _v309_require_coach_or_admin(request)
+    _b = await request.json()
+    _r = await _v657.enregistrer_paiement(numero, _b if isinstance(_b, dict) else {}, _email)
+    _r.pop("cle_unicite", None)
+    return _r
+
+
+@api_router.post("/invoices/{numero}/annuler")
+async def v657_annuler_facture(numero: str, request: Request):
+    """V657 — annule une facture Entreprise SANS paiement (la ligne d'échéancier redevient « à émettre »)."""
+    _email = await _v309_require_coach_or_admin(request)
+    _rec = await _v657_facture_autorisee(numero, _email)
+    if _rec.get("type") != "corporate" or not is_super_admin(_email):
+        raise HTTPException(status_code=403, detail="Annulation réservée aux documents Entreprise (super-admin)")
+    _r = await db.invoices.update_one({"invoice_number": _rec["invoice_number"], "statut": "emise", "montant_paye": 0},
+                                      {"$set": {"statut": "annulee", "annulee_le": datetime.now(timezone.utc).isoformat(),
+                                                "annulee_par": _email}, "$unset": {"cle_unicite": ""}})
+    if not _r.modified_count:
+        raise HTTPException(status_code=409, detail="Seule une facture émise et non payée s'annule.")
+    return {"success": True}
+
+
+@api_router.post("/invoices/{numero}/rappel")
+async def v657_preparer_rappel(numero: str, request: Request):
+    """V657 — prépare un BROUILLON de rappel (texte à copier) et le date sur la facture.
+    AUCUN envoi : ni e-mail, ni WhatsApp, ni moteur de relance."""
+    from api.routes import corporate as _v657
+    _email = await _v309_require_coach_or_admin(request)
+    _rec = await _v657_facture_autorisee(numero, _email)
+    if _rec.get("type") != "corporate" or _rec.get("type_document") != "facture" or _rec.get("statut") != "emise":
+        raise HTTPException(status_code=409, detail="Rappel réservé aux factures Entreprise émises non soldées.")
+    _texte = _v657.texte_rappel(_rec, None)
+    _r = {"le": datetime.now(timezone.utc).isoformat(), "par": _email, "texte": _texte}
+    await db.invoices.update_one({"invoice_number": _rec["invoice_number"]},
+                                 {"$push": {"rappels": {"$each": [_r], "$slice": -20}}})
+    return _r
+
+
+@api_router.get("/invoices/corporate/a-relancer")
+async def v657_a_relancer(request: Request):
+    """V657 — factures Entreprise émises non soldées, échues ou à échéance dans 7 jours."""
+    _email = await _v309_require_coach_or_admin(request)
+    if not is_super_admin(_email):
+        raise HTTPException(status_code=403, detail="Accès réservé au super-admin")
+    _limite = (datetime.now(timezone.utc).date() + timedelta(days=7)).isoformat()
+    _auj = datetime.now(timezone.utc).date().isoformat()
+    _liste = await db.invoices.find({"type": "corporate", "type_document": "facture", "statut": "emise",
+                                     "echeance": {"$lte": _limite}},
+                                    {"_id": 0, "items": 0, "notes": 0, "emitter": 0, "cle_unicite": 0}
+                                    ).sort("echeance", 1).to_list(50)
+    for _x in _liste:
+        _x["en_retard"] = str(_x.get("echeance") or "") < _auj
+        _x["reste"] = round(float(_x.get("total") or 0) - float(_x.get("montant_paye") or 0), 2)
+        _r = _x.get("rappels") or []
+        _x["dernier_rappel"] = _r[-1] if _r else None
+        _x.pop("rappels", None)
+    return {"factures": _liste}
 
 
 # ============================================================================
@@ -57983,6 +58295,10 @@ init_abonnement_actuel_db(db)
 from api.routes.rappels_paiement import router as rappels_paiement_router, init_db as init_rappels_paiement_db  # noqa: E402
 fastapi_app.include_router(rappels_paiement_router)
 init_rappels_paiement_db(db, refus_email=c3_refus_exprime)
+# V657 : AFROBOOST CORPORATE — contrats entreprise, invitation privée, places par édition (super-admin).
+from api.routes.corporate import router as corporate_router, init_db as init_corporate_db, assurer_index as v657_corporate_index  # noqa: E402
+fastapi_app.include_router(corporate_router)
+init_corporate_db(db)
 # V610o : PROGRAMME AMBASSADEUR — Boosts / paliers / récompenses, lus sur la chaîne V607.
 from api.routes.ambassadeur_routes import router as ambassadeur_router, init_db as init_ambassadeur_db, assurer_index as v610o_ambassadeur_index  # noqa: E402
 fastapi_app.include_router(ambassadeur_router)
@@ -58531,6 +58847,7 @@ async def startup_db():
         await v607_suivi_index(db)
         await v607_relais_index(db)
         await v610o_ambassadeur_index(db)
+        await v657_corporate_index(db)   # V657 : collections neuves (contrats, retenues, factures Entreprise)
     except Exception as _einv1:
         logger.warning("[INV-1] index referral_campaigns non posés (%s)", type(_einv1).__name__)
     # V559 : index du programme Créateur (unicité d'une commission par paiement) — AVANT toute donnée.

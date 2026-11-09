@@ -5,6 +5,8 @@ import ConceptEditor from './ConceptEditor';
 import PaymentConfigTab from './PaymentConfigTab';
 import InvoiceGenerator from './InvoiceGenerator';
 import RappelsPaiementSection from './RappelPaiement'; // V648
+import FacturesListe from './FacturesListe'; // V657 : documents émis + coordonnées Entreprise
+import CorporateRelances from './CorporateRelances'; // V657 : factures Entreprise à suivre (brouillons)
 
 const headerStyle = {
   display: 'flex',
@@ -112,6 +114,7 @@ const V199BoutiqueAccordion = ({
       {/* V648 : Rappels de paiement. Fermée par défaut, et chargée seulement à l'ouverture. */}
       <AccordionSection id="rappels" icon={<SvgIcon name="creditCard" size={16} />} label="Rappels de paiement" openMap={openMap} setOpenMap={setOpenMap}>
         <RappelsPaiementSection />
+        {isSuperAdmin && <CorporateRelances coachEmail={coachUser?.email} />}
       </AccordionSection>
 
       {/* 2. Conditions & Avis */}
@@ -127,6 +130,7 @@ const V199BoutiqueAccordion = ({
       {/* 4. Générateur de Factures (NOUVEAU) */}
       <AccordionSection id="invoices" icon={<SvgIcon name="file" size={16} />} label="Générateur de Factures" openMap={openMap} setOpenMap={setOpenMap}>
         <InvoiceGenerator coachEmail={coachUser?.email} />
+        <FacturesListe coachEmail={coachUser?.email} isSuperAdmin={isSuperAdmin} />
       </AccordionSection>
 
       {/* 5. Section d'atterrissage */}

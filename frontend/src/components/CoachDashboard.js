@@ -7,6 +7,7 @@ import { cl1DoitSonder } from '../utils/chatPolling';
 import React, { useState, useEffect, useRef, useMemo, useCallback, Component } from "react";
 import axios from "axios";
 import { QRCodeSVG } from "qrcode.react";
+import CorporateContrats from "./dashboard/CorporateContrats"; // V657
 import {
   getWhatsAppConfig,
   saveWhatsAppConfig,
@@ -8134,7 +8135,10 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                   // P1-bis-a : saisie des adhesions. Pas de badge — un compteur
                   // d'adhesions n'appelle aucune action, il ferait du bruit.
                   { id: 'adhesions', icon: 'crown', label: 'Adhésions', badge: 0 }
-                ];
+                ].concat(isSuperAdmin
+                  // V657 : Afroboost Corporate (contrats entreprise) — super-admin uniquement.
+                  ? [{ id: 'corporate', icon: 'store', label: 'Corporate', badge: 0 }]
+                  : []);
               })().map(sub => (
                 <button
                   key={sub.id}
@@ -9015,6 +9019,11 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
                 Aucun prix, aucun avantage, aucun parcours d'achat n'en dépend :
                 retirer ce bloc et l'entrée de navigation annule tout l'écran.
                 L'isolation par coach est faite par le SERVEUR (règle symétrique). */}
+            {/* V657 : AFROBOOST CORPORATE — le serveur refuse tout autre compte (403). */}
+            {offersSubTab === 'corporate' && isSuperAdmin && (
+              <CorporateContrats coachEmail={coachUser?.email} offers={offers} courses={courses} />
+            )}
+
             {offersSubTab === 'adhesions' && (
               /* V536 : `offers` sert UNIQUEMENT à proposer les offres dont
                  l'échéancier se décide abonné par abonné. Le serveur revalide. */

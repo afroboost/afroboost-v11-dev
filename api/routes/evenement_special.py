@@ -199,9 +199,164 @@ async def places_prises(db, offre) -> int:
     return int(await db[COLL_PLACES].count_documents({"offer_id": (offre or {}).get("id"), "statut": "reservee"}))
 
 
+# ── V657 : CAPACITÉ ATOMIQUE (verrou court par offre + retenues) ────────────────
+# OCCUPATION = places réservées (réclamations « reservee »)
+#            + retenues de paiement Stripe encore vivantes (1 place chacune)
+#            + places RETENUES par les contrats Corporate signés, moins celles déjà
+#              réclamées par ce contrat (une place Corporate prise n'est jamais
+#              comptée deux fois : elle est soit « retenue », soit « réservée »).
+# ATOMICITÉ : toute prise de place sur un événement À CAPACITÉ LIMITÉE se fait sous
+# un verrou court propre à l'offre (`evenement_verrous`, `_id` unique = exclusion
+# mutuelle, expiration 15 s pour qu'un processus mort ne bloque jamais l'événement).
+# Sous le verrou : on compte, puis on écrit. Deux demandes simultanées ne peuvent
+# donc jamais lire la même occupation. Sans capacité (cas par défaut) : AUCUN verrou,
+# aucune retenue, comportement d'avant strictement identique.
+COLL_RETENUES = "evenement_retenues"
+COLL_VERROUS = "evenement_verrous"
+RETENUE_STRIPE = "stripe"
+RETENUE_CORPORATE = "corporate"
+# Une session Stripe Checkout vit 24 h par défaut (on ne change PAS l'appel Stripe) :
+# la retenue survit à la session, puis `checkout.session.expired` la libère.
+RETENUE_STRIPE_DUREE_S = 24 * 3600 + 15 * 60
+VERROU_DUREE_S = 15
+MSG_OCCUPE = "Beaucoup de demandes en même temps pour cet événement. Réessaie dans un instant."
+
+
+class VerrouIndisponible(Exception):
+    """Le verrou de l'offre n'a pas pu être pris dans le délai (forte concurrence)."""
+
+
+class verrou_capacite:   # noqa: N801 — s'utilise comme `async with verrou_capacite(db, offre):`
+    """Verrou court par offre. No-op pour un événement sans capacité (ou `force=False`
+    et capacité absente). `attente_s` : temps maximum d'attente avant VerrouIndisponible."""
+
+    def __init__(self, db, offre, attente_s=8.0, force=False):
+        self.db, self.offre, self.attente_s = db, offre or {}, float(attente_s)
+        self.actif = bool(force or capacite(self.offre) is not None) and bool(self.offre.get("id"))
+        self.jeton = None
+
+    async def __aenter__(self):
+        if not self.actif:
+            return self
+        import asyncio
+        import random
+        import time
+        from datetime import timedelta
+        _cle = "evt:%s" % self.offre.get("id")
+        _jeton = uuid.uuid4().hex
+        _limite = time.monotonic() + self.attente_s
+        while True:
+            _now = datetime.now(timezone.utc)
+            _jusqu = _now + timedelta(seconds=VERROU_DUREE_S)
+            try:
+                await self.db[COLL_VERROUS].insert_one({"_id": _cle, "jeton": _jeton, "jusqu_a": _jusqu})
+                break
+            except Exception as _err:  # noqa: BLE001
+                if not _doublon(_err):
+                    raise
+            # Verrou abandonné (processus tombé) : repris seulement s'il a EXPIRÉ.
+            _pris = await self.db[COLL_VERROUS].find_one_and_update(
+                {"_id": _cle, "jusqu_a": {"$lt": _now}}, {"$set": {"jeton": _jeton, "jusqu_a": _jusqu}})
+            if _pris:
+                break
+            if time.monotonic() > _limite:
+                raise VerrouIndisponible(_cle)
+            await asyncio.sleep(0.01 + random.random() * 0.03)
+        self.jeton = _jeton
+        return self
+
+    async def __aexit__(self, *exc):
+        if self.jeton:
+            try:
+                await self.db[COLL_VERROUS].delete_one({"_id": "evt:%s" % self.offre.get("id"), "jeton": self.jeton})
+            except Exception as _err:  # noqa: BLE001 — il expirera de lui-même (15 s)
+                logger.warning("%s verrou non rendu (%s)", PREFIXE, type(_err).__name__)
+        return False
+
+
+async def places_corporate_reclamees(db, offer_id, contrat_id) -> int:
+    return int(await db[COLL_PLACES].count_documents(
+        {"offer_id": offer_id, "statut": "reservee", "corporate_contract_id": contrat_id}))
+
+
+async def occupation(db, offre) -> int:
+    """V657 — places occupées ou retenues (voir l'en-tête de la section)."""
+    _oid = (offre or {}).get("id")
+    _n = await places_prises(db, offre)
+    _now = datetime.now(timezone.utc)
+    _n += int(await db[COLL_RETENUES].count_documents(
+        {"offer_id": _oid, "type": RETENUE_STRIPE, "statut": "active", "expire_le": {"$gt": _now}}))
+    async for _r in db[COLL_RETENUES].find({"offer_id": _oid, "type": RETENUE_CORPORATE, "statut": "active"},
+                                           {"_id": 0, "places": 1, "corporate_contract_id": 1}):
+        _pris = await places_corporate_reclamees(db, _oid, _r.get("corporate_contract_id"))
+        _n += max(0, int(_r.get("places") or 0) - _pris)
+    return _n
+
+
+async def places_restantes(db, offre):
+    """None = illimité ; sinon le nombre de places encore libres (jamais négatif)."""
+    _c = capacite(offre)
+    if _c is None:
+        return None
+    return max(0, _c - await occupation(db, offre))
+
+
 async def complet(db, offre) -> bool:
     _c = capacite(offre)
-    return _c is not None and await places_prises(db, offre) >= _c
+    return _c is not None and await occupation(db, offre) >= _c
+
+
+async def retenir_place_paiement(db, offre):
+    """V657 — avant d'ouvrir un paiement Stripe pour un événement À CAPACITÉ : retient UNE
+    place (sous verrou). Rend l'id de la retenue, None si l'événement est sans capacité.
+    Lève `VerrouIndisponible`, ou `ValueError(MSG_COMPLET)` s'il n'y a plus de place."""
+    if capacite(offre) is None:
+        return None
+    from datetime import timedelta
+    async with verrou_capacite(db, offre):
+        if await complet(db, offre):
+            raise ValueError(MSG_COMPLET)
+        _id = "rt-%s" % uuid.uuid4().hex
+        _now = datetime.now(timezone.utc)
+        await db[COLL_RETENUES].insert_one({
+            "_id": _id, "id": _id, "offer_id": offre.get("id"), "type": RETENUE_STRIPE, "places": 1,
+            "statut": "active", "cree_le": _now, "expire_le": _now + timedelta(seconds=RETENUE_STRIPE_DUREE_S)})
+        return _id
+
+
+async def liberer_retenue(db, retenue_id, motif="") -> bool:
+    """Libère une retenue de paiement (session expirée, échec Stripe). Idempotent."""
+    if not retenue_id:
+        return False
+    _r = await db[COLL_RETENUES].update_one(
+        {"_id": str(retenue_id)[:80], "type": RETENUE_STRIPE, "statut": "active"},
+        {"$set": {"statut": "liberee", "motif": str(motif or "")[:60], "liberee_le": datetime.now(timezone.utc)}})
+    return bool(getattr(_r, "modified_count", 0))
+
+
+async def retenue_vivante(db, retenue_id) -> bool:
+    if not retenue_id:
+        return False
+    return bool(await db[COLL_RETENUES].find_one(
+        {"_id": str(retenue_id)[:80], "type": RETENUE_STRIPE, "statut": "active",
+         "expire_le": {"$gt": datetime.now(timezone.utc)}}, {"_id": 1}))
+
+
+async def reserver_si_place(db, *, offre, **kw):
+    """V657 — `reserver` derrière la capacité. Rend (reservation, creee, refus) ;
+    refus = MSG_COMPLET quand l'événement à capacité limitée est plein. Une personne
+    DÉJÀ inscrite (même réclamation) retrouve sa place sans consommer de capacité."""
+    if capacite(offre) is None:
+        _r, _c = await reserver(db, offre=offre, **kw)
+        return _r, _c, None
+    async with verrou_capacite(db, offre):
+        _resa, _existe = await _deja(db, kw.get("cle"))
+        if _existe:
+            return _resa, False, None
+        if await complet(db, offre):
+            return None, False, MSG_COMPLET
+        _r, _c = await reserver(db, offre=offre, **kw)
+        return _r, _c, None
 
 
 MSG_COMPLET = "Cet événement est complet."
@@ -346,16 +501,20 @@ async def _deja(db, cle):
 
 
 async def reserver(db, *, cle, offre, cours, occ, email, nom, prix, source, code="", whatsapp="",
-                   subscription_id=None, extra=None, reservation_id=None):
+                   subscription_id=None, extra=None, reservation_id=None, place_extra=None):
     """(reservation, creee). `creee=False` : la réclamation existait (rejeu / double
-    clic) -> la réservation DÉJÀ créée est rendue, ou None si elle est en cours."""
+    clic) -> la réservation DÉJÀ créée est rendue, ou None si elle est en cours.
+    V657 : `place_extra` = champs ajoutés à la RÉCLAMATION (ex. `corporate_contract_id`)."""
     _resa, _existe = await _deja(db, cle)
     if _existe:
         return _resa, False
     _maintenant = datetime.now(timezone.utc).isoformat()
+    _place = {"_id": cle, "offer_id": (offre or {}).get("id"), "source": source,
+              "statut": "en_cours", "created_at": _maintenant}
+    if isinstance(place_extra, dict):
+        _place.update({k: v for k, v in place_extra.items() if k not in _place})
     try:
-        await db[COLL_PLACES].insert_one({"_id": cle, "offer_id": (offre or {}).get("id"), "source": source,
-                                          "statut": "en_cours", "created_at": _maintenant})
+        await db[COLL_PLACES].insert_one(_place)
     except Exception as _err:  # noqa: BLE001
         if _doublon(_err):
             _resa, _ = await _deja(db, cle)
@@ -421,10 +580,18 @@ async def liberer_place(db, reservation, session=None) -> bool:
 
 
 # ── 1. APRÈS PAIEMENT (webhook) ─────────────────────────────────────────────────
-async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscription_id, montant, whatsapp=""):
+async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscription_id, montant, whatsapp="",
+                         retenue_id=None):
     """Billet payé -> réservation de l'événement. Rend (reservation, creee) ou (None, False)
     si l'offre n'est pas un événement à réservation automatique. Lève en cas de panne :
-    l'appelant (webhook) l'enveloppe — le paiement encaissé ne dépend jamais de ceci."""
+    l'appelant (webhook) l'enveloppe — le paiement encaissé ne dépend jamais de ceci.
+
+    V657 — événement À CAPACITÉ : la place a été RETENUE à l'ouverture du paiement
+    (`retenue_id`, metadata Stripe). Sous verrou : la retenue vivante est CONVERTIE en
+    réservation (puis consommée) ; sans retenue vivante, la place n'est prise que s'il en
+    reste. Un billet DÉJÀ PAYÉ n'est jamais refusé : s'il n'y a vraiment plus de place
+    (cas qui exige une retenue disparue), la réservation est créée et MARQUÉE
+    `surreservation: true` + journal d'erreur, pour que l'admin tranche (remboursement)."""
     if not session_id or not offre_id:
         return None, False
     _offre = await db.offers.find_one({"id": str(offre_id)}, {"_id": 0})
@@ -435,10 +602,35 @@ async def apres_paiement(db, *, session_id, offre_id, email, nom, code, subscrip
     if not _occ:
         logger.error("%s offre %s : aucun cours à date fixe — réservation NON créée", PREFIXE, str(offre_id)[:8])
         return None, False
-    return await reserver(db, cle="stripe:%s" % session_id, offre=_offre, cours=_cours, occ=_occ, email=email,
-                          nom=nom, prix=montant, source=SOURCE_PAYANT, code=code, whatsapp=whatsapp,
-                          subscription_id=subscription_id,
-                          extra={"stripe_session_id": str(session_id), "paiement": "stripe"})
+    _kw = dict(cle="stripe:%s" % session_id, offre=_offre, cours=_cours, occ=_occ, email=email,
+               nom=nom, prix=montant, source=SOURCE_PAYANT, code=code, whatsapp=whatsapp,
+               subscription_id=subscription_id,
+               extra={"stripe_session_id": str(session_id), "paiement": "stripe"})
+    if capacite(_offre) is None:
+        return await reserver(db, **_kw)
+    _v = verrou_capacite(db, _offre, attente_s=20)
+    try:
+        await _v.__aenter__()
+    except VerrouIndisponible:
+        _v = None   # le paiement est encaissé : on n'abandonne pas la place pour un verrou
+        logger.error("%s verrou indisponible au webhook — offre %s, poursuite sans verrou", PREFIXE, str(offre_id)[:8])
+    try:
+        _resa, _existe = await _deja(db, _kw["cle"])
+        if _existe:
+            await liberer_retenue(db, retenue_id, "deja_reserve")
+            return _resa, False
+        if not await retenue_vivante(db, retenue_id) and await complet(db, _offre):
+            _kw["extra"] = dict(_kw["extra"], surreservation=True)
+            logger.error("%s SURRÉSERVATION : billet payé sans place (session %s, offre %s) — à traiter par l'admin",
+                         PREFIXE, str(session_id)[:24], str(offre_id)[:8])
+        _r = await reserver(db, **_kw)
+        await db[COLL_RETENUES].update_one({"_id": str(retenue_id or "")[:80], "statut": "active"},
+                                           {"$set": {"statut": "convertie", "session_id": str(session_id),
+                                                     "convertie_le": datetime.now(timezone.utc)}})
+        return _r
+    finally:
+        if _v is not None:
+            await _v.__aexit__(None, None, None)
 
 
 # ── GARDE : un cours d'événement à billet ne se réserve JAMAIS avec une séance ──
