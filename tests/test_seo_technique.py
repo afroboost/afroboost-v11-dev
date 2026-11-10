@@ -95,7 +95,7 @@ finally:
 # ── 3. Le catch-all applique la règle, et jamais au prix de la page ────────
 _catch = _bloc("    # Catch-all: serve index.html", "# Export for Vercel Serverless")
 v("le catch-all sert la page privée réécrite, en HTML",
-  "if _seo_est_prive(full_path):" in _catch and "HTMLResponse(_seo_index_prive(_index)" in _catch)
+  "_seo_est_prive(full_path)" in _catch and "HTMLResponse(_seo_index_prive(_index)" in _catch)
 v("une panne de réécriture ne casse pas la route : la page est servie telle quelle",
   "except Exception as _seo_err" in _catch and "return _FileResponse(_index, headers=_no_cache)" in _catch)
 v("les fichiers réels (assets, sw.js) sont servis avant toute réécriture",
@@ -202,11 +202,84 @@ _locs_api = re.findall(r"\{base_url\}(/[^<]*)</loc>", _sm_code)
 # JavaScript, avec leur propre titre et leur propre canonical) rejoignent la
 # liste — ce sont des adresses qui « se présentent elles-mêmes ».
 v("SEO-4 : aucune adresse fixe du sitemap de l'API n'est privée ni inventée",
-  set(_locs_api) <= {"/", "/coach/{slug}", "/cours-essai-gratuit-neuchatel", "/a-propos"}, _locs_api)
+  set(_locs_api) <= {"/", "/coach/{slug}", "/cours-essai-gratuit-neuchatel", "/a-propos",
+                     # SEO-5 (10/11/2026) : « Politique de confidentialité »,
+                     # ecrite par le serveur en amont du catch-all, lisible sans
+                     # JavaScript. Elle « se presente elle-meme » : elle a sa
+                     # place ici. Aucune vue React n'en a le droit.
+                     "/confidentialite"}, _locs_api)
 # Les ancres historiques ne sont PAS touchées : ce sont des liens vers
 # l'accueil, pas des adresses indexables.
 v("SEO-4 : les liens legacy `/#devenir-coach` restent en place (rien n'est cassé côté produit)",
   SRC.count("/#devenir-coach") >= 2)
+
+# ── 6 bis. SEO-5 : une adresse inventée répond 404 ─────────────────────────
+# AVANT, TOUT REPONDAIT 200. `/cours-de-salsa-a-geneve`, `/blog`, `/xyzabc123`
+# renvoyaient l'accueil en 200 avec « index, follow » : Google pouvait explorer
+# une infinite d'adresses qui n'existent pas. Seul le `canonical` evitait le
+# doublon — une protection indirecte, qui ne rend pas le budget de crawl.
+_racines = re.search(r"_SEO_RACINES_REELLES = frozenset\((.*?)\)\)", SRC, re.S)
+v("SEO-5 : la liste des racines réelles existe", bool(_racines))
+_noms = set(re.findall(r'"([a-z0-9-]+)"', _racines.group(1))) if _racines else set()
+# Chaque racine lue dans le frontend DOIT y etre : en oublier une transformerait
+# une vraie page en 404.
+for _r in ("espace", "duo", "parrainage", "checkout", "login", "rdv", "admin",
+           "coach", "partner", "partenaire", "entreprise", "chat", "i", "v",
+           "validate", "boutique"):
+    v("SEO-5 : la route SPA `/%s` reste servie" % _r, _r in _noms)
+for _r in ("cours-essai-gratuit-neuchatel", "a-propos", "confidentialite",
+           "privacy", "terms", "live", "rencontre"):
+    v("SEO-5 : la page `/%s` reste servie" % _r, _r in _noms)
+v("SEO-5 : le 404 n'est posé qu'APRÈS les fichiers réels et les chemins privés",
+  _catch.index("_os.path.isfile(file_path") < _catch.index("_seo_racine_connue(full_path)")
+  and _catch.index("_seo_est_prive(full_path)") < _catch.index("_seo_racine_connue(full_path)"))
+v("SEO-5 : le 404 sert le MÊME index.html (l'application continue de marcher)",
+  "status_code=404" in _catch and "_seo_index_prive(_index)" in _catch
+  and "page-404" not in _catch)
+v("SEO-5 : une panne du 404 ne casse pas la route",
+  "except Exception as _e404" in _catch)
+v("SEO-5 : la racine « / » n'est JAMAIS un 404",
+  "(not _seg) or" in SRC)
+# Les deux liens de l'interface qui ne menent nulle part : ils gardent leur 200
+# (aucun clic casse) mais cessent d'etre indexables.
+v("SEO-5 : `/conditions` et `/cgu` sont connus, donc pas en 404",
+  "conditions" in _noms and "cgu" in _noms)
+v("SEO-5 : et ils sont marqués `noindex` (sinon : deux accueils de plus indexés)",
+  "_SEO_LIEN_SANS_PAGE" in SRC and '"/conditions", "/cgu"' in SRC
+  and "_SEO_LIEN_SANS_PAGE" in _catch)
+
+# SEO-5 — LE COMPORTEMENT, PAS SEULEMENT LE TEXTE. On extrait la vraie fonction
+# de `server.py` et on lui fait juger un tableau de chemins. C'est ce qui prouve
+# qu'aucune route reelle ne bascule en 404.
+import textwrap as _tw
+_src404 = (re.search(r"(    _SEO_RACINES_REELLES = frozenset\(\(.*?\n    \)\))", SRC, re.S).group(1)
+           + "\n"
+           + re.search(r"(    def _seo_racine_connue.*?return \(not _seg\)[^\n]*\n)", SRC, re.S).group(1))
+_ns404 = {}
+exec(compile(_tw.dedent(_src404), "racines", "exec"), _ns404)
+_connue = _ns404["_seo_racine_connue"]
+
+# Ces chemins DOIVENT rester servis (200). Chacun vient d'une expression lue
+# dans le frontend ou d'une route declaree dans server.py.
+for _ok in ("", "/", "/espace", "/espace/AFR-2287CA", "/duo/abc123", "/duo/c/xyz",
+            "/parrainage", "/checkout", "/login", "/admin", "/rdv/" + "a" * 20,
+            "/coach/bassi", "/partner/bassi", "/partenaire/" + "b" * 12,
+            "/entreprise/" + "c" * 26, "/chat/42", "/i/jeton", "/v/code",
+            "/validate/code", "/boutique", "/boutique/t-shirt-ab12cd34",
+            "/cours-essai-gratuit-neuchatel", "/a-propos", "/confidentialite",
+            "/privacy", "/terms", "/live", "/rencontre", "/health", "/healthz",
+            "/conditions", "/cgu", "/ESPACE/AFR-1", "/Coach/Bassi",
+            # Fichiers du site : un 404 ici ferait passer un defaut de build
+            # pour un probleme de referencement.
+            "/sitemap.xml", "/robots.txt", "/favicon.ico", "/manifest.json",
+            "/sw.js", "/.well-known/acme-challenge/x", "/static/js/main.js"):
+    v("SEO-5 : `%s` reste servi (jamais 404)" % (_ok or "/"), _connue(_ok))
+
+# Ces chemins n'existent pas et doivent le dire.
+for _ko in ("/cours-de-salsa-a-geneve", "/xyzabc123", "/blog", "/devenir-coach",
+            "/offres", "/partenaires", "/contact", "/mentions-legales", "/cgv",
+            "/wp-admin", "/index.php", "/zumba-neuchatel"):
+    v("SEO-5 : `%s` n'existe pas -> 404" % _ko, not _connue(_ko))
 
 # ── 7. Les données structurées de l'accueil ────────────────────────────────
 _ld = re.findall(r'application/ld\+json">(.*?)</script>', INDEX, re.S)

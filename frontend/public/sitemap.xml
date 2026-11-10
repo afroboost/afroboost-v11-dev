@@ -25,4 +25,22 @@
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
+  <!--
+    SEO-5 (10/11/2026) — « Politique de confidentialité ». Elle manquait, et
+    c'est la SEULE qui manquait. Elle est écrite par le serveur (route déclarée
+    très en amont du catch-all, texte lu dans `api/static_pages/`), lisible sans
+    JavaScript, et elle s'annonce `index, follow`.
+
+    POURQUOI LA LISTE S'ARRÊTE LÀ. `/boutique`, `/offres`, `/partenaires`,
+    `/contact`, `/blog` répondent 200 — mais elles renvoient `index.html` à
+    l'octet près : ce sont des vues dessinées par React, pas des pages qui se
+    présentent. Les ajouter répéterait l'erreur de SEO-4 (`/devenir-coach`) :
+    annoncer à Google des adresses dont le contenu est identique à l'accueil.
+    Le jour où l'une d'elles sera écrite par le serveur, elle entrera ici.
+  -->
+  <url>
+    <loc>https://afroboost.com/confidentialite</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
 </urlset>

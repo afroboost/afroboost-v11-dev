@@ -22676,6 +22676,11 @@ async def get_sitemap():
         f'  <url><loc>{base_url}/</loc><lastmod>{now}</lastmod><priority>1.0</priority></url>',
         f'  <url><loc>{base_url}/cours-essai-gratuit-neuchatel</loc><lastmod>{now}</lastmod><priority>0.9</priority></url>',
         f'  <url><loc>{base_url}/a-propos</loc><lastmod>{now}</lastmod><priority>0.8</priority></url>',
+        # SEO-5 (10/11/2026) — « Politique de confidentialité » : page écrite par
+        # le serveur (route déclarée en amont du catch-all), lisible sans
+        # JavaScript, `index, follow`. Les DEUX sitemaps doivent dire la même
+        # chose — c'est la règle posée par SEO-GEO et vérifiée par les bancs.
+        f'  <url><loc>{base_url}/confidentialite</loc><lastmod>{now}</lastmod><priority>0.3</priority></url>',
     ]
 
     # Ajouter toutes les vitrines de coachs actifs
@@ -60854,6 +60859,59 @@ if _os.path.isdir(_STATIC_DIR):
     # visiteur. La page d'accueil et la page locale ne sont pas concernées.
     _SEO_PRIVE = ("/espace", "/duo", "/parrainage", "/checkout", "/login", "/rdv",
                   "/admin", "/reset.html", "/pwa-diag.html")
+
+    # SEO-5 — DEUX LIENS DE L'INTERFACE NE MENENT A AUCUNE PAGE.
+    # `SubscriberSpace.js` pointe vers `/conditions`, `BecomeCoachPage.js` vers
+    # `/cgu` : aucune des deux n'existe, l'application y rend la page d'accueil.
+    # Ce sont des liens a reparer, PAS des pages a inventer — hors perimetre ici.
+    # En attendant, ils gardent leur comportement actuel (200, l'accueil) pour ne
+    # casser aucun clic, mais ils passent en `noindex` : sans cela Google indexe
+    # deux adresses de plus affichant exactement l'accueil. C'est la lecon de
+    # SEO-4 (`/devenir-coach`), appliquee a des adresses qu'on ne peut pas
+    # simplement retirer puisqu'un bouton y mene.
+    _SEO_LIEN_SANS_PAGE = ("/conditions", "/cgu")
+
+    # SEO-5 — LES RACINES QUI EXISTENT VRAIMENT. Tout le reste est une adresse
+    # inventee et doit le dire. Releve dans le code, pas devine :
+    #   - routes lues par le frontend (App.js, ChatWidget.js, boutiqueRoute.js) :
+    #     `/espace/<code>`, `/duo/<jeton>`, `/parrainage`, `/checkout`, `/login`,
+    #     `/rdv/<jeton>`, `/admin`, `/coach|/partner/<slug>`,
+    #     `/partenaire/<jeton>`, `/entreprise/<jeton>`, `/chat/<id>`, `/i/<jeton>`,
+    #     `/v/...`, `/validate/...`, `/boutique[/<produit>]` ;
+    #   - pages ecrites par le serveur : `/cours-essai-gratuit-neuchatel`,
+    #     `/a-propos`, `/confidentialite`, `/privacy`, `/terms` ;
+    #   - applications voisines servies par Traefik : `/live`, `/rencontre`
+    #     (elles n'arrivent jamais ici, elles sont listees par prudence) ;
+    #   - sondes : `/health`, `/healthz`.
+    # Les FICHIERS (sw.js, manifest.json, robots.txt, sitemap.xml, reset.html…)
+    # sont servis plus haut par le test `isfile` et ne passent pas par ici.
+    _SEO_RACINES_REELLES = frozenset((
+        "espace", "duo", "parrainage", "checkout", "login", "rdv", "admin",
+        "coach", "partner", "partenaire", "entreprise", "chat", "i", "v",
+        "validate", "boutique",
+        "cours-essai-gratuit-neuchatel", "a-propos", "confidentialite",
+        "privacy", "terms", "live", "rencontre", "health", "healthz",
+        "conditions", "cgu",
+        # FICHIERS DU SITE. Normalement servis plus haut par le test `isfile` —
+        # ils ne devraient jamais arriver ici. Mais le jour ou l'un d'eux
+        # manquerait du build (mesure : `sitemap.xml` et `robots.txt` absents du
+        # dossier `build` local), un 404 pose par NOTRE regle ressemblerait a un
+        # probleme de referencement alors que c'est un probleme de build. On
+        # garde donc le comportement d'aujourd'hui pour eux, sans rien masquer.
+        "sitemap.xml", "robots.txt", "favicon.ico", "manifest.json", "sw.js",
+        "ads.txt", ".well-known", "asset-manifest.json", "static",
+    ))
+
+    def _seo_racine_connue(chemin: str) -> bool:
+        """Le PREMIER segment du chemin correspond-il a une route reelle ?
+
+        On ne juge que la racine : `/espace/AFR-123456` ou `/boutique/t-shirt-ab12`
+        sont acceptes des que `espace` et `boutique` le sont. Juger le chemin
+        entier obligerait a rejouer ici les expressions du frontend — et la
+        moindre divergence transformerait une vraie page en 404.
+        """
+        _seg = str(chemin or "").strip("/").split("/")[0].split("?")[0].split("#")[0]
+        return (not _seg) or (_seg.lower() in _SEO_RACINES_REELLES)
     _SEO_META_PRIVEE = '<meta name="robots" content="noindex, nofollow"/>'
 
     def _seo_est_prive(chemin: str) -> bool:
@@ -60945,7 +61003,9 @@ if _os.path.isdir(_STATIC_DIR):
             return _FileResponse(file_path)
         _index = _os.path.join(_STATIC_DIR, "index.html")
         # SEO-1 : chemin privé -> la MÊME page, avec `noindex` et sans canonical.
-        if _seo_est_prive(full_path):
+        if _seo_est_prive(full_path) or any(
+                ("/" + str(full_path or "").strip().strip("/")) == _p
+                for _p in _SEO_LIEN_SANS_PAGE):
             try:
                 from starlette.responses import HTMLResponse as _HTMLResponse
                 return _HTMLResponse(_seo_index_prive(_index), headers=_no_cache)
@@ -60963,6 +61023,26 @@ if _os.path.isdir(_STATIC_DIR):
                     return _HTMLResponse(_accueil, headers=_no_cache)
             except Exception as _geo_err:  # noqa: BLE001
                 logger.warning("[SEO-GEO] bloc d'accueil non posé (%s)", type(_geo_err).__name__)
+        # SEO-5 — UNE ADRESSE INVENTEE DOIT REPONDRE 404.
+        # Avant : n'importe quelle adresse renvoyait l'accueil en 200 avec
+        # `index, follow`. Mesure : `/cours-de-salsa-a-geneve`, `/xyzabc123`,
+        # `/blog` repondaient 200 et s'annoncaient indexables. Seul le
+        # `canonical` evitait le doublon — une protection indirecte, qui
+        # n'empeche ni l'exploration ni le gaspillage de budget de crawl.
+        #
+        # LE FILET DE SECURITE EST VOLONTAIRE : on renvoie LE MEME `index.html`,
+        # avec le statut 404 et `noindex`. Si une route reelle avait ete oubliee
+        # dans la liste ci-dessus, le visiteur verrait quand meme sa page
+        # fonctionner — seul le code de statut serait faux. L'inverse (une page
+        # d'erreur a la place de l'application) serait une panne.
+        if not _seo_racine_connue(full_path):
+            try:
+                from starlette.responses import HTMLResponse as _HTMLResponse
+                return _HTMLResponse(_seo_index_prive(_index), status_code=404,
+                                     headers=_no_cache)
+            except Exception as _e404:  # noqa: BLE001
+                logger.warning("[SEO-5] 404 non pose sur %s (%s)",
+                               str(full_path)[:40], type(_e404).__name__)
         return _FileResponse(_index, headers=_no_cache)
 
 # Export for Vercel Serverless
