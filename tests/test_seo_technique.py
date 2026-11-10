@@ -340,6 +340,51 @@ v("V655 : aucune seconde logique d'affichage — App.js appelle la règle, ne la
 v("V655 : la page d'essai pointe toujours vers `/?offres=toutes` (lien inchangé)",
   'href="/?offres=toutes"' in SRC)
 
+# ── 6 quater. V656 : `/offres` est une PAGE, pas un panneau sur l'accueil ──
+# AVANT (V655), `/offres` ouvrait le panneau superposé à l'accueil : la page
+# était à ~83 % identique à l'accueil, donc faible pour un moteur. Elle a
+# maintenant sa propre mise en page et son propre texte, écrit par le SERVEUR
+# — lisible sans JavaScript, ce qu'aucun titre posé par React ne permet.
+_bloc656 = re.search(r"    _SEO6_BLOC_OFFRES = \((.*?)\n        '</section>'\)", SRC, re.S)
+v("V656 : le texte éditorial de `/offres` existe côté serveur", bool(_bloc656))
+_b6 = _bloc656.group(1) if _bloc656 else ""
+v("V656 : il porte le H1 demandé",
+  "Offres et tarifs Afroboost à Neuchâtel" in _b6 and "<h1" in _b6)
+v("V656 : il présente le cardio-danse afrobeat et son accessibilité",
+  "cardio-danse afrobeat" in _b6 and "savoir danser" in _b6)
+v("V656 : il explique les possibilités d'inscription",
+  all(m in _b6 for m in ("à la séance", "carte", "abonnement", "essai")))
+v("V656 : il invite à choisir une formule et à réserver",
+  "Choisissez" in _b6 and "réserv" in _b6)
+# AUCUN TARIF, AUCUNE GARANTIE INVENTÉE : les prix vivent sur les cartes
+# d'offres, qui viennent des données réelles. Un chiffre figé ici mentirait.
+v("V656 : AUCUN prix n'est écrit dans ce texte",
+  not re.search(r"\d+\s*(CHF|francs|€)", _b6) and "gratuit à vie" not in _b6)
+v("V656 : le bloc est rattaché à la page `/offres`",
+  '_SEO6_PAGES["offres"]["bloc"] = _SEO6_BLOC_OFFRES' in SRC)
+v("V656 : il est injecté dans le HTML servi, après la zone React",
+  "_SEO_GEO_ANCRE_ROOT + _bloc" in SRC)
+# LE FRONTEND : une page dédiée, et l'ancienne porte intacte.
+v("V656 : le drapeau de la page existe et vient de la règle unique",
+  "const [pageOffres] = useState(() => parCheminOffres(" in APP)
+v("V656 : pas de Hero sur `/offres` (même règle que `/boutique`, V646)",
+  "{boutiqueRoute === null && !pageOffres && (" in APP)
+v("V656 : les sections propres à l'accueil sont masquées (concept, produits, "
+  "audio, horaires, FAQ)", APP.count("boutiqueRoute === null && !pageOffres") >= 6)
+v("V656 : `/offres` active l'onglet « Offres » existant, aucun second composant",
+  "setActiveFilter('offers');" in APP and APP.count("<OffresAimants") == 2)
+v("V656 : `/?offres=toutes` garde son panneau superposé",
+  "ouvrirLesOffres(window.location.pathname, window.location.search)" in APP
+  and "setSignalToutesOffres(n => n + 1);" in APP)
+# LA PREUVE QU'IL N'Y A PAS DEUX TEXTES : le contenu éditorial n'existe NULLE
+# PART dans le frontend. React ne connaît que l'emplacement où le déplacer.
+v("V656 : le texte éditorial est DÉPLACÉ, jamais recopié par React",
+  "getElementById('af-offres-intro')" in APP
+  and "Offres et tarifs Afroboost à Neuchâtel" not in APP
+  and "cardio-danse afrobeat" not in APP.lower())
+v("V656 : il se place au-dessus des formules",
+  APP.index("{pageOffres && <div ref={afOffresIntroSlot} />}") < APP.index("{offersBlock}"))
+
 # ── 7. Les données structurées de l'accueil ────────────────────────────────
 _ld = re.findall(r'application/ld\+json">(.*?)</script>', INDEX, re.S)
 v("l'accueil porte des données structurées", len(_ld) >= 2, len(_ld))

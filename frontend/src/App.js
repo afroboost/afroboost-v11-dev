@@ -304,7 +304,7 @@ import { CarteLive, CarteOffreDuMoment, CarteSpordateur, CarteHoraires } from ".
 import BanniereBoutiqueMedia from "./components/accueil/BanniereBoutiqueMedia";
 // V646 — routes de la page /boutique (fonctions pures, sans routeur).
 import { lireRouteBoutique, cheminProduit, trouverProduit, avecModeVisiteur } from "./utils/boutiqueRoute";
-import { ouvrirLesOffres } from "./utils/routeOffres"; // V655
+import { ouvrirLesOffres, parChemin as parCheminOffres } from "./utils/routeOffres"; // V655/V656
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -5468,6 +5468,9 @@ function App() {
   // segment du produit. Une chaîne PRIMITIVE, jamais un objet (règle anti-boucle).
   // Lue dès l'initialisation : un accès direct n'affiche jamais l'accueil d'abord.
   const [boutiqueRoute, setBoutiqueRoute] = useState(() => lireRouteBoutique(window.location.pathname));
+  // V656 — LA PAGE DES FORMULES, pas un panneau posé sur l'accueil. Lu une fois
+  // au montage, comme `boutiqueRoute` : le chemin ne change pas sous nos pieds.
+  const [pageOffres] = useState(() => parCheminOffres(window.location.pathname));
   // « Shop » allumé dès le premier rendu sur /boutique : même état, même violet.
   const [activeFilter, setActiveFilter] = useState(() => (lireRouteBoutique(window.location.pathname) !== null ? 'shop' : 'all'));
   const [menuMobile, setMenuMobile] = useState(false);   // V541 : tiroir de navigation mobile
@@ -5520,7 +5523,16 @@ function App() {
   // fonctionner à l'identique : les deux conditions sont lues côte à côte.
   useEffect(() => {
     try {
-      if (ouvrirLesOffres(window.location.pathname, window.location.search)) {
+      // V656 — DEUX ENTRÉES, DEUX PRÉSENTATIONS, UNE SEULE SOURCE D'OFFRES.
+      // `/?offres=toutes` (V622) garde EXACTEMENT son panneau superposé : ce
+      // lien est écrit dans la page d'essai servie par le serveur et dans des
+      // liens déjà partagés, son comportement ne doit pas changer.
+      // `/offres` est une PAGE : elle active l'onglet « Offres » existant, qui
+      // affiche la liste en pleine page. Même composant, mêmes offres, mêmes
+      // prix, mêmes boutons de réservation — seule la mise en page diffère.
+      if (parCheminOffres(window.location.pathname)) {
+        setActiveFilter('offers');
+      } else if (ouvrirLesOffres(window.location.pathname, window.location.search)) {
         setSignalToutesOffres(n => n + 1);
       }
     } catch (e) { /* lien illisible : l'accueil s'affiche normalement */ }
@@ -5530,6 +5542,21 @@ function App() {
   // pied de page. Cet emplacement vide, juste avant `<footer>`, l'accueille ; React n'y rend
   // aucun enfant, il ne touche donc jamais au bloc. Au démontage, le bloc est rendu à sa
   // place d'origine (après `#root`) pour ne jamais disparaître de la page.
+  // V656 — L'emplacement du texte éditorial de `/offres`, juste au-dessus des
+  // formules. Le bloc `#af-offres-intro` est écrit par le SERVEUR (HTML brut,
+  // lisible sans JavaScript) ; on le déplace ici au montage, et on le rend à sa
+  // place d'origine au démontage pour qu'il ne disparaisse jamais de la page.
+  const afOffresIntroSlot = useCallback((el) => {
+    const bloc = document.getElementById('af-offres-intro');
+    if (!el || !bloc) return undefined;
+    el.appendChild(bloc);
+    return () => {
+      const root = document.getElementById('root');
+      if (root && root.parentNode && bloc.parentNode !== root.parentNode) {
+        root.parentNode.insertBefore(bloc, root.nextSibling);
+      }
+    };
+  }, []);
   const afPresentationSlot = useCallback((el) => {
     const bloc = document.getElementById('af-presentation');
     if (!el || !bloc) return undefined;
@@ -9255,7 +9282,7 @@ function App() {
           titre + CTA lisible sur un écran bas (un portable 1024×600 ou un
           téléphone en paysage), où 43vh ne suffirait pas à le contenir. */}
       {/* V646 : pas de Hero sur la page /boutique. */}
-      {boutiqueRoute === null && (
+      {boutiqueRoute === null && !pageOffres && (
       <div
         className="relative w-full af-hero"
         data-testid="hero-carrousel"
@@ -9798,7 +9825,7 @@ function App() {
         )}
 
         {/* v16: DESCRIPTION PARTENAIRE — entre nav et sessions */}
-        {boutiqueRoute === null && concept.description && activeFilter !== 'shop' && (
+        {boutiqueRoute === null && !pageOffres && concept.description && activeFilter !== 'shop' && (
           <div className="mb-6 fade-in-section" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
             <p className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300, whiteSpace: 'pre-wrap' }}>
               {concept.description}
@@ -10119,6 +10146,9 @@ function App() {
                   l'emportait sur le résultat. Hors recherche, le comportement
                   V540 est strictement inchangé — et le bloc reste MONTÉ dans
                   tous les cas, comme l'exige le lien profond `?offre=`. */}
+              {/* V656 : le texte éditorial de `/offres` vient se placer ICI,
+                  au-dessus des formules. Écrit par le serveur, jamais recopié. */}
+              {pageOffres && <div ref={afOffresIntroSlot} />}
               <div style={(activeFilter === 'offers' || (v545RechercheEnCours && filteredServices.length > 0)) ? undefined : { display: 'none' }}>
                 {offersBlock}
               </div>
@@ -10342,7 +10372,7 @@ function App() {
             l'onglet courant n'est pas « Shop ». Mesuré : chercher
             « merchandising » (mot-clé du T-shirt) depuis l'onglet « Offres »
             ne donnait RIEN à l'écran, et pas davantage de message. */}
-        {boutiqueRoute === null && filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all' || v545RechercheEnCours) && (
+        {boutiqueRoute === null && !pageOffres && filteredProducts.length > 0 && (activeFilter === 'shop' || activeFilter === 'all' || v545RechercheEnCours) && (
           <div id="products-section" className="af-boutique mb-8 fade-in-section" style={{ paddingTop: '10px' }}>
             {/* V541c — UNE VRAIE BOUTIQUE, PAS UNE LIGNE DE TITRE.
                 Le Shop possédait déjà tout ce qu'il faut — galerie de plusieurs
@@ -10541,7 +10571,7 @@ function App() {
         )}
 
         {/* v57: SECTION AUDIO SHOP — Sélection multiple, prix dégressif, scroll, modale */}
-        {boutiqueRoute === null && (() => {
+        {boutiqueRoute === null && !pageOffres && (() => {
           const allAudioTracks = [];
           courses.forEach(course => {
             if (course.audio_tracks && course.audio_tracks.length > 0) {
@@ -11356,7 +11386,7 @@ function App() {
         {/* V645.2 — Bloc info locale. Visible visiteur uniquement.
             V647 : son bouton d'essai est retiré, il répétait celui du Hero (même lien). Le lien
             du bloc SEO, juste en dessous, reste : c'est le seul que les robots voient. */}
-        {boutiqueRoute === null && !coachMode && (
+        {boutiqueRoute === null && !pageOffres && !coachMode && (
           <div style={{ maxWidth: '600px', margin: '48px auto 0', padding: '0 16px', textAlign: 'center' }}>
             <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 6 }}>
               MER 18H45 · DIM 18H30
@@ -11368,7 +11398,7 @@ function App() {
         )}
 
         {/* v104: Section FAQ Accordéon Homepage — titre cliquable */}
-        {boutiqueRoute === null && !coachMode && homeFaqs.length > 0 && (
+        {boutiqueRoute === null && !pageOffres && !coachMode && homeFaqs.length > 0 && (
           <div style={{ maxWidth: '700px', margin: '40px auto', padding: '0 16px' }}>
             <button
               onClick={() => setFaqSectionOpen(!faqSectionOpen)}

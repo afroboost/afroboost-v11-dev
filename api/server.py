@@ -60965,6 +60965,7 @@ if _os.path.isdir(_STATIC_DIR):
             "desc": ("Toutes les formules Afroboost : cours à l'unité, cartes, "
                      "abonnements et cours d'essai, à Neuchâtel."),
             "chemin": "/offres",
+            "bloc": None,  # rempli juste après : le bloc est défini plus bas.
         },
     }
 
@@ -60991,6 +60992,13 @@ if _os.path.isdir(_STATIC_DIR):
         _t = fiche["titre"]
         _d = fiche["desc"]
         _u = _M1_SITE.rstrip("/") + fiche["chemin"]
+        # Le contenu éditorial, s'il y en a un pour cette page, est posé juste
+        # après la zone React — comme le bloc de l'accueil. Il est donc dans le
+        # HTML servi, lisible sans JavaScript.
+        _bloc = fiche.get("bloc")
+        if _bloc and _html.count(_SEO_GEO_ANCRE_ROOT) == 1:
+            _html = _html.replace(_SEO_GEO_ANCRE_ROOT,
+                                  _SEO_GEO_ANCRE_ROOT + _bloc, 1)
         for _motif, _remplacement in (
                 (r"<title>.*?</title>", "<title>%s</title>" % _t),
                 (r'<meta\s+name=["\']description["\'][^>]*>',
@@ -61077,6 +61085,32 @@ if _os.path.isdir(_STATIC_DIR):
         if _html.count(_SEO_GEO_ANCRE_ROOT) != 1:
             return None
         return _html.replace(_SEO_GEO_ANCRE_ROOT, _SEO_GEO_ANCRE_ROOT + _SEO_GEO_BLOC_ACCUEIL, 1)
+
+    _SEO6_BLOC_OFFRES = (
+        '<section id="af-offres-intro" aria-labelledby="af-offres-titre" '
+        'style="max-width:760px;margin:0 auto 28px;padding:0 4px;color:#fff;'
+        'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
+        'line-height:1.65">'
+        '<h1 id="af-offres-titre" style="font-size:1.6rem;font-weight:800;margin:0 0 12px;line-height:1.25">'
+        'Offres et tarifs Afroboost à Neuchâtel</h1>'
+        '<p style="margin:0 0 14px;color:rgba(255,255,255,.82)">'
+        'Afroboost, c\'est du <strong>cardio-danse afrobeat</strong> en groupe, avec un coach. '
+        'On bouge sur une musique qui porte, on transpire, on rit. '
+        '<strong>Pas besoin de savoir danser</strong> : les mouvements sont simples, montrés pas à pas, '
+        'et chacun les fait à son rythme. Débutant·e ou non, vous êtes à votre place.</p>'
+        '<p style="margin:0 0 14px;color:rgba(255,255,255,.82)">'
+        'Plusieurs façons de venir, selon votre rythme : <strong>à la séance</strong>, quand vous voulez ; '
+        'en <strong>carte de plusieurs séances</strong>, pour venir régulièrement sans y penser ; '
+        'en <strong>abonnement</strong>, pour vous engager sur la durée ; '
+        'et un <strong>cours d\'essai offert</strong> si c\'est votre première fois. '
+        'Chaque formule indique son prix et ses conditions sur sa propre carte.</p>'
+        '<p style="margin:0 0 4px;color:rgba(255,255,255,.82)">'
+        'Choisissez la formule qui vous ressemble ci-dessous, puis réservez votre séance en quelques clics. '
+        'Les cours ont lieu au Chemin des Valangines 97, à Neuchâtel.</p>'
+        '</section>')
+    # Le bloc rejoint sa fiche ici, APRES sa definition : `_SEO6_PAGES` est
+    # ecrit plus haut dans le fichier, il ne pouvait pas le citer.
+    _SEO6_PAGES["offres"]["bloc"] = _SEO6_BLOC_OFFRES
 
     # Catch-all: serve index.html for any non-API route (SPA routing)
     @fastapi_app.get("/{full_path:path}")
