@@ -61,4 +61,16 @@
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
+  <!--
+    V655 (10/11/2026) — « Offres et tarifs ». Jusqu'ici les formules n'étaient
+    atteignables que par `/?offres=toutes` : un paramètre ne se dit pas au
+    téléphone et ne s'indexe pas. `/offres` ouvre LE MÊME panneau, avec son
+    propre titre, sa propre description et son propre `canonical` servis dès le
+    chargement direct. `/?offres=toutes` continue de fonctionner à l'identique.
+  -->
+  <url>
+    <loc>https://afroboost.com/offres</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
 </urlset>

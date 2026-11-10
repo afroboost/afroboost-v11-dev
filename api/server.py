@@ -22686,6 +22686,10 @@ async def get_sitemap():
         # `canonical` dès le chargement direct. `/offres` n'y figure pas : ce
         # chemin n'existe pas (les formules sont `/?offres=toutes`).
         f'  <url><loc>{base_url}/boutique</loc><lastmod>{now}</lastmod><priority>0.5</priority></url>',
+        # V655 — « Offres et tarifs » : adresse propre, en-tête et `canonical`
+        # servis dès le chargement direct, panneau des formules ouvert au
+        # montage. Les deux sitemaps doivent dire la même chose.
+        f'  <url><loc>{base_url}/offres</loc><lastmod>{now}</lastmod><priority>0.7</priority></url>',
     ]
 
     # Ajouter toutes les vitrines de coachs actifs
@@ -60897,6 +60901,8 @@ if _os.path.isdir(_STATIC_DIR):
         "cours-essai-gratuit-neuchatel", "a-propos", "confidentialite",
         "privacy", "terms", "live", "rencontre", "health", "healthz",
         "conditions", "cgu",
+        # V655 : `/offres` est desormais une vraie adresse (voir `_SEO6_PAGES`).
+        "offres",
         # FICHIERS DU SITE. Normalement servis plus haut par le test `isfile` —
         # ils ne devraient jamais arriver ici. Mais le jour ou l'un d'eux
         # manquerait du build (mesure : `sitemap.xml` et `robots.txt` absents du
@@ -60946,6 +60952,19 @@ if _os.path.isdir(_STATIC_DIR):
             "desc": ("Vêtements et accessoires Afroboost. Commande en ligne, "
                      "retrait au cours à Neuchâtel."),
             "chemin": "/boutique",
+        },
+        # V655 — `/offres` ouvre le panneau des formules, celui que
+        # `/?offres=toutes` ouvrait deja. Meme panneau, meme composant, memes
+        # donnees : seule l'ADRESSE est nouvelle, et c'est tout l'interet —
+        # une adresse se dit au telephone, s'ecrit sur une affiche et s'indexe.
+        # Les tarifs ne sont PAS ecrits ici : ils viennent des offres reelles,
+        # lues par le panneau. Une description qui citerait un prix mentirait
+        # le jour ou il change.
+        "offres": {
+            "titre": "Offres et tarifs Afroboost — cardio-danse à Neuchâtel",
+            "desc": ("Toutes les formules Afroboost : cours à l'unité, cartes, "
+                     "abonnements et cours d'essai, à Neuchâtel."),
+            "chemin": "/offres",
         },
     }
 

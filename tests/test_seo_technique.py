@@ -27,6 +27,9 @@ sys.path.insert(0, RACINE)
 
 SRC = io.open(os.path.join(RACINE, "api", "server.py"), encoding="utf-8").read()
 INDEX = io.open(os.path.join(RACINE, "frontend", "public", "index.html"), encoding="utf-8").read()
+# V655 : le chemin `/offres` est lu par le frontend — on verifie la SOURCE,
+# pas un build, pour que le banc reste hors ligne et independant de `yarn build`.
+APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
 ROBOTS = io.open(os.path.join(RACINE, "frontend", "public", "robots.txt"), encoding="utf-8").read()
 SITEMAP = io.open(os.path.join(RACINE, "frontend", "public", "sitemap.xml"), encoding="utf-8").read()
 
@@ -209,7 +212,9 @@ v("SEO-4 : aucune adresse fixe du sitemap de l'API n'est privée ni inventée",
                      # place ici. Aucune vue React n'en a le droit.
                      "/confidentialite",
                      # SEO-6 : la boutique sert desormais son propre en-tete.
-                     "/boutique"}, _locs_api)
+                     "/boutique",
+                     # V655 : « Offres et tarifs » a une vraie adresse.
+                     "/offres"}, _locs_api)
 # Les ancres historiques ne sont PAS touchées : ce sont des liens vers
 # l'accueil, pas des adresses indexables.
 v("SEO-4 : les liens legacy `/#devenir-coach` restent en place (rien n'est cassé côté produit)",
@@ -268,6 +273,7 @@ for _ok in ("", "/", "/espace", "/espace/AFR-2287CA", "/duo/abc123", "/duo/c/xyz
             "/coach/bassi", "/partner/bassi", "/partenaire/" + "b" * 12,
             "/entreprise/" + "c" * 26, "/chat/42", "/i/jeton", "/v/code",
             "/validate/code", "/boutique", "/boutique/t-shirt-ab12cd34",
+            "/offres", "/offres/",  # V655 : avec et sans barre finale
             "/cours-essai-gratuit-neuchatel", "/a-propos", "/confidentialite",
             "/privacy", "/terms", "/live", "/rencontre", "/health", "/healthz",
             "/conditions", "/cgu", "/ESPACE/AFR-1", "/Coach/Bassi",
@@ -279,7 +285,7 @@ for _ok in ("", "/", "/espace", "/espace/AFR-2287CA", "/duo/abc123", "/duo/c/xyz
 
 # Ces chemins n'existent pas et doivent le dire.
 for _ko in ("/cours-de-salsa-a-geneve", "/xyzabc123", "/blog", "/devenir-coach",
-            "/offres", "/partenaires", "/contact", "/mentions-legales", "/cgv",
+            "/partenaires", "/contact", "/mentions-legales", "/cgv",
             "/wp-admin", "/index.php", "/zumba-neuchatel"):
     v("SEO-5 : `%s` n'existe pas -> 404" % _ko, not _connue(_ko))
 
@@ -294,11 +300,13 @@ _t6 = _sec6.group(1) if _sec6 else ""
 v("SEO-6 : la boutique y figure", '"boutique"' in _t6)
 v("SEO-6 : elle a son titre, sa description et son chemin",
   '"titre"' in _t6 and '"desc"' in _t6 and '"chemin": "/boutique"' in _t6)
-# `/offres` N'EST PAS UNE ROUTE : rien dans le frontend ne lit ce chemin, les
-# formules s'ouvrent par `/?offres=toutes`. L'inscrire ici reviendrait a
-# inventer une page — exactement l'erreur de SEO-4.
-v("SEO-6 : `/offres` n'est PAS traitée comme une page (ce chemin n'existe pas)",
-  '"offres"' not in _t6)
+# V655 — `/offres` EST DEVENUE UNE PAGE. Jusqu'ici ce chemin n'existait pas et
+# les formules n'etaient atteignables que par `/?offres=toutes` : un parametre
+# ne se dit pas au telephone et ne s'indexe pas. Le chemin emet desormais LE
+# MEME signal vers LE MEME panneau — aucune seconde logique d'affichage.
+v("V655 : `/offres` a son propre en-tête", '"offres"' in _t6 and '"chemin": "/offres"' in _t6)
+v("V655 : sa description ne cite AUCUN tarif (ils changeraient sans elle)",
+  not re.search(r'"desc":[^}]*\d+\s*(CHF|francs)', _t6))
 v("SEO-6 : l'en-tête est posé APRÈS les chemins privés et AVANT le bloc d'accueil",
   _catch.index("_seo_est_prive(full_path)") < _catch.index("_seo6_page(full_path)")
   < _catch.index("_seo_geo_accueil(_index)"))
@@ -314,7 +322,23 @@ for _b in ("<title>", "description", "og:title", "og:description", "og:url",
 v("SEO-6 : remplacement par MOTIF, jamais par égalité de chaîne (leçon SEO-1)",
   "_re.sub(" in _c6 and "flags=_re.I" in _c6)
 v("SEO-6 : la boutique est bien une racine servie (jamais 404)", _connue("/boutique"))
-v("SEO-6 : `/offres` reste un 404 — ce chemin n'existe pas", not _connue("/offres"))
+v("V655 : `/offres` est servie (elle n'est plus un 404)", _connue("/offres"))
+# LA PORTE D'ORIGINE RESTE OUVERTE. Le paramètre `?offres=toutes` est écrit dans
+# la page d'essai servie par le serveur et dans des liens déjà partagés : le
+# casser serait une régression silencieuse.
+# LA REGLE VIT DANS UN SEUL FICHIER, teste a part (routeOffres.test.js).
+_ROUTE_OFFRES = io.open(os.path.join(RACINE, "frontend", "src", "utils",
+                                     "routeOffres.js"), encoding="utf-8").read()
+v("V655 : `/?offres=toutes` est toujours lu (la porte d'origine reste ouverte)",
+  "get('offres') === 'toutes'" in _ROUTE_OFFRES)
+v("V655 : le chemin `/offres` est lu aussi", "/^\\/offres\\/?$/i" in _ROUTE_OFFRES)
+v("V655 : les deux entrées mènent au MÊME signal, émis une seule fois",
+  "ouvrirLesOffres(window.location.pathname" in APP
+  and APP.count("setSignalToutesOffres(n => n + 1)") == 1)
+v("V655 : aucune seconde logique d'affichage — App.js appelle la règle, ne la recopie pas",
+  "offres') === 'toutes'" not in APP)
+v("V655 : la page d'essai pointe toujours vers `/?offres=toutes` (lien inchangé)",
+  'href="/?offres=toutes"' in SRC)
 
 # ── 7. Les données structurées de l'accueil ────────────────────────────────
 _ld = re.findall(r'application/ld\+json">(.*?)</script>', INDEX, re.S)

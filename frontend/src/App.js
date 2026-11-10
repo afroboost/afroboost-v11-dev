@@ -304,6 +304,7 @@ import { CarteLive, CarteOffreDuMoment, CarteSpordateur, CarteHoraires } from ".
 import BanniereBoutiqueMedia from "./components/accueil/BanniereBoutiqueMedia";
 // V646 — routes de la page /boutique (fonctions pures, sans routeur).
 import { lireRouteBoutique, cheminProduit, trouverProduit, avecModeVisiteur } from "./utils/boutiqueRoute";
+import { ouvrirLesOffres } from "./utils/routeOffres"; // V655
 import { normaliserRatio as videoRatioNormaliser, estPortrait as videoEstPortrait } from "./utils/videoRatio";
 import { analyserMediaUrl } from "./utils/mediaOffre";
 import { trimDeLOffre as videoTrimDeLOffre, useTrimVideo as videoUseTrim } from "./utils/videoTrim";
@@ -5510,9 +5511,18 @@ function App() {
   const [signalToutesOffres, setSignalToutesOffres] = useState(0);
   // V622 — `/?offres=toutes` (bouton « Voir toutes les formules et les prix » de la page
   // d'essai) envoie CE MÊME signal, une fois, au montage : la fenêtre existante s'ouvre.
+  //
+  // V655 — `/offres` EST LA MÊME PORTE, avec une adresse partageable. Jusqu'ici les
+  // formules n'étaient atteignables que par un paramètre (`/?offres=toutes`) : impossible
+  // à dire au téléphone, à écrire sur une affiche, ou à indexer. Le CHEMIN `/offres` émet
+  // exactement le même signal, au même moment, vers le même panneau — aucune seconde
+  // logique d'affichage, aucune donnée lue deux fois. `/?offres=toutes` continue de
+  // fonctionner à l'identique : les deux conditions sont lues côte à côte.
   useEffect(() => {
     try {
-      if (new URLSearchParams(window.location.search).get('offres') === 'toutes') setSignalToutesOffres(n => n + 1);
+      if (ouvrirLesOffres(window.location.pathname, window.location.search)) {
+        setSignalToutesOffres(n => n + 1);
+      }
     } catch (e) { /* lien illisible : l'accueil s'affiche normalement */ }
   }, []);
   // V622 — LE PIED DE PAGE RESTE LE DERNIER BLOC. Le bloc de présentation SEO est écrit par
