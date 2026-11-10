@@ -9928,6 +9928,13 @@ function App() {
                     onToutesLesOffres: () => setSignalToutesOffres((n) => n + 1),
                     onProgramme: () => setShowSessionsModal(true),
                   },
+                  /* V646 — DEUX DESTINATIONS DE PLUS POUR LES APPELS À L'ACTION
+                     des publications. Ce sont les MÊMES portes que la barre de
+                     navigation : la boutique passe par `v541AllerA('shop')`, le
+                     Live par l'entrée unique `ouvrirLiveDepuisLaBarre` (qui gère
+                     déjà l'identification et le crédit). Aucune navigation neuve. */
+                  onBoutique: () => v541AllerA('shop'),
+                  onLive: ouvrirLiveDepuisLaBarre,
                 }}
                 publications={
                   searchQuery.trim()

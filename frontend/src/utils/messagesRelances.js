@@ -61,6 +61,12 @@ export const FILTRES = [
   { id: 'stoppes', libelle: 'Stoppés' },
   { id: 'manuel', libelle: 'Manuel' },
   { id: 'a_envoyer', libelle: 'À envoyer' },
+  /* V646 — avant l'envoi. Ils vivent dans la MÊME liste que les autres : un
+     second jeu de puces aurait fait deux barres de filtres qui s'ignorent. */
+  { id: 'brouillons', libelle: 'Brouillons' },
+  { id: 'a_relire', libelle: 'À relire' },
+  { id: 'prets', libelle: 'Prêts' },
+  { id: 'bloques', libelle: 'Bloqués' },
 ];
 
 export const FILTRES_CANAL = [
@@ -147,8 +153,13 @@ function estAutomatique(a) {
 /** L'étape J0 d'une action. */
 export function etapeJ0(action, campagne) {
   const a = action || {};
+  /* V646 : « Objet : … » en première ligne du message EST l'objet de cet
+     e-mail-là (miroir de `v602_objet_et_corps`, serveur), et le corps affiché
+     est alors débarrassé de cette ligne. Sans objet propre, celui de la
+     campagne sert de secours — exactement le comportement d'avant V646. */
+  const oc = objetEtCorps(a.message_j0, (campagne || {}).subject_j0);
   const base = {
-    etape: 'j0', objet: texte((campagne || {}).subject_j0), message: a.message_j0 || '',
+    etape: 'j0', objet: oc.objet, message: oc.corps,
     canal: a.channel || '', date_prevue: null, date_envoi: a.sent_at || null,
     motif: '', retard_jours: 0,
   };
@@ -316,6 +327,7 @@ export function correspondRecherche(ligne, recherche) {
     libelleStatutProspect(l.statutProspect), l.statutProspect, f.city, f.category, f.subcategory,
     f.contact_name, f.public_email, f.organisation_name, a.target, c.from_email,
     l.nonLues ? 'nouveau non lu' : '', l.appel ? 'appel a faire' : '', l.reponseAttendue ? 'reponse attendue' : '',
+    l.preparation ? l.preparation.libelle : '', l.preparation ? (l.preparation.manques || []).join(' ') : '',   // V646
   ].filter(Boolean).join(' '));
   return mots.every((m) => meule.includes(m));
 }
@@ -376,6 +388,9 @@ export function ligneRelance(action, campagne, conversation, prospectsParRef, ma
     famille: familleCanal(a.channel),
     statutProspect: fiche ? fiche.status : '',
     j0, j3, j7, j14,
+    /* V646 — ADDITIF : l'état d'AVANT L'ENVOI, à côté de `etat` qui reste
+       exactement ce qu'il était (aucun recalcul, aucun tri modifié). */
+    preparation: preparationJ0(a, campagne, fiche),
     etat,
     motifArret,
     prochaineAction,
@@ -419,6 +434,7 @@ export function compteursRelances(lignes) {
     reponses: n((l) => l.etat === ETATS.REPONDU || l.etat === ETATS.REFUS),
     stoppes: n((l) => ETATS_STOP.includes(l.etat)),
     manuel: n((l) => l.etat === ETATS.MANUEL),
+    ...compteursPreparation(L),   // V646 : brouillons / aRelire / prets / bloques / envoyes
   };
 }
 
@@ -438,6 +454,11 @@ export function filtrerRelances(lignes, filtre, canal, recherche) {
       case 'repondus': return l.etat === ETATS.REPONDU || l.etat === ETATS.REFUS;
       case 'stoppes': return ETATS_STOP.includes(l.etat);
       case 'manuel': return l.etat === ETATS.MANUEL;
+      /* V646 — avant l'envoi. */
+      case 'brouillons': return !!l.preparation && l.preparation.code === PREPARATIONS.BROUILLON;
+      case 'a_relire': return !!l.preparation && l.preparation.code === PREPARATIONS.A_RELIRE;
+      case 'prets': return !!l.preparation && l.preparation.code === PREPARATIONS.PRET;
+      case 'bloques': return !!l.preparation && l.preparation.code === PREPARATIONS.BLOQUE;
       default: return true;
     }
   });
@@ -559,4 +580,145 @@ export function dateCourte(iso) {
   const d = new Date(t);
   const p = (x) => String(x).padStart(2, '0');
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V646 — AVANT L'ENVOI : BROUILLON · À RELIRE · PRÊT · BLOQUÉ · ENVOYÉ
+
+   LE MANQUE QUE CE LOT COMBLE. L'écran savait dire ce qui est PARTI (envoyé,
+   répondu, en retard) mais pas ce qui n'est PAS ENCORE PRÊT À PARTIR : un
+   message vide, un objet d'e-mail absent ou un marqueur « [À COMPLÉTER AVANT
+   ENVOI] » oublié dans le texte s'affichaient « À envoyer », exactement comme
+   un message relu et complet. Le coach ne pouvait pas voir ses brouillons.
+
+   AUCUN CHAMP AJOUTÉ EN BASE, AUCUN SECOND SYSTÈME DE STATUTS. Tout est
+   DÉDUIT de ce qui existe : sur l'action `message_j0`, `message_j0_origine`
+   (`fiche` | `edite` | `absent`), `channel`, `execution_type`, `statut`,
+   `sent_at`, `updated_at` ; sur la campagne `subject_j0` et `etat` ; sur la
+   fiche `ne_plus_contacter` et `corbeille`. L'état se recalcule à chaque
+   lecture, comme tout le reste de ce fichier, et n'est jamais écrit.
+
+   LA FRONTIÈRE ENTRE « À RELIRE » ET « PRÊT » EST L'APPROBATION, pas une
+   impression. Tant que la campagne n'est pas approuvée, rien ne peut partir :
+   un message complet y est donc « à relire ». Une fois la campagne approuvée,
+   le même message devient « prêt ». C'est la seule lecture qui ne mente pas.
+
+   ⚠️ L'OBJET D'UN E-MAIL PEUT VIVRE DANS LE MESSAGE. Le serveur
+   (`v602_objet_et_corps`) lit la PREMIÈRE ligne non vide : si c'est
+   « Objet : X », X devient l'objet et la ligne sort du corps — c'est ce qui
+   permet un objet DIFFÉRENT par destinataire, `subject_j0` de la campagne ne
+   servant que de secours. `objetEtCorps` ci-dessous est le MIROIR de cette
+   règle, même idiome que `ECART_J3_J7_JOURS` qui recopie déjà une constante du
+   moteur. Sans ce miroir, l'écran annoncerait « objet manquant » sur un
+   message qui en a un, et laisserait « Objet : … » au milieu du corps.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export const PREPARATIONS = {
+  BROUILLON: 'brouillon', A_RELIRE: 'a_relire', PRET: 'pret', ENVOYE: 'envoye', BLOQUE: 'bloque',
+};
+
+export const LIBELLES_PREPARATION = {
+  brouillon: 'Brouillon', a_relire: 'À relire', pret: 'Prêt', envoye: 'Envoyé', bloque: 'Bloqué',
+};
+
+export const FILTRES_PREPARATION = [
+  { id: 'brouillons', libelle: 'Brouillons', code: 'brouillon' },
+  { id: 'a_relire', libelle: 'À relire', code: 'a_relire' },
+  { id: 'prets', libelle: 'Prêts', code: 'pret' },
+  { id: 'bloques', libelle: 'Bloqués', code: 'bloque' },
+];
+
+/* Les marqueurs qu'un rédacteur laisse EXPRÈS dans un texte inachevé. Ils
+   viennent des gabarits réellement en base (import Corporate V657/V658). */
+const MARQUEURS_INACHEVE = [
+  /\[\s*À\s*COMPL[ÉE]TER/i, /LIEN\s*À\s*CR[ÉE]ER/i, /\(\s*BROUILLON\s*\)/i,
+  /\[\s*LIEN\b/i, /\bTODO\b/, /X{3,}/,
+];
+
+const RE_OBJET_LIGNE = /^\s*objet\s*:\s*(.+?)\s*$/i;
+const OBJET_MAX = 200;   // miroir de P3S3D2_OBJET_MAX (serveur)
+
+/** MIROIR de `v602_objet_et_corps` (serveur). PURE. */
+export function objetEtCorps(message, objetCampagne) {
+  const t = typeof message === 'string' ? message : '';
+  const lignes = t.split('\n');
+  let i = 0;
+  while (i < lignes.length && !lignes[i].trim()) i += 1;
+  if (i < lignes.length) {
+    const m = RE_OBJET_LIGNE.exec(lignes[i]);
+    if (m && m[1].trim()) {
+      let reste = lignes.slice(i + 1);
+      while (reste.length && !reste[0].trim()) reste = reste.slice(1);
+      return { objet: m[1].trim().slice(0, OBJET_MAX), corps: reste.join('\n'), objetPropre: true };
+    }
+  }
+  return { objet: texte(objetCampagne), corps: t, objetPropre: false };
+}
+
+/* Les états de campagne où l'approbation est acquise : un message complet y
+   est PRÊT. Partout ailleurs (`brouillon`, `preparee`), il est À RELIRE. */
+const ETATS_CAMPAGNE_APPROUVEE = ['approuvee', 'en_cours', 'terminee'];
+
+/**
+ * V646 — L'ÉTAT DE PRÉPARATION du J0 d'un destinataire, et CE QUI LUI MANQUE.
+ * Rend `{ code, libelle, manques: string[], prochaine, objet, modifieLe }`.
+ * PURE : aucune lecture, aucune écriture, aucun effet.
+ */
+export function preparationJ0(action, campagne, fiche) {
+  const a = action || {};
+  const c = campagne || {};
+  const f = fiche || null;
+  const canal = texte(a.channel).toLowerCase();
+  const { objet } = objetEtCorps(a.message_j0, c.subject_j0);
+  const base = { objet, modifieLe: a.updated_at || a.created_at || null, manques: [] };
+  const rendre = (code, prochaine, manques) => ({
+    ...base, code, libelle: LIBELLES_PREPARATION[code] || code,
+    manques: manques || [], prochaine,
+  });
+
+  if (a.sent_at) return rendre(PREPARATIONS.ENVOYE, 'Déjà envoyé — suivre la réponse');
+  if (texte(a.statut) === 'exclu') return rendre(PREPARATIONS.BLOQUE, 'Exclu de la campagne');
+  if (f && f.ne_plus_contacter) return rendre(PREPARATIONS.BLOQUE, 'Ne souhaite plus être contacté');
+  if (f && f.corbeille) return rendre(PREPARATIONS.BLOQUE, 'Prospect dans la corbeille');
+  if (texte(a.statut) === 'bloque' || texte(a.execution_type) === 'BLOQUE') {
+    return rendre(PREPARATIONS.BLOQUE,
+      texte(a.execution_reason) || 'Aucun canal de contact exploitable',
+      ['coordonnée de contact manquante']);
+  }
+
+  const corpsBrut = texte(a.message_j0);
+  const manques = [];
+  if (!corpsBrut || texte(a.message_j0_origine) === 'absent') manques.push('message manquant');
+  if (canal === 'email' && !objet) manques.push('objet manquant');
+  if (corpsBrut && MARQUEURS_INACHEVE.some((r) => r.test(corpsBrut))) {
+    manques.push('information à compléter dans le texte');
+  }
+  if (manques.length) {
+    return rendre(PREPARATIONS.BROUILLON, `Compléter : ${manques.join(', ')}`, manques);
+  }
+  if (ETATS_CAMPAGNE_APPROUVEE.includes(texte(c.etat))) {
+    return rendre(PREPARATIONS.PRET, texte(a.execution_type) === 'AUTO'
+      ? 'Aucun blocage — envoi du J0' : `Aucun blocage — ${libelleCanal(a.channel).toLowerCase()} à faire`);
+  }
+  return rendre(PREPARATIONS.A_RELIRE, 'Relire, puis approuver la campagne');
+}
+
+/** Les compteurs de préparation d'une liste de lignes. PURE. */
+export function compteursPreparation(lignes) {
+  const L = lignes || [];
+  const n = (code) => L.filter((l) => l.preparation && l.preparation.code === code).length;
+  return {
+    brouillons: n(PREPARATIONS.BROUILLON),
+    aRelire: n(PREPARATIONS.A_RELIRE),
+    prets: n(PREPARATIONS.PRET),
+    bloques: n(PREPARATIONS.BLOQUE),
+    envoyes: n(PREPARATIONS.ENVOYE),
+  };
+}
+
+/** `true` quand la campagne n'est pas encore approuvée : la zone « avant envoi »
+    n'a de sens que là. Une campagne approuvée garde l'écran d'avant V646. */
+export function campagneAvantEnvoi(campagne) {
+  const e = texte((campagne || {}).etat);
+  return !!e && !ETATS_CAMPAGNE_APPROUVEE.includes(e);
 }

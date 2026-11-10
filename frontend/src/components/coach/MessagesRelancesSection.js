@@ -37,6 +37,7 @@ import {
   lignesRelances, compteursRelances, filtrerRelances, trierRelances, chronologie,
   dateCourte, libelleCanal, libelleStatutProspect, nomCampagne, ilYa,
   dernierEvenement, instant,
+  PREPARATIONS, LIBELLES_PREPARATION, FILTRES_PREPARATION, campagneAvantEnvoi,   // V646
 } from '../../utils/messagesRelances';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -65,6 +66,13 @@ const TONS = {
   prevu: { fond: 'rgba(255,255,255,0.04)', bord: `rgba(${RGB}, 0.3)`, texte: TEXTE },
   a_envoyer: { fond: 'rgba(255,255,255,0.04)', bord: `rgba(${RGB}, 0.3)`, texte: TEXTE },
   sans_objet: { fond: 'transparent', bord: 'rgba(255,255,255,0.08)', texte: 'rgba(255,255,255,0.4)' },
+  /* V646 — AVANT L'ENVOI. « Brouillon » est le SEUL aplat plein de l'écran :
+     c'est ce qui le rend repérable d'un coup d'œil dans une longue liste, sans
+     ajouter ni icône ni colonne. Texte quasi-noir sur ambre : contraste élevé. */
+  brouillon: { fond: AMBRE, bord: AMBRE, texte: '#0a0a0a' },
+  a_relire: { fond: 'rgba(59,130,246,0.14)', bord: 'rgba(96,165,250,0.5)', texte: BLEU },
+  pret: { fond: 'rgba(34,197,94,0.12)', bord: 'rgba(34,197,94,0.4)', texte: VERT },
+  bloque: { fond: 'rgba(255,255,255,0.05)', bord: 'rgba(255,255,255,0.16)', texte: 'rgba(255,255,255,0.6)' },
 };
 
 function Pastille({ etat, children, testid }) {
@@ -74,6 +82,17 @@ function Pastille({ etat, children, testid }) {
       borderRadius: '999px', fontSize: '10.5px', fontWeight: 600, whiteSpace: 'nowrap',
       background: t.fond, border: `1px solid ${t.bord}`, color: t.texte }}>
       {children || LIBELLES_ETAT[etat] || etat}
+    </span>
+  );
+}
+
+/* V646 — le badge d'avant-envoi. Il réutilise `Pastille` : un seul composant
+   de badge sur cet écran, un seul jeu de tons. */
+function PastilleP({ p }) {
+  if (!p || p.code === PREPARATIONS.ENVOYE) return null;
+  return (
+    <span data-testid="mr-preparation" data-preparation={p.code}>
+      <Pastille etat={p.code}>{LIBELLES_PREPARATION[p.code] || p.code}</Pastille>
     </span>
   );
 }
@@ -185,8 +204,23 @@ function Carte({ l, maintenant, onOuvrir, active }) {
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {`Prochaine action : ${l.prochaineAction}`}{date ? ` · ${date}` : ''}
           </span>
-          {!l.nonLues && !l.appel && !l.reponseAttendue && <Pastille etat={l.etat} testid="mr-etat" />}
+          {/* V646 : avant l'envoi, l'état de PRÉPARATION remplace l'état de
+              séquence — « Brouillon » dit quelque chose, « À envoyer » non.
+              Une fois le J0 parti, l'affichage d'avant V646 revient à l'identique. */}
+          {!l.nonLues && !l.appel && !l.reponseAttendue && (
+            l.preparation && l.preparation.code !== PREPARATIONS.ENVOYE
+              ? <PastilleP p={l.preparation} />
+              : <Pastille etat={l.etat} testid="mr-etat" />
+          )}
         </div>
+        {l.preparation && l.preparation.code !== PREPARATIONS.ENVOYE && (
+          <div data-testid="mr-carte-preparation" style={{ display: 'flex', gap: '6px', alignItems: 'center',
+            fontSize: '10.5px', color: DOUX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span>{libelleCanal(l.canal)}</span>
+            {l.preparation.manques.length > 0 && <span style={{ color: AMBRE }}>· {l.preparation.manques.join(' · ')}</span>}
+            {l.preparation.modifieLe && <span>· modifié le {dateCourte(l.preparation.modifieLe)}</span>}
+          </div>
+        )}
         {(l.etat === ETATS.MANUEL || evTexte) && (
           <div style={{ fontSize: '10.5px', color: DOUX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {l.etat === ETATS.MANUEL ? SUIVI_MANUEL_INDISPONIBLE : evTexte}
@@ -350,6 +384,7 @@ function PanneauDetail({ l, maintenant, notes, notesEnCours, brouillon, onFermer
             <div style={{ fontSize: '15px', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.organisation}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center', marginTop: '2px' }}>
               <Badges l={l} />
+              <PastilleP p={l.preparation} />
               <Pastille etat={l.etat}>{l.etat === ETATS.EN_RETARD ? `Retard ${(l.j3.etat === ETATS.EN_RETARD ? l.j3 : l.j7).retard_jours}j` : undefined}</Pastille>
               <span style={{ fontSize: '11px', color: DOUX }}>
                 {[libelleCanal(l.canal), l.statutProspect ? libelleStatutProspect(l.statutProspect) : ''].filter(Boolean).join(' · ')}
@@ -361,6 +396,21 @@ function PanneauDetail({ l, maintenant, notes, notesEnCours, brouillon, onFermer
             <SvgIcon name="x" size={14} />
           </button>
         </div>
+        {/* V646 — CE QUI MANQUE AVANT L'ENVOI, écrit en haut du dossier. C'est la
+            question que le coach se pose en ouvrant un message qu'il n'a pas
+            encore envoyé ; elle était sans réponse. */}
+        {l.preparation && l.preparation.code !== PREPARATIONS.ENVOYE && (
+          <div data-testid="mr-panneau-preparation" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px',
+            alignItems: 'center', fontSize: '11.5px', marginBottom: '6px', padding: '5px 8px', borderRadius: '6px',
+            border: `1px solid ${l.preparation.code === PREPARATIONS.BROUILLON ? 'rgba(245,158,11,0.45)' : BORD}`,
+            background: l.preparation.code === PREPARATIONS.BROUILLON ? 'rgba(245,158,11,0.10)' : 'rgba(255,255,255,0.02)' }}>
+            <strong style={{ color: TEXTE }}>{LIBELLES_PREPARATION[l.preparation.code]}</strong>
+            <span style={{ color: l.preparation.manques.length ? AMBRE : DOUX }}>
+              {l.preparation.manques.length ? `— ${l.preparation.manques.join(', ')}` : '— aucun blocage'}
+            </span>
+            <span style={{ color: DOUX, marginLeft: 'auto' }}>À faire : <span style={{ color: TEXTE }}>{l.preparation.prochaine}</span></span>
+          </div>
+        )}
         <div style={{ fontSize: '12px', color: DOUX }}>
           Prochaine action : <span style={{ color: TEXTE, fontWeight: 600 }} data-testid="mr-panneau-action">{l.prochaineAction}</span>
           {dateOuRetard(l) ? <span style={{ color: l.etat === ETATS.EN_RETARD ? AMBRE : DOUX }}> · {dateOuRetard(l)}</span> : null}
@@ -527,6 +577,9 @@ export default function MessagesRelancesSection({ API, actif }) {
     ? trierRelances(lignesRelances(campagne.actions, campagne.campaign, conversations, prospects, minute * 60000))
     : []), [campagne, conversations, prospects, minute]);
   const compteurs = useMemo(() => compteursRelances(lignes), [lignes]);
+  /* V646 : la zone « avant envoi » n'existe que tant que la campagne n'est pas
+     approuvée. Dérivé, jamais stocké. */
+  const avantEnvoi = !!campagne && campagneAvantEnvoi(campagne.campaign);
   const visibles = useMemo(() => filtrerRelances(lignes, filtre, canal, recherche), [lignes, filtre, canal, recherche]);
 
   const ligneOuverte = lignes.find((l) => l.id === ouverteId) || null;
@@ -571,7 +624,11 @@ export default function MessagesRelancesSection({ API, actif }) {
       {campagnes.length > 1 && (
         <select value={campagne ? campagne.campaign.id : ''} onChange={(e) => { setCampagneId(e.target.value); setOuverteId(''); }}
           style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`, borderRadius: '6px', padding: '5px 6px', fontSize: '12px', maxWidth: '280px' }}>
-          {campagnes.map((c) => <option key={c.campaign.id} value={c.campaign.id}>{nomCampagne(c.campaign)}</option>)}
+          {campagnes.map((c) => (
+            <option key={c.campaign.id} value={c.campaign.id}>
+              {nomCampagne(c.campaign)}{c.campaign.etat ? ` — ${c.campaign.etat}` : ''}
+            </option>
+          ))}
         </select>
       )}
 
@@ -584,6 +641,34 @@ export default function MessagesRelancesSection({ API, actif }) {
         <Compteur testid="mr-c-reponses" libelle="Réponses" valeur={v(compteurs.reponses)} actif={filtre === 'repondus'} onClick={() => basculerFiltre('repondus')} />
         <Compteur testid="mr-c-stoppes" libelle="Stoppés" valeur={v(compteurs.stoppes)} actif={filtre === 'stoppes'} onClick={() => basculerFiltre('stoppes')} />
       </div>
+
+      {/* ─── V646 : AVANT L'ENVOI ───
+          N'APPARAÎT QUE SUR UNE CAMPAGNE NON APPROUVÉE. Sur une campagne
+          approuvée, l'écran est EXACTEMENT celui d'avant V646 : aucune bande
+          en plus, aucun compteur en plus. C'est là, et seulement là, que la
+          question « qu'est-ce qui est encore en brouillon ? » se pose. */}
+      {avantEnvoi && (
+        <div data-testid="mr-avant-envoi" style={{ border: `1px solid ${compteurs.brouillons > 0 ? 'rgba(245,158,11,0.45)' : BORD}`,
+          borderRadius: '10px', padding: '6px 8px', background: compteurs.brouillons > 0 ? 'rgba(245,158,11,0.07)' : 'rgba(255,255,255,0.02)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+            <SvgIcon name={compteurs.brouillons > 0 ? 'warning' : 'check'} size={12} />
+            <span style={{ fontSize: '11px', fontWeight: 700 }}>Avant envoi</span>
+            <span style={{ fontSize: '10.5px', color: DOUX }}>
+              {enChargement ? '…' : compteurs.brouillons > 0
+                ? `${compteurs.brouillons} message${compteurs.brouillons > 1 ? 's' : ''} à compléter avant d'approuver`
+                : 'aucun brouillon — campagne non approuvée, rien ne peut partir'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+            {FILTRES_PREPARATION.map((f) => (
+              <Compteur key={f.id} testid={`mr-c-${f.id}`} libelle={f.libelle}
+                valeur={v(compteurs[f.id === 'brouillons' ? 'brouillons' : f.id === 'a_relire' ? 'aRelire' : f.id === 'prets' ? 'prets' : 'bloques'])}
+                ton={f.id === 'brouillons' ? 'ambre' : f.id === 'prets' ? 'marque' : undefined}
+                actif={filtre === f.id} onClick={() => basculerFiltre(f.id)} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ─── FILTRES + RECHERCHE ─── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>

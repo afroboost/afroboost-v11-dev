@@ -12643,7 +12643,13 @@ async def list_publications(coach_id: str = ""):
     pubs = await db.publications.find(
         query,
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
-    ).sort("created_at", -1).to_list(50)
+    # V646 — « A LA UNE » PASSE DEVANT, puis la date comme avant. Le tri est fait
+    # par la BASE et non apres coup : la liste est coupee a 50, une publication
+    # mise en avant mais ancienne doit survivre a cette coupe. Les documents sans
+    # le champ (tout l'historique) trient exactement comme avant (`null` apres
+    # `true`). SEULE la vitrine publique est reordonnee : `/publications/mine`,
+    # la liste d'edition du coach, reste en ordre chronologique.
+    ).sort([("a_la_une", -1), ("created_at", -1)]).to_list(50)
     for p in pubs:
         try:
             remaining = (datetime.fromisoformat(p["expires_at"]) - now).total_seconds()
@@ -14601,6 +14607,39 @@ async def _v332_stop_whatsapp(numero_brut: str, texte: str) -> bool:
     return True
 
 
+# ============================================================================
+# V646 — LA PUBLICATION AU SERVICE DE LA CONVERSION
+# ============================================================================
+# TROIS CHAMPS, PAS UN SYSTEME DE PLUS. Une publication existe deja, avec son
+# media, sa legende, son auteur, sa duree de vie et son Boost. On lui ajoute
+# seulement de quoi dire A QUOI ELLE SERT (`objectif`), VERS QUOI elle envoie
+# (`cta`) et SI ELLE PASSE DEVANT (`a_la_une`). Rien d'autre : pas de seconde
+# collection, pas d'ordre manuel a maintenir a la main, pas de « campagne de
+# contenu » — l'ordre se deduit de `a_la_une` puis de la date, comme avant.
+#
+# VOCABULAIRES FERMES. Une valeur hors liste est REFUSEE (400), jamais rangee
+# dans « autre » : un contenu mal classe est un contenu qu'on ne retrouvera pas
+# au moment d'organiser la page. Meme regle que `p3s1_champs_valides`.
+#
+# QUI PEUT LES POSER : le COACH / super-admin seulement. Un abonne peut editer
+# la legende de SA publication (chemin `subscriber_code`), mais se mettre
+# soi-meme « a la une » de la vitrine du coach n'est pas une edition de
+# legende — c'est une decision editoriale. Le chemin abonne IGNORE donc ces
+# trois champs, sans faire echouer son edition.
+V646_OBJECTIFS = (
+    "temoignage",    # avis, retour d'un membre
+    "motivation",    # avant / apres, progression
+    "ambiance",      # l'energie d'un cours
+    "concept",       # ce qu'est Afroboost
+    "benefices",     # ce que ca apporte
+    "boutique",      # un produit porte en situation
+    "live",          # Afroboost Live, defi, communaute
+)
+# Chaque CTA pointe vers une destination QUI EXISTE DEJA sur la page d'accueil
+# (section des offres, fenetre des seances, Live, boutique). Aucun nouvel ecran.
+V646_CTAS = ("essai", "seances", "live", "boutique", "offres")
+
+
 @api_router.put("/publications/{pub_id}")
 async def update_publication(pub_id: str, request: Request):
     """V268: modifier la LEGENDE d'une publication (le media reste fige).
@@ -14670,6 +14709,26 @@ async def update_publication(pub_id: str, request: Request):
             update["trim_start"], update["trim_end"] = video_trim_valide(body.get("trim_start"), body.get("trim_end"))
         else:
             update["trim_start"], update["trim_end"] = None, None
+    # V646 — CONVERSION : objectif, appel a l'action, mise en avant.
+    # `is_author` est vrai sur le chemin ABONNE (preuve par code AFR-) : ces
+    # trois champs y sont ignores, voir l'encadre V646 ci-dessus. Sur le chemin
+    # coach, `require_auth` et le controle de propriete ont deja eu lieu.
+    if not is_author:
+        if "objectif" in body:
+            _v646 = (body.get("objectif") or "").strip().lower()
+            if _v646 and _v646 not in V646_OBJECTIFS:
+                raise HTTPException(status_code=400,
+                                    detail="Objectif inconnu. Valeurs acceptees : %s" % ", ".join(V646_OBJECTIFS))
+            update["objectif"] = _v646 or ""
+        if "cta" in body:
+            _v646 = (body.get("cta") or "").strip().lower()
+            if _v646 and _v646 not in V646_CTAS:
+                raise HTTPException(status_code=400,
+                                    detail="Appel a l'action inconnu. Valeurs acceptees : %s" % ", ".join(V646_CTAS))
+            update["cta"] = _v646 or ""
+        if "a_la_une" in body:
+            update["a_la_une"] = bool(body.get("a_la_une"))
+
     if not update:
         return {"status": "ok"}
     await db.publications.update_one({"id": pub_id}, {"$set": update})

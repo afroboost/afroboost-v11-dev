@@ -15,6 +15,7 @@ import { PrixBoost, BoutonBoost, estSuperAdmin } from './publications/Boost'; //
 import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/BoostTribeLive'; // LIVE RAPIDE : porte unique
 import VideoTrimEditor from './VideoTrimEditor'; // L'UNIQUE éditeur vidéo (partagé avec OfferWizard)
 import { trimValide, useTrimVideo } from '../utils/videoTrim'; // découpe non destructive : lecture bornée
+import { ctaDe, estALaUne, objectifLibelle, OBJECTIFS, CTAS } from '../utils/publicationsConversion'; // V646 : objectif / appel a l'action / a la une
 import useLargeurEcran from '../utils/useLargeurEcran'; // modale : plein écran mobile, deux colonnes desktop
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
@@ -1061,6 +1062,47 @@ const V268PublicationCard = ({ pub, onOpen, actions }) => {
  * Le média — et lui seul — agrandit la publication. Le son, le cœur et les avis
  * arrêtent la propagation.
  */
+/* V646 — L'APPEL À L'ACTION D'UNE PUBLICATION.
+   UN SEUL BOUTON, et seulement si le coach en a posé un : une vitrine qui
+   réclame à chaque vignette n'inspire pas confiance, elle fatigue. Le style
+   reste celui de la marque (`--primary-color`), discret — bordure et aplat
+   translucide, jamais un bandeau criard. */
+const V646BoutonCta = ({ pub, actions }) => {
+  const cta = ctaDe(pub, actions);
+  if (!cta) return null;
+  return (
+    <button
+      type="button"
+      data-testid="publication-cta"
+      data-cta={cta.id}
+      onClick={(e) => { e.stopPropagation(); cta.lancer(); }}
+      style={{
+        marginTop: 10, width: '100%', display: 'inline-flex', alignItems: 'center',
+        justifyContent: 'center', gap: 7, padding: '9px 14px', borderRadius: 999,
+        cursor: 'pointer', fontSize: 13.5, fontWeight: 600, color: '#fff',
+        background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.16)',
+        border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.55)',
+        backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+      }}
+    >
+      <SvgIcon name={cta.icone} size={15} />
+      <span>{cta.libelle}</span>
+    </button>
+  );
+};
+
+/* V646 — « À LA UNE », en pastille sobre : la même grammaire que le badge
+   COACH juste à côté (contour, pas d'aplat), pour ne pas voler le regard au
+   média. Elle n'apparaît que sur les publications réellement marquées. */
+const V646BadgeALaUne = () => (
+  <span data-testid="publication-a-la-une" style={{
+    flex: '0 0 auto', padding: '2px 6px', borderRadius: 999, fontSize: 9,
+    letterSpacing: '.06em', fontWeight: 700, background: 'transparent',
+    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.55)',
+    color: 'var(--primary-color, #D91CD2)',
+  }}>À LA UNE</span>
+);
+
 const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
   const videoRef = useRef(null);
   const [sonActif, setSonActif] = useState(v542SonCarte(pub.id));
@@ -1219,6 +1261,7 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
             background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.5)',
           }}>COACH</span>
         )}
+        {estALaUne(pub) && <V646BadgeALaUne />}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: 'rgba(255,255,255,0.6)', flex: '0 0 auto' }}>
           {v540Depuis(pub.created_at)}
         </span>
@@ -1226,6 +1269,9 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
       {pub.caption ? (
         <p style={{ margin: '8px 0 0', fontSize: 14, color: reel ? '#fff' : 'rgba(255,255,255,0.8)', lineHeight: 1.45, ...(reel ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : {}) }}>{pub.caption}</p>
       ) : null}
+      {/* V646 : l'appel à l'action vient APRÈS la légende — on comprend d'abord
+          ce qu'on regarde, on agit ensuite. Absent si le coach n'en a pas posé. */}
+      <V646BoutonCta pub={pub} actions={actions} />
       </div>
     </article>
   );
@@ -1646,6 +1692,87 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
 // edition (legende + nom affiche) et suppression. Rendu sous le formulaire de
 // la modale. `subscriberCode` vide = coach (auth par en-tete/JWT via
 // l'intercepteur) ; sinon abonne (code passe explicitement).
+/* V646 — LE RÉGLAGE DE CONVERSION D'UNE PUBLICATION, CÔTÉ COACH.
+   UN ACCORDÉON FERMÉ par défaut (règle « design épuré ») : la liste reste
+   aussi courte qu'avant, et son résumé d'une ligne dit déjà l'essentiel —
+   à quoi sert ce contenu, vers quoi il envoie, s'il passe devant.
+   Il écrit par la porte EXISTANTE (`PUT /publications/{id}`), qui refuse
+   elle-même toute valeur hors vocabulaire et n'accepte ces trois champs que
+   d'un coach authentifié. Aucun nouvel appel, aucune nouvelle route. */
+const V646Conversion = ({ pub, onEnregistre }) => {
+  const [objectif, setObjectif] = useState(pub.objectif || '');
+  const [cta, setCta] = useState(pub.cta || '');
+  const [aLaUne, setALaUne] = useState(!!pub.a_la_une);
+  const [etat, setEtat] = useState('');   // '' | 'envoi' | 'ok' | 'erreur'
+
+  const modifie = objectif !== (pub.objectif || '') || cta !== (pub.cta || '') || aLaUne !== !!pub.a_la_une;
+  const resume = [
+    objectifLibelle({ objectif }) || 'objectif non défini',
+    (CTAS.find((c) => c.id === cta) || {}).libelle || 'aucun appel à l’action',
+    aLaUne ? 'à la une' : '',
+  ].filter(Boolean).join(' · ');
+
+  const enregistrer = async () => {
+    setEtat('envoi');
+    try {
+      await axios.put(`${API}/publications/${pub.id}`, { objectif, cta, a_la_une: aLaUne });
+      setEtat('ok');
+      try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
+      if (onEnregistre) onEnregistre();
+      setTimeout(() => setEtat(''), 1500);
+    } catch (e) { setEtat('erreur'); }
+  };
+
+  const champ = {
+    width: '100%', background: '#000', color: '#fff', fontSize: '0.72rem',
+    border: '1px solid rgba(255,255,255,0.14)', borderRadius: 7, padding: '5px 6px',
+  };
+
+  return (
+    <details data-testid="publication-conversion" style={{ marginTop: 5 }}>
+      <summary style={{ cursor: 'pointer', listStyle: 'none', fontSize: '0.68rem', color: 'rgba(255,255,255,0.55)',
+        display: 'flex', alignItems: 'center', gap: 5 }}>
+        <SvgIcon name="target" size={11} />
+        <span data-testid="publication-conversion-resume" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {resume}
+        </span>
+      </summary>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 6 }}>
+        <label style={{ fontSize: '0.64rem', color: 'rgba(255,255,255,0.5)' }}>
+          Type / objectif
+          <select data-testid="publication-objectif" value={objectif} onChange={(e) => setObjectif(e.target.value)} style={champ}>
+            <option value="">— non défini —</option>
+            {OBJECTIFS.map((o) => <option key={o.id} value={o.id}>{o.libelle}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: '0.64rem', color: 'rgba(255,255,255,0.5)' }}>
+          Appel à l’action affiché sur l’accueil
+          <select data-testid="publication-cta-choix" value={cta} onChange={(e) => setCta(e.target.value)} style={champ}>
+            <option value="">— aucun bouton —</option>
+            {CTAS.map((c) => <option key={c.id} value={c.id}>{c.libelle}</option>)}
+          </select>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.7rem', color: '#fff', cursor: 'pointer' }}>
+          <input type="checkbox" data-testid="publication-a-la-une-choix" checked={aLaUne}
+            onChange={(e) => setALaUne(e.target.checked)} style={{ accentColor: 'var(--primary-color, #D91CD2)' }} />
+          À la une — remonte en haut de l’accueil
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <button type="button" data-testid="publication-conversion-enregistrer" onClick={enregistrer}
+            disabled={!modifie || etat === 'envoi'}
+            style={{ padding: '5px 11px', borderRadius: 7, border: 'none', fontSize: '0.72rem', fontWeight: 700,
+              cursor: modifie && etat !== 'envoi' ? 'pointer' : 'default', color: '#fff',
+              background: modifie ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.1)' }}>
+            {etat === 'envoi' ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+          {etat === 'ok' && <span style={{ fontSize: '0.68rem', color: '#22c55e' }}>Enregistré</span>}
+          {etat === 'erreur' && <span style={{ fontSize: '0.68rem', color: '#f87171' }}>Échec — réessayez</span>}
+        </div>
+      </div>
+    </details>
+  );
+};
+
 const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
   const [items, setItems] = useState(null); // null = chargement
   const [editing, setEditing] = useState(null); // id en cours d'edition
@@ -1812,6 +1939,10 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
                       {p.caption}
                     </p>
                   ) : null}
+                  {/* V646 : réservé au COACH. Sur l'espace abonné
+                      (`subscriberCode` présent), rien ne change — et le serveur
+                      refuserait de toute façon ces champs sur ce chemin. */}
+                  {!subscriberCode && <V646Conversion pub={p} onEnregistre={load} />}
                   {/* V327 : une publication programmée n'est pas en ligne — on affiche
                       l'heure de sortie prévue au lieu d'un temps restant trompeur. */}
                   {/* V423 : le paragraphe ENTIER disparait pour une publication
