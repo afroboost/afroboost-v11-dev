@@ -176,9 +176,21 @@ async def main():
         _bloc = ns4["_SEO_GEO_BLOC_ACCUEIL"]
         v("texte exact du bloc",
           "Afroboost — Cardio-danse Afrobeat à Neuchâtel" in _bloc
-          and ("Cours collectifs avec un coach, accessibles aux débutants : pas besoin de savoir danser. "
-               "Le mercredi à 18h45 et le dimanche à 18h30, au Chemin des Valangines 97, à Neuchâtel. "
-               "Ton premier cours est offert.") in _bloc)
+          and ("Cours collectif de danse-fitness à Neuchâtel, tous niveaux : débutants bienvenus, "
+               "pas besoin de savoir danser.") in _bloc
+          and "Chemin des Valangines 97" in _bloc)
+        # V658 — LA PROMESSE PORTE SES CONDITIONS. Avant, l'accueil annonçait
+        # « Ton premier cours est offert. » sans rien d'autre, alors que l'essai
+        # est limité à une première participation, une fois par personne, sur
+        # les cours collectifs récurrents. Une promesse sans condition est une
+        # promesse fausse — et c'est la première chose qu'un visiteur déçu
+        # reproche. Le lien mène aux conditions complètes.
+        v("V658 : l'essai offert annonce ses conditions, et elles sont joignables",
+          "une fois par personne" in _bloc and "cours collectifs récurrents" in _bloc
+          and 'href="/cours-essai-gratuit-neuchatel#faq-essai"' in _bloc)
+        v("V658 : le vocabulaire du public est présent, sans répétition",
+          _bloc.lower().count("danse-fitness") == 1 and _bloc.lower().count("tous niveaux") == 1
+          and _bloc.lower().count("débutants bienvenus") == 1)
         v("deux VRAIS liens <a href>",
           re.search(r'<a href="/cours-essai-gratuit-neuchatel"[^>]*>Réserver mon cours d\'essai gratuit</a>', _bloc)
           is not None and re.search(r'<a href="/a-propos"[^>]*>Qui est Coach Bassi \?</a>', _bloc) is not None)
@@ -260,7 +272,26 @@ async def main():
     import html as _h
     v("FAQ visible = FAQ JSON-LD (mêmes questions, mêmes réponses)",
       all(("<summary>%s</summary>" % _h.escape(q, quote=True)) in page
-          and ("<p>%s</p>" % _h.escape(r, quote=True)) in page for q, r in _qr.items()) and len(_qr) == 12)
+          and ("<p>%s</p>" % _h.escape(r, quote=True)) in page for q, r in _qr.items()) and len(_qr) == 13)
+    # V658 — LA QUESTION QUE CE PUBLIC TAPE VRAIMENT. Beaucoup de gens cherchent
+    # « un cours de Zumba » faute d'un autre mot pour dire « danser et
+    # transpirer en musique ». La reponse leur dit la verite en une phrase :
+    # ce n'en est PAS. Aucune affiliation suggeree, aucune comparaison, aucune
+    # page « vs ». Le banc verrouille cette mesure.
+    _rep_zumba = _qr.get("Vous cherchez un cours de Zumba ou de danse-fitness à Neuchâtel ?")
+    v("V658 : la question danse-fitness / Zumba est posée et visible", bool(_rep_zumba))
+    v("V658 : la réponse DIT que ce n'est pas de la Zumba",
+      bool(_rep_zumba) and "n'est pas un cours de Zumba" in _rep_zumba)
+    v("V658 : aucune affiliation ni comparaison suggérée",
+      bool(_rep_zumba) and not any(m in _rep_zumba.lower() for m in
+          ("alternative", "remplace", "comme la zumba", "mieux que", "équivalent", "officiel")))
+    v("V658 : la marque n'est citée qu'une fois dans la réponse",
+      bool(_rep_zumba) and _rep_zumba.lower().count("zumba") == 1)
+    # La FAQ est écrite DEUX fois dans la page : une fois visible, une fois dans
+    # le `FAQPage` du <head> que lisent les moteurs. On compte donc le VISIBLE.
+    _visible658 = re.sub(r'<script type="application/ld\+json">.*?</script>', " ", page, flags=re.S)
+    v("V658 : la marque n'apparaît que dans cette question et sa réponse",
+      _visible658.lower().count("zumba") == 2)
     _types = [o.get("@type") for o in _objets]
     v("JSON-LD page d'essai : Organization + SportsActivityLocation + FAQPage + WebPage",
       all(t in _types for t in ("Organization", "SportsActivityLocation", "FAQPage", "WebPage")), _types)

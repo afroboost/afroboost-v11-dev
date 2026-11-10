@@ -59558,6 +59558,11 @@ _M1_PHOTO_HERO = "/hero-afroboost.jpg"
 # FAQ VISIBLE et le `FAQPage` JSON-LD dérivent tous deux de cette liste, les
 # accents sont donc remis aux deux endroits d'un seul coup.
 _M1_FAQ = (
+    ("Vous cherchez un cours de Zumba ou de danse-fitness à Neuchâtel ?",
+     "Afroboost n'est pas un cours de Zumba. C'est une expérience de "
+     "cardio-danse afrobeat qui combine musique, danse et fitness dans une "
+     "ambiance collective. Les débutants sont les bienvenus, même sans "
+     "expérience de danse."),
     ("Je ne sais pas danser, est-ce que je peux venir ?",
      "Oui. La majorité des personnes qui viennent n'ont jamais pris de cours "
      "de danse. Le coach montre chaque mouvement face au groupe et tu le "
@@ -61065,9 +61070,11 @@ if _os.path.isdir(_STATIC_DIR):
         '<h2 id="af-presentation-titre" style="font-size:1.25rem;font-weight:800;margin:0 0 10px">'
         'Afroboost — Cardio-danse Afrobeat à Neuchâtel</h2>'
         '<p style="margin:0 0 18px;color:rgba(255,255,255,.78);font-size:.95rem">'
-        'Cours collectifs avec un coach, accessibles aux débutants : pas besoin de savoir danser. '
-        'Le mercredi à 18h45 et le dimanche à 18h30, au Chemin des Valangines 97, à Neuchâtel. '
-        'Ton premier cours est offert.</p>'
+        'Cours collectif de danse-fitness à Neuchâtel, tous niveaux : débutants bienvenus, '
+        'pas besoin de savoir danser. Avec un coach, le mercredi à 18h45 et le dimanche à 18h30, '
+        'au Chemin des Valangines 97. Votre premier cours est offert — une fois par personne, '
+        'sur les cours collectifs récurrents '
+        '(<a href="/cours-essai-gratuit-neuchatel#faq-essai" style="color:inherit">conditions</a>).</p>'
         '<p style="margin:0;display:flex;flex-wrap:wrap;gap:10px;justify-content:center">'
         '<a href="/cours-essai-gratuit-neuchatel" style="display:inline-block;padding:12px 20px;border-radius:999px;'
         'background:var(--primary-color, #D91CD2);color:#fff;font-weight:800;text-decoration:none">'
@@ -61094,10 +61101,12 @@ if _os.path.isdir(_STATIC_DIR):
         '<h1 id="af-offres-titre" style="font-size:1.6rem;font-weight:800;margin:0 0 12px;line-height:1.25">'
         'Offres et tarifs Afroboost à Neuchâtel</h1>'
         '<p style="margin:0 0 14px;color:rgba(255,255,255,.82)">'
-        'Afroboost, c\'est du <strong>cardio-danse afrobeat</strong> en groupe, avec un coach. '
-        'On bouge sur une musique qui porte, on transpire, on rit. '
+        'Afroboost, c\'est du <strong>cardio-danse afrobeat</strong> en groupe, avec un coach : '
+        'une heure de <strong>danse-fitness</strong> pour se dépenser, se remettre en forme et se '
+        'vider la tête, en musique. '
         '<strong>Pas besoin de savoir danser</strong> : les mouvements sont simples, montrés pas à pas, '
-        'et chacun les fait à son rythme. Débutant·e ou non, vous êtes à votre place.</p>'
+        'et chacun les fait à son rythme. Le cours est <strong>ouvert à tous les niveaux</strong> — '
+        'débutant·e ou non, vous êtes à votre place.</p>'
         '<p style="margin:0 0 14px;color:rgba(255,255,255,.82)">'
         'Plusieurs façons de venir, selon votre rythme : <strong>à la séance</strong>, quand vous voulez ; '
         'en <strong>carte de plusieurs séances</strong>, pour venir régulièrement sans y penser ; '
