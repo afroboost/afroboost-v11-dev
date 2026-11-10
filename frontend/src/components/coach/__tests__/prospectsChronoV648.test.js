@@ -217,3 +217,16 @@ test('consulter et filtrer n’écrit JAMAIS', async () => {
   expect(axios.put).not.toHaveBeenCalled();
   expect(axios.delete).not.toHaveBeenCalled();
 });
+
+test('la période DIT sur quelle date elle porte, et suit le tri', async () => {
+  mockEtatPilote = { etat: SECTION.OK, donnees: reponse([prospect()], 471) };
+  await monter();
+  // Sans période : rien d'affiché, la barre reste courte.
+  expect(par('prospects-periode-sur')).toBeNull();
+  await changer('prospects-periode', '7j');
+  expect(par('prospects-periode-sur').textContent).toContain('d’ajout');
+  await cliquer('prospects-derniers-envois');
+  expect(par('prospects-periode-sur').textContent).toContain('d’envoi');
+  await cliquer('prospects-brouillons');
+  expect(par('prospects-periode-sur').textContent).toContain('de modification');
+});

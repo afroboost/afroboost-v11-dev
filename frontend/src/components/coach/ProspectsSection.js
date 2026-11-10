@@ -3174,6 +3174,18 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
                 style={styleChamp}>
           {PERIODES_PROSPECTS.map((x) => <option key={x.id} value={x.id}>{x.libelle}</option>)}
         </select>
+        {/* V648b — SUR QUELLE DATE PORTE LA PÉRIODE. Elle suit le tri choisi :
+            une seule lecture possible au lieu d'un filtre dont le sens change
+            sans le dire. On l'écrit DÈS qu'une période est active — laisser le
+            coach deviner serait exactement le genre de demi-vérité que ces
+            écrans doivent éviter. */}
+        {periode !== 'tout' && (
+          <span data-testid="prospects-periode-sur" style={{ fontSize: '11.5px', opacity: 0.7 }}>
+            sur la date {filtres.tri === 'envoi_recent' || filtres.tri === 'envoi_ancien'
+              ? 'd’envoi'
+              : filtres.tri === 'modif_recent' ? 'de modification' : 'd’ajout'}
+          </span>
+        )}
         {periode === 'perso' && (
           <>
             <input type="date" value={debutPerso} data-testid="prospects-debut" aria-label="Du"
