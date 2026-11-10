@@ -84,7 +84,10 @@ LLMS_ATTENDU = """# Afroboost
 - Facebook : https://www.facebook.com/profile.php?id=61574448227600
 """
 
-CONSTANTES_GEO = ("SEO_GEO_EMAIL", "SEO_GEO_INSTAGRAM", "SEO_GEO_FACEBOOK", "SEO_GEO_ADRESSE",
+CONSTANTES_GEO = (# V652 : l'identifiant de la fiche Google et ce qui en decoule.
+                  "SEO_GEO_PLACE_ID", "SEO_GEO_FICHE_GOOGLE", "SEO_GEO_TELEPHONE",
+                  "SEO_GEO_LAT", "SEO_GEO_LON",
+                  "SEO_GEO_EMAIL", "SEO_GEO_INSTAGRAM", "SEO_GEO_FACEBOOK", "SEO_GEO_ADRESSE",
                   "SEO_GEO_ORGANISATION", "SEO_GEO_LIEU", "SEO_GEO_CARTE_EMBED", "SEO_GEO_ITINERAIRE",
                   "SEO_GEO_CSS", "_SEO_GEO_PICTO_LIEU", "SEO_GEO_CARTE_JS")
 
@@ -148,8 +151,16 @@ async def main():
                            "postalCode": "2000", "addressLocality": "Neuchâtel", "addressCountry": "CH"})
     v("organisation et lieu reliés dans les deux sens",
       _org["location"] == {"@id": _lieu["@id"]} and _lieu["parentOrganization"] == {"@id": _org["@id"]})
-    v("aucune note, aucun avis, aucun prix, aucun téléphone",
-      not any(m in json.dumps(_blocs) for m in ("aggregateRating", "review", "price", "telephone")))
+    # CE QUI RESTE INTERDIT, ET POURQUOI. Google interdit a un etablissement de
+    # baliser lui-meme sa note et ses avis : les 26 avis d'Afroboost vivent sur
+    # la fiche Google, pas ici. Un prix sur le lieu serait faux — il depend de
+    # la formule. Le TELEPHONE, lui, est autorise depuis V652 : il est verifie,
+    # public sur la fiche Google et sur local.ch, et c'est l'un des signaux qui
+    # rapprochent ce site de la fiche. Il n'est affiche nulle part.
+    v("aucune note, aucun avis, aucun prix auto-déclarés",
+      not any(m in json.dumps(_blocs) for m in ("aggregateRating", "review", "price")))
+    v("le téléphone déclaré est celui, vérifié, de la fiche Google",
+      all(o.get("telephone", "+41 76 520 33 63") == "+41 76 520 33 63" for o in _blocs))
 
     print("\n== 4. Bloc de l'accueil (`_serve_spa`) ==")
     ns4 = monter("_SEO_GEO_ANCRE_ROOT", "_SEO_GEO_BLOC_ACCUEIL", "_seo_geo_accueil", ns={})
@@ -265,7 +276,50 @@ async def main():
     v("contact : chaque icône a un aria-label et un title", _contact.count("aria-label=") == 4 and _contact.count(' title="') == 4)
     v("contact : aucune URL ni adresse e-mail affichée en texte brut",
       not re.search(r"https?://|@afroboosteur|contact@", re.sub(r"<[^>]+>", " ", _contact)))
-    v("contact : aucun numéro de téléphone", "tel:" not in page and "telephone" not in page.lower())
+    # LE NUMERO NE S'AFFICHE PAS, MAIS IL EST DECLARE. Le bloc Contact garde ses
+    # quatre icones (mail, Instagram, Facebook, itineraire) et AUCUN telephone
+    # visible : c'est le choix d'origine, inchange. Depuis V652 le numero vit
+    # dans les donnees structurees, que Google lit et qu'aucun visiteur ne voit —
+    # il y sert a rapprocher ce site de la fiche Google, ou ce meme numero est
+    # public. Le controle porte donc sur le VISIBLE, apres retrait du JSON-LD.
+    _visible = re.sub(r'<script type="application/ld\+json">.*?</script>', " ", page, flags=re.S)
+    v("contact : aucun numéro de téléphone AFFICHÉ",
+      "tel:" not in _visible and "520 33 63" not in _visible and "0765203363" not in _visible)
+
+    # ---- V652 : le site nomme la fiche Google, au lieu d'une adresse nue ----
+    _ns652 = monter(*CONSTANTES_GEO, ns={})
+    _pid = _ns652["SEO_GEO_PLACE_ID"]
+    _lieu652 = _par_essai.get("SportsActivityLocation", {}) if "_par_essai" in dir() else {}
+    _bl = [json.loads(b) for b in re.findall(r'application/ld\+json">(.*?)</script>', page, re.S)]
+    _objets = [o for d in _bl for o in (d if isinstance(d, list) else [d])]
+    _org652 = next((o for o in _objets if o.get("@type") == "Organization"), {})
+    _lieu652 = next((o for o in _objets if o.get("@type") == "SportsActivityLocation"), {})
+    v("V652 : identifiant de fiche au format Google", _pid.startswith("ChIJ") and len(_pid) > 20)
+    v("V652 : `hasMap` du lieu nomme la fiche, pas une adresse",
+      _pid in (_lieu652.get("hasMap") or ""))
+    v("V652 : le repli de ce lien porte l'adresse exacte, jamais le nom seul",
+      "Valangines" in _ns652["SEO_GEO_FICHE_GOOGLE"] and "Neuch" in _ns652["SEO_GEO_FICHE_GOOGLE"])
+    v("V652 : téléphone déclaré sur le lieu ET sur l'organisation",
+      _lieu652.get("telephone") == _ns652["SEO_GEO_TELEPHONE"]
+      and _org652.get("telephone") == _ns652["SEO_GEO_TELEPHONE"])
+    v("V652 : coordonnées = celles lues sur la fiche Google",
+      (_lieu652.get("geo") or {}).get("latitude") == 46.9905529
+      and (_lieu652.get("geo") or {}).get("longitude") == 6.9095994)
+    v("V652 : l'organisation ne porte PAS d'adresse postale (le siège de "
+      "l'association n'est pas le lieu des cours)", "address" not in _org652)
+    # Interdits : des horaires figés mentiraient dès que le planning bouge, et
+    # Google interdit a un etablissement de baliser lui-meme ses propres avis.
+    v("V652 : ni horaires figés, ni avis auto-déclarés, ni tarif sur le lieu",
+      not any(k in _lieu652 for k in ("openingHours", "openingHoursSpecification",
+                                      "aggregateRating", "review", "priceRange")))
+    v("V652 : l'itinéraire vise la fiche, avec l'adresse en repli",
+      ("destination_place_id=" + _pid) in _ns652["SEO_GEO_ITINERAIRE"]
+      and "destination=Chemin" in _ns652["SEO_GEO_ITINERAIRE"])
+    v("V652 : la carte différée centre sur l'établissement",
+      "Afroboost" in _ns652["SEO_GEO_CARTE_EMBED"] and "output=embed" in _ns652["SEO_GEO_CARTE_EMBED"])
+    v("V652 : aucun lien Google Maps de la page n'ouvre une adresse NUE",
+      all(("query_place_id=" in _u) or ("destination_place_id=" in _u)
+          for _u in re.findall(r'https://www\.google\.com/maps[^"\'<\s)]*', _visible)))
     v("carte : AUCUNE ressource Google avant le clic", sans_google_avant_clic(page))
     v("icônes en SVG (aucun emoji 📍)", "📍" not in page and _contact.count("<svg") == 4)
     v("« Qui est Coach Bassi ? » : une ligne qui ouvre /a-propos",

@@ -173,11 +173,58 @@
           `SEO_GEO_LIEU` dans api/server.py (verrouillé par tests/test_seo_geo.py).
         -->
         <script type="application/ld+json">
-        {"@context":"https://schema.org","@type":"Organization","@id":"https://afroboost.com/#organisation","name":"Afroboost","url":"https://afroboost.com/","logo":"https://afroboost.com/logo512.png","areaServed":"Neuchâtel, Suisse","email":"contact@afroboosteur.com","sameAs":["https://www.instagram.com/afroboosteur","https://www.facebook.com/profile.php?id=61574448227600"],"founder":{"@type":"Person","name":"Henri Bassi","alternateName":"Coach Bassi"},"foundingDate":"2023","location":{"@id":"https://afroboost.com/#lieu-valangines"}}
-        </script>
+        {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          "@id": "https://afroboost.com/#organisation",
+          "name": "Afroboost",
+          "url": "https://afroboost.com/",
+          "logo": "https://afroboost.com/logo512.png",
+          "areaServed": "Neuchâtel, Suisse",
+          "email": "contact@afroboosteur.com",
+          "telephone": "+41 76 520 33 63",
+          "sameAs": [
+            "https://www.instagram.com/afroboosteur",
+            "https://www.facebook.com/profile.php?id=61574448227600"
+          ],
+          "founder": {
+            "@type": "Person",
+            "name": "Henri Bassi",
+            "alternateName": "Coach Bassi"
+          },
+          "foundingDate": "2023",
+          "location": {
+            "@id": "https://afroboost.com/#lieu-valangines"
+          }
+        }
+      </script>
         <script type="application/ld+json">
-        {"@context":"https://schema.org","@type":"SportsActivityLocation","@id":"https://afroboost.com/#lieu-valangines","name":"Afroboost — lieu des cours à Neuchâtel","description":"Lieu des cours Afroboost en salle (hiver).","url":"https://afroboost.com/cours-essai-gratuit-neuchatel","address":{"@type":"PostalAddress","streetAddress":"Chemin des Valangines 97","postalCode":"2000","addressLocality":"Neuchâtel","addressCountry":"CH"},"parentOrganization":{"@id":"https://afroboost.com/#organisation"}}
-        </script>
+        {
+          "@context": "https://schema.org",
+          "@type": "SportsActivityLocation",
+          "@id": "https://afroboost.com/#lieu-valangines",
+          "name": "Afroboost — lieu des cours à Neuchâtel",
+          "description": "Lieu des cours Afroboost en salle (hiver).",
+          "url": "https://afroboost.com/cours-essai-gratuit-neuchatel",
+          "address": {
+            "@type": "PostalAddress",
+            "streetAddress": "Chemin des Valangines 97",
+            "postalCode": "2000",
+            "addressLocality": "Neuchâtel",
+            "addressCountry": "CH"
+          },
+          "telephone": "+41 76 520 33 63",
+          "geo": {
+            "@type": "GeoCoordinates",
+            "latitude": 46.9905529,
+            "longitude": 6.9095994
+          },
+          "hasMap": "https://www.google.com/maps/search/?api=1&query=Afroboost%2C%20Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel&query_place_id=ChIJNxElPaDhjUcRQa3As8lngZM",
+          "parentOrganization": {
+            "@id": "https://afroboost.com/#organisation"
+          }
+        }
+      </script>
         <script type="application/ld+json">
         {"@context":"https://schema.org","@type":"WebSite","name":"Afroboost",
          "url":"https://afroboost.com/","inLanguage":"fr-CH"}

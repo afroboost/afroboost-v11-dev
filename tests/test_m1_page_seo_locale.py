@@ -162,7 +162,10 @@ NOMS = ("m1geo1_region_normalisee", "_m1_echapper", "_m1_jsonld", "_v184_parse_t
         "_seo_geo_contact_html",
         # V624 : contact en icônes SVG (liens existants)
         "_v624_contact_icones")
-CONSTANTES = ("CHAMP_LIEN_SEUL",      # V537 : lue par `v537_lien_seul`
+CONSTANTES = (# V652 : l'identifiant de la fiche Google et ce qui en decoule.
+              "SEO_GEO_PLACE_ID", "SEO_GEO_FICHE_GOOGLE", "SEO_GEO_TELEPHONE",
+              "SEO_GEO_LAT", "SEO_GEO_LON",
+              "CHAMP_LIEN_SEUL",      # V537 : lue par `v537_lien_seul`
               "_N456_CHAMPS_PUBLICS", "_V184_WEEKDAY_LABELS_FR", "RV2_JOURS",
               "RV2_MOIS", "COACH_EMAIL", "_M1_SITE", "_M1_CHEMIN", "_M1_TUNNEL",
               "_M1_HORIZON_JOURS", "_M1_MAX_SEANCES", "M1GEO1_REGIONS", "_M1_REGION",

@@ -60050,6 +60050,27 @@ SEO_GEO_EMAIL = "contact@afroboosteur.com"
 SEO_GEO_INSTAGRAM = "https://www.instagram.com/afroboosteur"
 SEO_GEO_FACEBOOK = "https://www.facebook.com/profile.php?id=61574448227600"
 SEO_GEO_ADRESSE = "Chemin des Valangines 97, 2000 Neuchâtel"
+# L'ETABLISSEMENT, PAS L'ADRESSE. Une adresse seule ouvre une épingle anonyme :
+# ni le nom, ni les avis, et Google n'apprend rien du lien entre ce site et la
+# fiche. `SEO_GEO_PLACE_ID` désigne la fiche Afroboost elle-même.
+# Vérifié deux fois le 10/11/2026, par deux requêtes indépendantes : par nom,
+# puis par catégorie + adresse SANS le nom. Les deux renvoient le même
+# identifiant, le même téléphone (076 520 33 63) et les mêmes coordonnées.
+# Le format `search/?api=1&query=…&query_place_id=…` est celui documenté par
+# Google : `query` sert de repli si l'identifiant devenait un jour invalide,
+# et ce repli porte l'adresse exacte — jamais un nom seul, qui pourrait ouvrir
+# un homonyme ailleurs.
+SEO_GEO_PLACE_ID = "ChIJNxElPaDhjUcRQa3As8lngZM"
+SEO_GEO_FICHE_GOOGLE = (
+    "https://www.google.com/maps/search/?api=1&query=Afroboost%2C%20"
+    "Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel"
+    "&query_place_id=" + SEO_GEO_PLACE_ID)
+# Téléphone du LIEU DES COURS. Confirmé par la fiche Google ET par local.ch
+# (`tel:+41765203363`). Ce n'est pas un numéro de l'association.
+SEO_GEO_TELEPHONE = "+41 76 520 33 63"
+# Coordonnées lues sur la fiche Google elle-même — jamais estimées.
+SEO_GEO_LAT = 46.9905529
+SEO_GEO_LON = 6.9095994
 SEO_GEO_ORGANISATION = {
     "@context": "https://schema.org", "@type": "Organization",
     "@id": "https://afroboost.com/#organisation",
@@ -60057,6 +60078,9 @@ SEO_GEO_ORGANISATION = {
     "logo": "https://afroboost.com/logo512.png",
     "areaServed": "Neuchâtel, Suisse",
     "email": SEO_GEO_EMAIL,
+    "telephone": SEO_GEO_TELEPHONE,
+    # Pas d'`address` ici : le siège de l'association n'est PAS le lieu des
+    # cours. L'adresse vit sur le lieu, via `location`.
     "sameAs": [SEO_GEO_INSTAGRAM, SEO_GEO_FACEBOOK],
     "founder": {"@type": "Person", "name": "Henri Bassi", "alternateName": "Coach Bassi"},
     "foundingDate": "2023",
@@ -60070,6 +60094,17 @@ SEO_GEO_LIEU = {
     "url": "https://afroboost.com/cours-essai-gratuit-neuchatel",
     "address": {"@type": "PostalAddress", "streetAddress": "Chemin des Valangines 97",
                 "postalCode": "2000", "addressLocality": "Neuchâtel", "addressCountry": "CH"},
+    "telephone": SEO_GEO_TELEPHONE,
+    "geo": {"@type": "GeoCoordinates",
+            "latitude": SEO_GEO_LAT, "longitude": SEO_GEO_LON},
+    # `hasMap` NOMME la fiche Google : c'est ce qui relie ce lieu à elle.
+    "hasMap": SEO_GEO_FICHE_GOOGLE,
+    # Volontairement ABSENTS, et ils doivent le rester :
+    #   `openingHours` — les horaires viennent du planning et changent avec la
+    #       saison ; les figer ici les rendrait faux sans prévenir ;
+    #   `aggregateRating` / `review` — Google interdit à un établissement de
+    #       baliser lui-même ses propres avis ; les 26 avis vivent sur la fiche ;
+    #   `priceRange` — les tarifs dépendent de la formule, pas du lieu.
     "parentOrganization": {"@id": "https://afroboost.com/#organisation"},
 }
 # LA CARTE NE CONTACTE GOOGLE QU'APRÈS UN CLIC. Avant : un cadre local (aucune
@@ -60077,10 +60112,14 @@ SEO_GEO_LIEU = {
 # dans un attribut `data-` : tant que l'`<iframe>` n'est pas créée par le clic,
 # le navigateur n'émet aucune requête vers Google (respect de la vie privée,
 # et page plus rapide). Sans JavaScript, le lien « Itinéraire » reste utilisable.
-SEO_GEO_CARTE_EMBED = ("https://www.google.com/maps?q=Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel"
-                       "&output=embed")
+# La carte centre sur l'ÉTABLISSEMENT et non sur le numéro de rue : le nom
+# précède l'adresse, qui reste là comme repli.
+SEO_GEO_CARTE_EMBED = ("https://www.google.com/maps?q=Afroboost%2C%20Chemin%20des%20Valangines"
+                       "%2097%2C%202000%20Neuch%C3%A2tel&output=embed")
+# `destination_place_id` vise la fiche ; `destination` reste le repli adresse.
 SEO_GEO_ITINERAIRE = ("https://www.google.com/maps/dir/?api=1&destination="
-                      "Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel")
+                      "Chemin%20des%20Valangines%2097%2C%202000%20Neuch%C3%A2tel"
+                      "&destination_place_id=" + SEO_GEO_PLACE_ID)
 # Styles du bloc Contact + carte, partagés par la page d'essai et « À propos ».
 # Insérés par un champ `%(...)s` : aucun `%` à doubler ici.
 SEO_GEO_CSS = """
