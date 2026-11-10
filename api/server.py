@@ -27849,6 +27849,43 @@ def p3s1_champs_valides(corps: dict, creation: bool) -> dict:
     return champs
 
 
+# ============================================================================
+# V648 — TRI ET DATES DANS L'ONGLET « PROSPECTS »
+# ============================================================================
+# LE DEFAUT QUE CE LOT CORRIGE. V647 a bati le tri chronologique, les periodes
+# et la vue « Derniers envois » dans l'ecran « Messages & relances ». Le coach,
+# lui, travaille dans l'onglet « Prospects » — un AUTRE composant
+# (`ProspectsSection`), servi par CETTE route, qui ne connaissait ni tri ni
+# date. Les commandes existaient donc, mais pas la ou on les cherche.
+#
+# POURQUOI C'EST LE SERVEUR QUI TRIE ET FILTRE, et pas l'ecran. Cette liste est
+# PAGINEE : filtrer ou trier les 25 fiches rendues donnerait un ecran qui mentit
+# des la deuxieme page. La lecon est deja ecrite plus bas (P3-S2 / P3-S2E) et on
+# la suit a la lettre, `id` compris comme second critere pour que l'ordre reste
+# TOTAL et les pages stables.
+#
+# TROIS DATES, JAMAIS CONFONDUES :
+#   `first_contact_sent_at` = un envoi CONFIRME par le fournisseur. Ecrit par le
+#       moteur, jamais par un ecran. C'est la SEULE date d'envoi.
+#   `created_at`            = l'entree de la fiche dans le CRM.
+#   `updated_at`            = la derniere retouche (un texte relu, une
+#       coordonnee corrigee) — ce n'est PAS un envoi.
+# La periode porte sur la MEME date que le tri choisi : une seule lecture
+# possible, au lieu d'un filtre dont le sens changerait avec le tri.
+V648_TRIS = {
+    "recent": ("created_at", -1),
+    "ancien": ("created_at", 1),
+    "envoi_recent": ("first_contact_sent_at", -1),
+    "envoi_ancien": ("first_contact_sent_at", 1),
+    "modif_recent": ("updated_at", -1),
+}
+# Les instants de la periode arrivent DEJA en ISO absolu, calcules par l'ecran
+# dans le fuseau du coach (Europe/Zurich, heure d'ete comprise). Le serveur n'a
+# donc aucune conversion a faire — donc aucune occasion de se tromper d'une
+# heure deux fois par an.
+_V648_RE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})?$")
+
+
 @api_router.get("/partner-prospects")
 async def p3s1_lister_prospects(request: Request):
     """La liste des prospects du coach appelant. LECTURE PURE.
@@ -27916,6 +27953,37 @@ async def p3s1_lister_prospects(request: Request):
         else:
             raise HTTPException(status_code=400, detail="Niche de filtre inconnue")
 
+    # ── V648 : tri, vues rapides et periode ─────────────────────────────────
+    _v648_tri = (parametres.get("tri") or "").strip().lower()
+    if _v648_tri and _v648_tri not in V648_TRIS:
+        raise HTTPException(status_code=400,
+                            detail="Tri inconnu. Valeurs acceptees : %s" % ", ".join(sorted(V648_TRIS)))
+    _v648_champ, _v648_sens = V648_TRIS.get(_v648_tri or "recent")
+
+    # « DERNIERS ENVOIS » : une date d'envoi REELLE, et rien d'autre. Une fiche
+    # seulement preparee, approuvee ou modifiee n'en a pas, donc n'y figure pas.
+    if (parametres.get("envoyes") or "").strip() == "1":
+        filtre["first_contact_sent_at"] = {"$nin": [None, ""]}
+    # « BROUILLONS » : un message J0 ECRIT, jamais parti. C'est l'equivalent, au
+    # niveau de la fiche, de ce que « Avant envoi » montre au niveau campagne.
+    elif (parametres.get("brouillons") or "").strip() == "1":
+        filtre["j0_message"] = {"$nin": [None, ""]}
+        filtre["first_contact_sent_at"] = {"$in": [None]}   # null OU champ absent
+
+    _v648_borne = {}
+    for _cle, _op in (("depuis_iso", "$gte"), ("jusqu_a_iso", "$lt")):
+        _val = (parametres.get(_cle) or "").strip()
+        if not _val:
+            continue
+        if not _V648_RE_ISO.match(_val):
+            raise HTTPException(status_code=400, detail="%s : instant ISO attendu" % _cle)
+        _v648_borne[_op] = _val
+    if _v648_borne:
+        # L'ordre lexicographique d'un ISO-UTC EST son ordre chronologique : la
+        # comparaison de chaines suffit, comme pour le tri juste en dessous.
+        _ancien = filtre.get(_v648_champ)
+        filtre[_v648_champ] = dict(_ancien, **_v648_borne) if isinstance(_ancien, dict) else _v648_borne
+
     try:
         limite = min(max(int(parametres.get("limit") or P3S1_LISTE_MAX), 1), P3S1_LISTE_MAX)
     except (TypeError, ValueError):
@@ -27948,8 +28016,10 @@ async def p3s1_lister_prospects(request: Request):
     # en second rend l'ordre TOTAL, donc les pages stables et reproductibles.
     # On corrige la cause, pas le symptome — redonner un horodatage distinct a
     # chaque document laisserait le defaut revenir au prochain import en masse.
+    # V648 : le champ et le sens viennent du tri demande ; `created_at` descendant
+    # reste le defaut, donc l'ecran d'avant V648 est inchange a l'octet.
     documents = await db[P3S1_COLLECTION].find(filtre, {"_id": 0}) \
-        .sort([("created_at", -1), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
+        .sort([(_v648_champ, _v648_sens), ("id", 1)]).skip(depart).limit(limite).to_list(limite)
 
     # LES COMPTEURS IGNORENT LES FILTRES, ET C'EST VOULU. Ce sont les tuiles du
     # haut d'ecran : si elles suivaient le filtre courant, cliquer « Contactes »

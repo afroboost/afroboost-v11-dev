@@ -40,6 +40,7 @@ import SuiviFinancierCorporate from './SuiviFinancierCorporate'; // V657
 import FilConversation from './FilConversation'; // V619 — fil complet (projection serveur)
 import MediaReponse, { CarteMedia, referenceMedia, mediasDe } from './prospection/MediaReponse'; // V620 / V625 — plusieurs fichiers par réponse
 import { construireLienPartenaire } from '../../utils/partnerLink'; // V594 — lien complet dans « Plus »
+import { bornesPeriode, PERIODES_PROSPECTS } from '../../utils/periodeZurich'; // V648 : périodes en heure de Neuchâtel
 import useNichesProspection from '../../hooks/useNichesProspection'; // V599 : niches du serveur (prospection_niches)
 import { lettreNiche } from '../../utils/prospectionStats';
 /* PROSPECTION FOCUS — les phrases factuelles de l'écran, isolées et pures.
@@ -436,7 +437,21 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
     status: '', category: '', priority: '', wave: '', city: '',
     niche_id: '',            // V599 : l'id stable d'une niche, ou « sans »
     adresse_a_corriger: '',  // V606 : '1' = seulement les fiches à adresse partagée
+    /* V648 — TRI, VUES RAPIDES ET PÉRIODE. Ils vivent dans le MÊME objet que les
+       autres filtres, et c'est tout l'intérêt : la boucle qui construit les
+       paramètres les envoie au serveur sans une ligne de plus, et `majFiltre`
+       remet déjà la pagination à zéro. Le serveur trie et filtre sur les 471
+       fiches, jamais sur les 25 affichées. */
+    tri: '',                 // '' = « Plus récents » (created_at décroissant), le défaut d'avant
+    envoyes: '',             // '1' = seulement ceux dont l'envoi est RÉELLEMENT enregistré
+    brouillons: '',          // '1' = message J0 écrit, jamais parti
+    depuis_iso: '', jusqu_a_iso: '',
   });
+  /* La période choisie est une COMMODITÉ d'écran ; ce qui part au serveur, ce
+     sont les deux instants absolus calculés en heure de Neuchâtel. */
+  const [periode, setPeriode] = useState('tout');
+  const [debutPerso, setDebutPerso] = useState('');
+  const [finPerso, setFinPerso] = useState('');
   /* V599 — LES NICHES VIENNENT DU SERVEUR. Une niche ajoutée dans Médias apparaît ici
      (filtre, fiche, création) sans modifier le code. Une archivée n'est plus
      proposée, sauf pour la fiche qui la porte déjà. */
@@ -533,6 +548,9 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
   const signature = [
     filtres.status, filtres.category, filtres.priority, filtres.wave, filtres.city, filtres.niche_id,
     filtres.adresse_a_corriger,   // V606 : sinon la pastille ne rechargeait pas la liste
+    /* V648 : sans eux dans la signature, changer de tri ou de période ne
+       relancerait aucune lecture — l'écran afficherait l'ancienne page. */
+    filtres.tri, filtres.envoyes, filtres.brouillons, filtres.depuis_iso, filtres.jusqu_a_iso,
     String(taille), String(page),
     /* Le filtre commercial entre dans la signature : sans lui, changer de
        filtre ne relancerait aucune lecture et l'écran mentirait. */
@@ -3103,6 +3121,94 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
         {/* V595e — « Acceptés » est désormais la tuile du statut « Accepté » ci-dessus. */}
       </div>
 
+      {/* ---------- V648 : RETROUVER UNE FICHE (visible d'emblée) ----------
+           Une seule rangée, au-dessus des filtres existants, qui répond aux
+           questions posées tous les jours : « qu'ai-je envoyé en dernier ? »,
+           « qu'ai-je préparé sans l'envoyer ? », « que s'est-il passé cette
+           semaine ? ». Deux boutons et deux listes, rien à déplier. */}
+      <div data-testid="prospects-chrono"
+           style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px',
+                    alignItems: 'center' }}>
+        <button type="button" data-testid="prospects-derniers-envois"
+                aria-pressed={filtres.envoyes === '1'}
+                onClick={() => {
+                  const actif = filtres.envoyes === '1';
+                  majFiltre('brouillons', '');
+                  majFiltre('envoyes', actif ? '' : '1');
+                  majFiltre('tri', actif ? '' : 'envoi_recent');
+                }}
+                style={{ ...stylePetitBouton, padding: '7px 12px', fontSize: '12.5px', fontWeight: 600,
+                  border: `1px solid ${filtres.envoyes === '1' ? PRIMAIRE : 'rgba(255,255,255,0.22)'}`,
+                  background: filtres.envoyes === '1' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.16)' : 'transparent' }}>
+          Derniers envois
+        </button>
+        <button type="button" data-testid="prospects-brouillons"
+                aria-pressed={filtres.brouillons === '1'}
+                onClick={() => {
+                  const actif = filtres.brouillons === '1';
+                  majFiltre('envoyes', '');
+                  majFiltre('brouillons', actif ? '' : '1');
+                  majFiltre('tri', actif ? '' : 'modif_recent');
+                }}
+                style={{ ...stylePetitBouton, padding: '7px 12px', fontSize: '12.5px', fontWeight: 600,
+                  border: `1px solid ${filtres.brouillons === '1' ? PRIMAIRE : 'rgba(255,255,255,0.22)'}`,
+                  background: filtres.brouillons === '1' ? 'rgba(var(--primary-rgb, 217, 28, 210), 0.16)' : 'transparent' }}>
+          Brouillons
+        </button>
+        <select value={filtres.tri} onChange={(e) => majFiltre('tri', e.target.value)}
+                aria-label="Trier" data-testid="prospects-tri" style={styleChamp}>
+          <option value="">Plus récents (ajout)</option>
+          <option value="ancien">Plus anciens (ajout)</option>
+          <option value="envoi_recent">Envoi le plus récent</option>
+          <option value="envoi_ancien">Envoi le plus ancien</option>
+          <option value="modif_recent">Modifiés en dernier</option>
+        </select>
+        <select value={periode} data-testid="prospects-periode" aria-label="Période"
+                onChange={(e) => {
+                  const choix = e.target.value;
+                  setPeriode(choix);
+                  const b = bornesPeriode(choix, Date.now(), debutPerso, finPerso);
+                  majFiltre('depuis_iso', b.depuis_iso);
+                  majFiltre('jusqu_a_iso', b.jusqu_a_iso);
+                }}
+                style={styleChamp}>
+          {PERIODES_PROSPECTS.map((x) => <option key={x.id} value={x.id}>{x.libelle}</option>)}
+        </select>
+        {periode === 'perso' && (
+          <>
+            <input type="date" value={debutPerso} data-testid="prospects-debut" aria-label="Du"
+                   onChange={(e) => {
+                     setDebutPerso(e.target.value);
+                     const b = bornesPeriode('perso', Date.now(), e.target.value, finPerso);
+                     majFiltre('depuis_iso', b.depuis_iso);
+                     majFiltre('jusqu_a_iso', b.jusqu_a_iso);
+                   }}
+                   style={styleChamp} />
+            <input type="date" value={finPerso} data-testid="prospects-fin" aria-label="Au"
+                   onChange={(e) => {
+                     setFinPerso(e.target.value);
+                     const b = bornesPeriode('perso', Date.now(), debutPerso, e.target.value);
+                     majFiltre('depuis_iso', b.depuis_iso);
+                     majFiltre('jusqu_a_iso', b.jusqu_a_iso);
+                   }}
+                   style={styleChamp} />
+          </>
+        )}
+        {(filtres.envoyes === '1' || filtres.brouillons === '1' || periode !== 'tout' || filtres.tri) && (
+          <button type="button" data-testid="prospects-chrono-reset" style={stylePetitBouton}
+                  onClick={() => {
+                    setPeriode('tout'); setDebutPerso(''); setFinPerso('');
+                    ['tri', 'envoyes', 'brouillons', 'depuis_iso', 'jusqu_a_iso']
+                      .forEach((c) => majFiltre(c, ''));
+                  }}>
+            Tout afficher
+          </button>
+        )}
+        <span data-testid="prospects-chrono-total" style={{ fontSize: '11.5px', opacity: 0.65 }}>
+          {total === null ? '…' : `${total} fiche${total > 1 ? 's' : ''}`}
+        </span>
+      </div>
+
       {/* ---------- LES FILTRES ---------- */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
         <select value={filtres.category} onChange={(e) => majFiltre('category', e.target.value)}
@@ -3167,10 +3273,16 @@ export default function ProspectsSection({ API, inboundCible, onCibleConsommee, 
           }}
         >
           <SvgIcon name="compass" size={22} />
-          <div style={{ marginTop: '8px' }}>
-            {Object.values(filtres).some(Boolean)
-              ? 'Aucun prospect ne correspond à ces filtres.'
-              : 'Aucun prospect pour le moment.'}
+          <div style={{ marginTop: '8px' }} data-testid="prospects-vide">
+            {/* V648 : sur « Derniers envois », on dit qu'il n'y a pas d'ENVOI —
+                pas qu'il n'y a pas de prospect. Les deux sont très différents. */}
+            {filtres.envoyes === '1'
+              ? 'Aucun envoi enregistré pour cette sélection.'
+              : filtres.brouillons === '1'
+                ? 'Aucun brouillon pour cette sélection.'
+                : Object.values(filtres).some(Boolean)
+                  ? 'Aucun prospect ne correspond à ces filtres.'
+                  : 'Aucun prospect pour le moment.'}
           </div>
         </div>
       )}
