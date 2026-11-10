@@ -324,10 +324,13 @@ async def principal():
     # gratuite annoncee plus large que la realite est une promesse non tenue.
     verifier("10. La formulation metier : premier cours offert + conditions REELLES écrites",
              "Ton premier cours est offert" in corps
-             and "Offert une seule fois, pour une première séance" in corps
-             and "L'essai concerne la première séance, une seule fois par personne" in corps
+             and "Offert une seule fois, pour une première participation à un cours récurrent" in corps
+             and "une seule fois par personne, et uniquement sur les cours collectifs récurrents" in corps
+             and "pas sur les événements" in corps
              and "numéro de téléphone est demandé" in corps
-             and "n'ont pas déjà été clientes" in corps)
+             and "Aucun abonnement n'est nécessaire" in corps
+             # Les jours ne sont JAMAIS figés : ils viennent du planning (contrôle 88).
+             and "mercredi" not in corps.lower() and "dimanche" not in corps.lower().split("<main")[0])
     verifier("11. Aucune promesse que TOUS les cours sont gratuits",
              not re.search(r"(tous|toutes) les (cours|s[ée]ances) (sont )?(gratuit|offert)", corps, re.I))
 

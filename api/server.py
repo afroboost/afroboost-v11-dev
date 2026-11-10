@@ -59566,11 +59566,15 @@ _M1_FAQ = (
      "as une blessure ou un doute médical, parles-en à ton médecin avant."),
     ("Comment se passe le cours d'essai offert ?",
      "Tu réserves ta place depuis cette page, tu reçois la confirmation, et "
-     "tu viens. L'essai concerne la première séance, une seule fois par "
-     "personne : un numéro de téléphone est demandé, les conditions de "
-     "participation sont à accepter, et l'essai est réservé aux personnes "
-     "qui n'ont pas déjà été clientes d'Afroboost. Tu décides ensuite si tu "
-     "continues : il n'y a rien à signer le jour même."),
+     "tu viens. L'essai est offert pour une première participation, une "
+     "seule fois par personne, et uniquement sur les cours collectifs "
+     "récurrents dont les jours sont affichés plus haut sur cette page — pas "
+     "sur les événements, les festivals, les ateliers ponctuels, les cours "
+     "privés, en entreprise ni en ligne. Un numéro de téléphone est demandé "
+     "et les conditions de "
+     "participation sont à accepter. Aucun abonnement n'est nécessaire pour "
+     "découvrir le cours ; les séances suivantes sont payantes selon les "
+     "offres en vigueur, et il n'y a rien à signer le jour même."),
     ("Quand ont lieu les cours ?",
      "Les dates, horaires et lieux des prochaines séances sont affichés plus "
      "haut sur cette page : ils viennent directement du planning et changent "
@@ -60584,7 +60588,7 @@ tbody th{font-weight:700;color:#fff}
 </ul>
 <p class="ess-offert"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5"/></svg>Ton premier cours est offert</p>
 %(cta)s
-<p class="note ess-note">Offert une seule fois, pour une première séance — <a href="#faq-essai">conditions</a>. Les autres formules restent payantes.</p>
+<p class="note ess-note">Offert une seule fois, pour une première participation à un cours récurrent — <a href="#faq-essai">conditions</a>. Les autres séances restent payantes.</p>
 <details class="ess-plus">
 <summary>En savoir plus</summary>
 <section class="ess-rub">

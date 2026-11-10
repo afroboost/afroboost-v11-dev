@@ -524,6 +524,22 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
           >
             {fiche.gratuit ? 'Réserver mon 1er cours gratuit' : 'Choisir cette formule'}
           </button>
+          {/* V650 — LA CONDITION SE LIT LÀ OÙ L'ON CLIQUE. Annoncer « gratuit »
+              sans dire « une première fois, sur les cours récurrents » promet
+              plus que ce que le serveur accorde : la garde ESSAI-8 refuse un
+              second essai et un ancien client payant. Le détail complet vit sur
+              la page d'essai — une seule source, pas une seconde liste à tenir. */}
+          {fiche.gratuit ? (
+            <p data-testid="fiche-essai-conditions" style={{
+              margin: '8px 0 0', textAlign: 'center', fontSize: 11.5, lineHeight: 1.45,
+              color: 'rgba(255,255,255,0.6)',
+            }}>
+              Offre réservée à une première participation. Un seul essai gratuit par personne,
+              uniquement lors des cours récurrents.{' '}
+              <a href="/cours-essai-gratuit-neuchatel#faq-essai"
+                 style={{ color: 'inherit', textDecoration: 'underline' }}>Conditions</a>
+            </p>
+          ) : null}
           {payant ? (
             <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
               <PawaPayOfferButton offer={offre} priceChf={prixUnitaire(offre)} disabled={!!checkoutBusy} />
