@@ -195,14 +195,19 @@ async def main():
     print("\n== 5. Page d'essai ==")
     db, j = M1.monde()
     _, page = await M1.rendre(db, j)
-    v("H1 = ligne descriptive", "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>" in page)
-    # V623 (page ultra-simple, décision de Bassi) : le slogan n'est plus affiché ;
-    # le H1, lui, est strictement inchangé.
-    v("V623 : H1 suivi de la phrase courte (slogan retiré de l'affichage)",
-      '</h1>\n<p class="ess-accroche">Pas besoin de savoir danser.</p>' in page)
-    v("description exacte",
-      'content="Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, en groupe. '
-      'Pas besoin de savoir danser. Ton premier cours est offert."' in page)
+    # V649 — textes validés par Bassi : le vocabulaire du public (danse-fitness,
+    # cardio-danse) remplace « danse africaine », l'identité afrobeat reste.
+    v("H1 = ligne descriptive (V649)",
+      "<h1>Cardio-danse afrobeat à Neuchâtel : bougez à votre rythme</h1>" in page)
+    # V623 (page ultra-simple, décision de Bassi) : le slogan n'est plus affiché.
+    # V649 : l'accroche garde sa première phrase et en gagne une seconde.
+    v("V649 : H1 suivi de l'accroche courte (slogan toujours retiré)",
+      '</h1>\n<p class="ess-accroche">Pas besoin de savoir danser. '
+      'Des mouvements simples, à votre rythme, portés par la musique afrobeat.</p>' in page)
+    v("description exacte (V649)",
+      'content="Cours collectif de danse-fitness à Neuchâtel : cardio-danse afrobeat, '
+      'mouvements simples et adaptables, aucun niveau de danse nécessaire. '
+      'Le plaisir de bouger, sans pression ni jugement. 1er cours offert."' in page)
     v("V623 : repères à icônes (durée, adresse du lieu des cours), sans casque",
       "Environ 1 heure</li>" in page and "Chemin des Valangines 97, 2000 Neuchâtel</li>" in page
       and "Casque fourni" not in page)

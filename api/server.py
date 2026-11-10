@@ -59547,7 +59547,8 @@ _M1_FAQ = (
     ("Je ne sais pas danser, est-ce que je peux venir ?",
      "Oui. La majorité des personnes qui viennent n'ont jamais pris de cours "
      "de danse. Le coach montre chaque mouvement face au groupe et tu le "
-     "reprends à ton rythme : personne ne te corrige devant les autres."),
+     "reprends à ton rythme — l'idée n'est pas de te corriger devant les "
+     "autres."),
     ("J'ai peur du regard des autres.",
      "Tout le monde regarde le coach, pas ses voisins. Chacun est dans sa "
      "musique et dans son effort."),
@@ -59557,8 +59558,8 @@ _M1_FAQ = (
      "Silent) et aux événements spéciaux."),
     ("Je viens seul(e), est-ce que c'est gênant ?",
      "Non, la plupart des gens arrivent seuls. Le cours est collectif et se "
-     "fait face au coach : tu n'as pas besoin de partenaire, et tu repars "
-     "généralement en ayant parlé à quelqu'un."),
+     "fait face au coach : tu n'as pas besoin de partenaire, et les gens "
+     "repartent généralement en ayant parlé à quelqu'un."),
     ("Quel niveau de forme faut-il ?",
      "Aucun niveau préalable n'est demandé. Tu règles ton intensité toi-même : "
      "on peut suivre la chorégraphie en douceur ou pousser le cardio. Si tu "
@@ -59566,8 +59567,10 @@ _M1_FAQ = (
     ("Comment se passe le cours d'essai offert ?",
      "Tu réserves ta place depuis cette page, tu reçois la confirmation, et "
      "tu viens. L'essai concerne la première séance, une seule fois par "
-     "personne. Tu décides ensuite si tu continues : il n'y a rien à signer "
-     "le jour même."),
+     "personne : un numéro de téléphone est demandé, les conditions de "
+     "participation sont à accepter, et l'essai est réservé aux personnes "
+     "qui n'ont pas déjà été clientes d'Afroboost. Tu décides ensuite si tu "
+     "continues : il n'y a rien à signer le jour même."),
     ("Quand ont lieu les cours ?",
      "Les dates, horaires et lieux des prochaines séances sont affichés plus "
      "haut sur cette page : ils viennent directement du planning et changent "
@@ -60242,10 +60245,18 @@ async def m1_page_essai_neuchatel(request: Request):
         _creneaux_txt = ""
         _planning_complet = _planning
 
-    _titre = "Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost"
+    # V649 — LE VOCABULAIRE DU PUBLIC, PAS LE NÔTRE. « danse africaine » décrit
+    # juste ce qu'on fait, mais ce n'est pas ce que les gens tapent : ils
+    # cherchent « danse-fitness », « cardio-danse », « cours collectif ».
+    # L'identité afrobeat reste dans le titre — elle est notre différence, pas
+    # un mot-clé à sacrifier.
+    _titre = "Cours de danse-fitness afrobeat à Neuchâtel | Afroboost"
     # SEO-GEO : « fitness au casque » -> « fitness » (en salle, pas de casque).
-    _desc = ("Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, "
-             "en groupe. Pas besoin de savoir danser. Ton premier cours est offert.")
+    # V649 : la description porte ce qui lève le frein (mouvements simples,
+    # aucun niveau) plutôt qu'une liste de disciplines.
+    _desc = ("Cours collectif de danse-fitness à Neuchâtel : cardio-danse afrobeat, "
+             "mouvements simples et adaptables, aucun niveau de danse nécessaire. "
+             "Le plaisir de bouger, sans pression ni jugement. 1er cours offert.")
     # SEO-GEO : cette photo (été, extérieur, casque) reste la photo principale
     # TANT QUE Bassi n'a pas fourni la photo en salle — on n'en invente aucune.
     # Le texte alternatif DÉCRIT la photo telle qu'elle est ; ce n'est pas une
@@ -60565,24 +60576,39 @@ tbody th{font-weight:700;color:#fff}
 <main class="ess">
 <p class="kicker">Afroboost · Neuchâtel</p>
 <div class="ess-media"><img src="%(photo)s" alt="%(alt)s" width="1024" height="1024" fetchpriority="high"/></div>
-<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>
-<p class="ess-accroche">Pas besoin de savoir danser.</p>
+<h1>Cardio-danse afrobeat à Neuchâtel : bougez à votre rythme</h1>
+<p class="ess-accroche">Pas besoin de savoir danser. Des mouvements simples, à votre rythme, portés par la musique afrobeat.</p>
 <ul class="ess-lignes">
 %(ligne_creneaux)s<li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Environ 1 heure</li>
 <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>%(adresse)s</li>
 </ul>
 <p class="ess-offert"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5"/></svg>Ton premier cours est offert</p>
 %(cta)s
-<p class="note ess-note">L’essai concerne la première séance, une seule fois par personne. Les autres formules restent payantes.</p>
+<p class="note ess-note">Offert une seule fois, pour une première séance — <a href="#faq-essai">conditions</a>. Les autres formules restent payantes.</p>
 <details class="ess-plus">
 <summary>En savoir plus</summary>
+<section class="ess-rub">
+<h2>Bouge, vibre et fais-toi plaisir</h2>
+<p>Pas besoin de savoir danser. Pas de chorégraphies compliquées à mémoriser. Pas de pression pour réussir les mouvements.</p>
+<p>Chez Afroboost, chacun bouge à son rythme, avec des mouvements simples et adaptables à son niveau.</p>
+<p>L’essentiel, c’est le plaisir de bouger, le cardio porté par la musique afrobeat, la bonne humeur et l’énergie du groupe.</p>
+<p>On danse, on se dépense, on partage et on prend soin de son bien-être, dans une ambiance conviviale et sans jugement.</p>
+<p>Afroboost, c’est un cours collectif de danse-fitness à Neuchâtel : faire du sport en s’amusant, tout simplement.</p>
+</section>
+<section class="ess-rub">
+<h2>Une séance, concrètement</h2>
+<p>Le cours est collectif et se fait face au coach : vous n’avez pas besoin de partenaire, et aucun niveau préalable n’est demandé.</p>
+<p>Le coach montre chaque mouvement face au groupe, et vous le reprenez à votre rythme.</p>
+<p>Vous réglez vous-même votre intensité : on peut suivre en douceur ou pousser le cardio.</p>
+<p>Comptez environ une heure.</p>
+</section>
 <a class="ess-carte" href="/a-propos">%(picto_profil)s<span class="ess-carte-t">Qui est Coach Bassi ?</span>%(chevron)s</a>
 <section class="ess-rub">
 <h2>Pour qui ?</h2>
 <ul class="pourqui"><li>Débutant·e complet·e</li><li>Jamais dansé</li><li>Pas sportif·ve</li><li>Tu viens seul·e</li></ul>
 <details class="ess-voirplus"><summary>Voir plus</summary><ul class="pourqui"><li>Tu veux transpirer en t’amusant</li><li>Tu aimes la musique afro</li><li>Tu en as marre des salles impersonnelles</li></ul></details>
 </section>
-<section class="ess-rub faq">
+<section class="ess-rub faq" id="faq-essai">
 <h2>Questions fréquentes</h2>
 %(faq)s
 </section>

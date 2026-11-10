@@ -317,9 +317,17 @@ async def principal():
              all(m in corps.lower() for m in ("afro", "cardio", "casque", "débutant")))
     # V623 (page courte) : l'offre se dit « Ton premier cours est offert », et la
     # condition reste écrite juste sous le bouton.
-    verifier("10. La formulation metier : premier cours offert + condition écrite",
+    # V649 — LES CONDITIONS ECRITES SONT CELLES QUE LE SERVEUR APPLIQUE.
+    # La garde unique `_essai_porte_garde` (ESSAI-8) refuse sans telephone,
+    # refuse un abonnement actif et refuse un ancien client payant. La page ne
+    # disait que « une seule fois par personne » : vrai, mais incomplet — et une
+    # gratuite annoncee plus large que la realite est une promesse non tenue.
+    verifier("10. La formulation metier : premier cours offert + conditions REELLES écrites",
              "Ton premier cours est offert" in corps
-             and "L’essai concerne la première séance, une seule fois par personne." in corps)
+             and "Offert une seule fois, pour une première séance" in corps
+             and "L'essai concerne la première séance, une seule fois par personne" in corps
+             and "numéro de téléphone est demandé" in corps
+             and "n'ont pas déjà été clientes" in corps)
     verifier("11. Aucune promesse que TOUS les cours sont gratuits",
              not re.search(r"(tous|toutes) les (cours|s[ée]ances) (sont )?(gratuit|offert)", corps, re.I))
 
@@ -502,17 +510,38 @@ async def principal():
     _, page = await rendre(db, j)
 
     # --- textes valides, au mot pres ---
-    verifier("57. TITLE exact (HIVER)",
-             "<title>Cours de danse africaine et cardio à Neuchâtel — 1er cours offert | Afroboost</title>" in page)
-    verifier("58. META DESCRIPTION exacte (HIVER)",
-             "Afroboost Neuchâtel : cardio-danse africaine et fitness, avec un coach, "
-             "en groupe. Pas besoin de savoir danser. Ton premier cours est offert." in page)
+    # V649 — TEXTES VALIDES PAR BASSI. « danse africaine » decrit juste ce qu'on
+    # fait, mais le public tape « danse-fitness » et « cardio-danse ».
+    # L'identite afrobeat reste : elle est la difference, pas un mot a sacrifier.
+    verifier("57. TITLE exact (V649)",
+             "<title>Cours de danse-fitness afrobeat à Neuchâtel | Afroboost</title>" in page)
+    verifier("58. META DESCRIPTION exacte (V649)",
+             "Cours collectif de danse-fitness à Neuchâtel : cardio-danse afrobeat, "
+             "mouvements simples et adaptables, aucun niveau de danse nécessaire. "
+             "Le plaisir de bouger, sans pression ni jugement. 1er cours offert." in page)
     # SEO-GEO (19/10/2026) : la ligne descriptive devient le H1 ; le slogan reste,
     # en grand, juste en dessous (l'élément visuel fort ne change pas).
     # V623 — PAGE ULTRA-SIMPLE : H1 SEO inchangé (grand titre), une phrase, les
     # repères à icônes, le bloc offre, UN bouton ; le reste dans « En savoir plus ».
-    verifier("59. H1 exact et UNIQUE (inchangé depuis SEO-GEO)",
-             page.count("<h1") == 1 and "<h1>Cardio-danse Afrobeat à Neuchâtel — 1er cours offert</h1>" in page)
+    verifier("59. H1 exact et UNIQUE (V649)",
+             page.count("<h1") == 1
+             and "<h1>Cardio-danse afrobeat à Neuchâtel : bougez à votre rythme</h1>" in page)
+    # V649 — LE TEXTE D'IDENTITE ET LE DEROULEMENT VIVENT DANS « En savoir plus ».
+    # Les styles `h2` et `section` sont portes par `.ess-plus` : hors de ce bloc,
+    # le rendu serait casse. Le design existant prime sur le placement.
+    _apres = page.split('<details class="ess-plus">')[1]
+    verifier("59b. Texte d'identité et déroulement présents, DANS « En savoir plus »",
+             ">Bouge, vibre et fais-toi plaisir</h2>" in _apres
+             and ">Une séance, concrètement</h2>" in _apres
+             and "faire du sport en s’amusant" in _apres)
+    # Le controle porte sur LA SECTION AJOUTEE, pas sur la FAQ : celle-ci porte
+    # ses propres formulations (« personne ne te corrige », « en ayant parle a
+    # quelqu'un »), validees anterieurement, et la consigne est de la preserver.
+    _seance = _apres.split(">Une séance, concrètement</h2>")[1].split("</section>")[0]
+    verifier("59c. La section ajoutée n'affirme rien qui ne soit confirmé",
+             "personne ne te corrige" not in _seance.lower()
+             and "parlé à quelqu" not in _seance.lower()
+             and "casque" not in _seance.lower())
     for h2 in ("Pour qui ?", "Questions fréquentes", "Contact"):
         verifier("60. H2 « %s » présent dans « En savoir plus »" % h2,
                  ">%s</h2>" % h2 in page.split('<details class="ess-plus">')[1])
