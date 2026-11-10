@@ -8592,6 +8592,12 @@ function App() {
   // V646 : une URL de boutique ouverte par un coach connecté vaut « Vue Visiteur » :
   // elle montre la boutique, pas le tableau de bord. Même mécanisme que `?visitor=true`.
   if (coachMode && boutiqueRoute !== null) urlParams.set('visitor', 'true');
+  // V657 — MÊME RÈGLE POUR `/offres`, et elle manquait. Mesuré en production :
+  // un coach connecté qui ouvrait `/offres` tombait sur son tableau de bord,
+  // alors que `/boutique` montrait bien la boutique. Ce n'est pas une
+  // déconnexion : seule l'URL de CETTE page bascule en « Vue Visiteur », le
+  // tableau de bord reste joignable par ses propres liens.
+  if (coachMode && pageOffres) urlParams.set('visitor', 'true');
   const pathSlugMatch = window.location.pathname.match(/^\/(coach|partner)\/(.+)$/);
   const urlSlug = pathSlugMatch ? decodeURIComponent(pathSlugMatch[2]).toLowerCase().trim() : null;
   const isSuperAdminSlugInUrl = urlSlug && SUPER_ADMIN_SLUGS.includes(urlSlug);

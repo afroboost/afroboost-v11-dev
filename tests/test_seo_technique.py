@@ -382,6 +382,24 @@ v("V656 : le texte éditorial est DÉPLACÉ, jamais recopié par React",
   "getElementById('af-offres-intro')" in APP
   and "Offres et tarifs Afroboost à Neuchâtel" not in APP
   and "cardio-danse afrobeat" not in APP.lower())
+# V657 — UN COACH CONNECTE DOIT VOIR LA PAGE, PAS SON TABLEAU DE BORD.
+# `/boutique` avait cette regle depuis V646 ; `/offres` ne l'avait pas, et un
+# coach qui ouvrait son propre lien tombait sur le tableau de bord.
+v("V657 : `/offres` bascule en « Vue Visiteur » pour un coach connecté",
+  "if (coachMode && pageOffres) urlParams.set('visitor', 'true');" in APP)
+v("V657 : même mécanisme que `/boutique`, pas un second",
+  "if (coachMode && boutiqueRoute !== null) urlParams.set('visitor', 'true');" in APP
+  and APP.count("urlParams.set('visitor', 'true')") == 2)
+v("V657 : la règle est posée AVANT la bascule vers le tableau de bord",
+  APP.index("if (coachMode && pageOffres)") < APP.index("return <CoachDashboard"))
+# LA REGLE NE TOUCHE QUE L'URL. Elle pose un parametre de lecture, exactement
+# comme « Vue Visiteur » : ni session effacee, ni jeton retire, ni redirection.
+_l657 = [l for l in APP.split("\n") if "coachMode && pageOffres" in l]
+v("V657 : la règle ne fait QUE poser le paramètre d'affichage (aucune déconnexion)",
+  len(_l657) == 1
+  and not any(m in _l657[0] for m in ("logout", "Logout", "removeItem", "clear(",
+                                      "location.href", "setCoachMode", "localStorage")))
+
 v("V656 : il se place au-dessus des formules",
   APP.index("{pageOffres && <div ref={afOffresIntroSlot} />}") < APP.index("{offersBlock}"))
 
