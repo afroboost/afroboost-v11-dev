@@ -29729,6 +29729,63 @@ async def p3s3_modifier_action(campaign_id: str, action_id: str, request: Reques
                 action["id"][:8], ", ".join(sorted(champs)), appelant[:24])
     return {"action": apres, "summary": resume}
 
+
+@api_router.get("/prospect-campaigns/{campaign_id}/actions/{action_id}/apercu")
+async def v647_apercu_j0(campaign_id: str, action_id: str, request: Request):
+    """V647 — CE QUE LE DESTINATAIRE RECEVRA, sans rien envoyer. LECTURE SEULE.
+
+    ELLE EXISTE POUR QUE L'ECRAN NE MENTE PAS. Recalculer l'objet, le corps ou
+    le rendu HTML cote navigateur serait une SECONDE VERITE : le jour ou elle
+    divergerait, le coach relirait un e-mail et un autre partirait. Meme motif,
+    meme solution que `GET /prospect-inbound/{id}/apercu-envoi` (V620) : c'est
+    le serveur qui dit ce qu'il ferait, avec LES MEMES FONCTIONS que l'envoi —
+    `v602_objet_et_corps` pour l'objet, `v647_corps_html` pour le HTML,
+    `p3s3v_media_campagne` pour la video.
+
+    ELLE N'ECRIT RIEN ET NE PEUT RIEN DECLENCHER : aucun `sent_at`, aucun
+    verrou, aucun statut, aucun appel a Resend. Le statut d'envoi renvoye est
+    LU sur l'action, jamais deduit : « envoye » exige un `sent_at` reel.
+    """
+    appelant = await _v309_require_coach_or_admin(request)
+    campagne = await db[P3S3_CAMPAGNES].find_one(
+        {"id": p3s1_texte(campaign_id, 64)}, {"_id": 0})
+    if not campagne:
+        raise HTTPException(status_code=404, detail="Campagne introuvable")
+    if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
+        raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+    action = await db[P3S3_ACTIONS].find_one(
+        {"id": p3s1_texte(action_id, 64), "campaign_id": campagne["id"]}, {"_id": 0})
+    if not action:
+        raise HTTPException(status_code=404, detail="Destinataire introuvable dans cette campagne")
+
+    canal = (action.get("channel") or "").lower()
+    message = action.get("message_j0") or ""
+    objet, corps = v602_objet_et_corps(message, p3s3d2_objet_campagne(campagne))
+    # La video n'habille QUE l'e-mail : un script d'appel ou un formulaire n'a
+    # pas de rendu HTML, et en fabriquer un laisserait croire a un envoi.
+    media = await p3s3v_media_campagne(campagne) if canal == "email" else None
+    organisations = [x for x in (action.get("organisations") or []) if x]
+    return {
+        "campagne": {"id": campagne["id"], "nom": campagne.get("nom"),
+                     "etat": campagne.get("etat"), "approuvee_le": campagne.get("approved_at")},
+        "organisation": " · ".join(organisations) or action.get("recipient_key") or "",
+        "destinataire": action.get("target") or "",
+        "canal": canal,
+        "objet": objet,
+        "texte": corps,
+        "media": v620_instantane_envoi(media, "") if media else None,
+        # L'e-mail EXACT, par la fonction de l'envoi. Vide hors canal e-mail.
+        "html_email": v647_corps_html(message, media) if canal == "email" and message else "",
+        # LU, jamais deduit : « preparee » n'est pas « envoye ».
+        "statut": action.get("statut") or "",
+        "execution": action.get("execution_type") or "",
+        "execution_motif": action.get("execution_reason") or "",
+        "envoye_le": action.get("sent_at") or None,
+        "provider_statut": action.get("provider_status") or None,
+        "modifie_le": action.get("updated_at") or action.get("created_at") or None,
+        "message_origine": action.get("message_j0_origine") or "",
+    }
+
 # ============================================================================
 # P3-S3-D1 — LE CONTRAT D'EXECUTION, ET UN FOURNISSEUR QUI N'ENVOIE RIEN
 # ============================================================================
@@ -30208,11 +30265,22 @@ def p3s3d2_corps_html(message: str) -> str:
     lignes = (message or "").split("\n")
     corps = "".join("<p style=\"margin:0 0 12px;\">%s</p>" % _p3s3d2_echapper(l)
                     for l in lignes if l.strip())
+    return p3s3d2_enveloppe(corps)
+
+
+# V647 : l'enveloppe, EXTRAITE pour etre partagee avec `v647_corps_html` sans
+# recopier une seconde fois la feuille de style des clients mail. La sortie de
+# `p3s3d2_corps_html` est inchangee, a l'octet pres (verifie par test).
+P3S3D2_FIN_HTML = "</div></body></html>"
+
+
+def p3s3d2_enveloppe(corps: str) -> str:
+    """Le squelette HTML sobre des e-mails de prospection. PURE."""
     return ('<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
             '<body style="margin:0;padding:0;">'
             '<div style="font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;'
             'font-size:15px;line-height:1.55;color:#111;max-width:560px;">'
-            + corps + '</div></body></html>')
+            + (corps or "") + P3S3D2_FIN_HTML)
 
 
 def _p3s3d2_echapper(texte: str) -> str:
@@ -30266,8 +30334,15 @@ class P3S3DFournisseurEmail:
     nom = "resend"
 
     def __init__(self, objet: str = "", expediteur: str = None,
-                 reply_to: str = None, transport=None, envoi_autorise: bool = False):
+                 reply_to: str = None, transport=None, envoi_autorise: bool = False,
+                 media=None):
         self.objet = (objet or "").strip()
+        # V647 — LE MEDIA PARTAGE DE LA CAMPAGNE (une video), ou None.
+        # ADDITIF : a None, `charge_utile` rend EXACTEMENT ce qu'il rendait
+        # avant V647, texte et HTML compris. Le media n'est jamais devine ici :
+        # il est resolu par `p3s3v_media_campagne` depuis `campagne.media_ids`,
+        # donc depuis un media que le coach a explicitement valide (`validee`).
+        self.media = media or None
         self.expediteur = expediteur or P3S3D2_EXPEDITEUR
         # MEME PORTE QUE LA VALEUR PAR DEFAUT. Ecrire `reply_to or V336_REPLY_TO`
         # laissait un appelant poser explicitement l'adresse morte : le garde-fou
@@ -30298,8 +30373,12 @@ class P3S3DFournisseurEmail:
                 "reply_to": _reply_to_vivant(
                     (instantane or {}).get("reply_to"), self.reply_to),
                 "headers": p3s3d2_entetes_prospect(instantane),
+                # V647 : le TEXTE ne change pas — la ligne « Voir la vidéo
+                # Afroboost : <url> » est ecrite dans le message lui-meme, donc
+                # la version texte/plain est deja complete et correcte. Seul le
+                # HTML remplace cette ligne par la miniature cliquable.
                 "text": message,
-                "html": p3s3d2_corps_html(message),
+                "html": v647_corps_html(message, self.media),
             },
             # L'IDEMPOTENCE EST NATIVE. Le SDK pose l'en-tete `Idempotency-Key`
             # des que cette option est presente (resend/request.py:56). La cle
@@ -30555,6 +30634,22 @@ def p3s3d_echeance(depart: str, jours: int) -> str:
     return (base + timedelta(days=jours)).isoformat()
 
 
+async def p3s3v_attacher_media(campagne: dict, fournisseur) -> None:
+    """V647 — pose la video de la campagne sur le fournisseur s'il n'en a pas.
+
+    LE MOTEUR EST LE SEUL CHEMIN D'ENVOI du J0, et il connait la campagne :
+    c'est donc ici que la video se branche, et non dans chaque script de
+    lancement. Un fournisseur qui porte deja un media n'est pas touche (les
+    bancs d'essai en posent un a la main)."""
+    if fournisseur is None or getattr(fournisseur, "media", None):
+        return
+    media = await p3s3v_media_campagne(campagne)
+    if media:
+        fournisseur.media = media
+        logger.info("%s video de campagne attachee : %s", P3S3D_PREFIXE,
+                    str(media.get("titre"))[:40])
+
+
 async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
                                   simulation: bool = True,
                                   fournisseur=None, plafond: int = 0) -> dict:
@@ -30588,6 +30683,9 @@ async def p3s3d_executer_campagne(campagne_id: str, appelant: str,
         raise HTTPException(status_code=404, detail="Campagne introuvable")
     if not is_super_admin(appelant) and (campagne.get("coach_id") or "") != appelant:
         raise HTTPException(status_code=403, detail="Cette campagne ne vous appartient pas")
+    # V647 : la video partagee de la campagne, posee sur le fournisseur une
+    # seule fois pour toute l'execution (une lecture, pas une par destinataire).
+    await p3s3v_attacher_media(campagne, fournisseur)
 
     actions = await db[P3S3_ACTIONS].find(
         {"campaign_id": campagne_id}, {"_id": 0}).to_list(P3S3_LISTE_MAX)
@@ -57493,6 +57591,92 @@ def v620_corps_html(message: str, media) -> str:
         return base
     fin = "</div></body></html>"
     return base[:-len(fin)] + carte + fin if base.endswith(fin) else base + carte
+
+
+def v647_corps_html(message: str, media) -> str:
+    """V647 — LE CORPS HTML DU J0, AVEC LA MINIATURE CLIQUABLE A SA PLACE.
+
+    POURQUOI UNE FONCTION DE PLUS ET NON `v620_corps_html`. Celle-ci ajoute la
+    carte A LA FIN du corps : c'est juste pour une reponse a un partenaire, ou
+    le media est une piece qu'on joint. Dans un PREMIER CONTACT, la video est
+    une PREUVE qui doit suivre la phrase qui l'annonce, avant la demande de
+    rendez-vous et la signature — une miniature posee apres la signature se lit
+    comme une banniere publicitaire. On REUTILISE donc le bloc securise
+    (`v620_carte_html`, tables + styles en ligne + tout echappe) et on ne change
+    que son EMPLACEMENT.
+
+    LE REPERE EST LE TEXTE LUI-MEME, PAS UN MARQUEUR TECHNIQUE. Le message
+    porte, sur sa propre ligne, « Voir la vidéo Afroboost : <url> ». C'est
+    lisible tel quel en texte brut (la version exigee par les filtres), et c'est
+    exactement cette ligne que le HTML remplace par la carte.
+
+    AUCUNE INJECTION POSSIBLE. La carte n'est produite que si l'URL de la ligne
+    est IDENTIQUE a l'adresse absolue du media valide de la campagne ; tout le
+    reste du texte passe par `_p3s3d2_echapper` comme avant. Un message qui
+    contiendrait du HTML, ou une URL quelconque, est donc rendu en texte echappe.
+
+    SANS MEDIA, OU SANS CETTE LIGNE : rend EXACTEMENT `p3s3d2_corps_html(message)`.
+    """
+    m = v620_instantane_envoi(media, "")
+    if not m or m.get("type") != "video" or not m.get("miniature_absolue"):
+        return p3s3d2_corps_html(message)
+    carte = v620_carte_html(media)
+    if not carte:
+        return p3s3d2_corps_html(message)
+    # LA RECONNAISSANCE PORTE SUR LE CHEMIN, PAS SUR LE DOMAINE. Le message est
+    # ecrit une fois pour toutes avec `https://afroboost.com/...` ; `V604_SITE`,
+    # lui, depend de `FRONTEND_URL` de l'environnement. Comparer les adresses
+    # ENTIERES ferait disparaitre la miniature au premier environnement ou cette
+    # variable differe — un echec silencieux. On compare donc le chemin du
+    # fichier, et le lien de la carte reste celui que le serveur sait juste.
+    chemin = m["url"]
+    def _est_la_ligne(l):
+        t = l.strip()
+        if not t.startswith(V620_LIBELLE_VIDEO + " : "):
+            return False
+        reste = t[len(V620_LIBELLE_VIDEO) + 3:].strip()
+        return reste.endswith(chemin) and (reste == chemin or reste.startswith("https://"))
+    lignes = [l for l in (message or "").split("\n") if l.strip()]
+    if not any(_est_la_ligne(l) for l in lignes):
+        return p3s3d2_corps_html(message)
+    corps = "".join(
+        carte if _est_la_ligne(l)
+        else "<p style=\"margin:0 0 12px;\">%s</p>" % _p3s3d2_echapper(l)
+        for l in lignes)
+    return p3s3d2_enveloppe(corps)
+
+
+def v647_ligne_video(media) -> str:
+    """La ligne a ecrire DANS le message pour que la miniature s'affiche. PURE.
+    Chaine vide si le media n'est pas une video utilisable."""
+    m = v620_instantane_envoi(media, "")
+    if not m or m.get("type") != "video":
+        return ""
+    return "%s : %s" % (V620_LIBELLE_VIDEO, m["url_absolue"])
+
+
+async def p3s3v_media_campagne(campagne: dict):
+    """V647 — LA VIDEO PARTAGEE D'UNE CAMPAGNE, resolue comme a l'envoi.
+
+    `media_ids` existe depuis la PHASE 6B et n'etait que DECLARATIF : rien ne le
+    lisait pour composer un e-mail. C'est desormais sa seule et unique lecture.
+    On prend la PREMIERE video de la liste : un premier contact ne porte pas
+    deux videos, et choisir la premiere est une regle que le coach voit dans
+    l'ordre de sa selection.
+
+    Rend None sans media, sur un id devenu introuvable, ou sur une erreur de
+    resolution : un e-mail SANS miniature part toujours, jamais un e-mail casse.
+    """
+    c = campagne or {}
+    coach = (c.get("coach_id") or "").strip()
+    for identifiant in (c.get("media_ids") or [])[:20]:
+        try:
+            media = await v620_resoudre_media({"media_id": identifiant}, coach)
+        except Exception:
+            continue
+        if media and media.get("type") == "video" and media.get("miniature_url"):
+            return media
+    return None
 
 
 def v620_media_du_fil(media):

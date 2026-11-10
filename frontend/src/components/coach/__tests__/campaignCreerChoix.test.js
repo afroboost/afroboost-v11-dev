@@ -13,6 +13,12 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 
+/* V647 — CE FICHIER NE DÉCLARAIT PAS SON ENVIRONNEMENT `act`. Il passait
+   seulement quand un AUTRE fichier de test l'avait posé avant lui dans le
+   même worker Jest : ajouter des fichiers ailleurs le faisait échouer, sans
+   qu'aucun code de production ne change. La dépendance d'ordre est levée ici. */
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
 jest.mock('axios', () => ({
   get: jest.fn(() => Promise.resolve({ data: {} })),
   post: jest.fn(() => Promise.resolve({ data: {} })),

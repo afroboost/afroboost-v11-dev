@@ -38,6 +38,8 @@ import {
   dateCourte, libelleCanal, libelleStatutProspect, nomCampagne, ilYa,
   dernierEvenement, instant,
   PREPARATIONS, LIBELLES_PREPARATION, FILTRES_PREPARATION, campagneAvantEnvoi,   // V646
+  TRIS, PERIODES, FILTRES_RAPIDES, vueRelances, dateHeureZurich,                 // V647
+  dateEnvoi, dateActivite, envoyeRecemment, etatCampagneLisible,
 } from '../../utils/messagesRelances';
 
 const PRIMAIRE = 'var(--primary-color, #D91CD2)';
@@ -163,6 +165,54 @@ function Puce({ actif, onClick, children, testid }) {
   );
 }
 
+/* V647 — LE POINT « ENVOYÉ IL Y A MOINS DE 24 H ». Discret : un point de la
+   couleur de marque, pas un badge de plus. Il ne dit QUE ce qu'il sait — il
+   s'appuie sur `sent_at`, jamais sur « préparé » ni « approuvé ». */
+function PointRecent() {
+  return (
+    <span data-testid="mr-recent" title="Envoyé il y a moins de 24 h" aria-label="Envoyé il y a moins de 24 h"
+      style={{ width: '6px', height: '6px', borderRadius: '50%', background: PRIMAIRE, flexShrink: 0 }} />
+  );
+}
+
+/* V647 — L'APERÇU DE L'E-MAIL, tel que le serveur le composerait.
+   Le HTML vient de la MÊME fonction que l'envoi (`v647_corps_html`) et s'affiche
+   dans une iframe `sandbox=""` : aucun script, aucune origine, aucun accès à la
+   page — le même procédé que l'aperçu des réponses partenaires (V620). */
+function ApercuEmail({ apercu, enCours }) {
+  if (enCours) return <div style={{ fontSize: '11px', color: DOUX }}>Chargement de l’aperçu…</div>;
+  if (!apercu) return null;
+  const envoye = !!apercu.envoye_le;
+  return (
+    <details data-testid="mr-apercu" style={{ border: `1px solid ${BORD}`, borderRadius: '8px', padding: '7px 9px', background: 'rgba(0,0,0,0.18)' }}>
+      <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700 }}>
+        <SvgIcon name="mail" size={12} />
+        Voir l’e-mail tel que le destinataire le recevra
+      </summary>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', fontSize: '11.5px' }}>
+        <div style={{ color: DOUX }}>Destinataire : <span style={{ color: TEXTE }}>{apercu.destinataire || '—'}</span></div>
+        <div style={{ color: DOUX }}>Objet : <span style={{ color: TEXTE, fontWeight: 600 }} data-testid="mr-apercu-objet">{apercu.objet || '— aucun objet —'}</span></div>
+        <div style={{ color: DOUX }}>Statut : <span style={{ color: TEXTE }} data-testid="mr-apercu-statut">
+          {envoye ? `envoyé le ${dateHeureZurich(apercu.envoye_le)}` : 'pas encore envoyé'}
+        </span></div>
+        {apercu.media ? (
+          <div style={{ color: DOUX }} data-testid="mr-apercu-video">
+            Vidéo jointe : <span style={{ color: TEXTE }}>{apercu.media.titre}</span>
+          </div>
+        ) : null}
+        {apercu.html_email ? (
+          <iframe title="Aperçu de l’e-mail" sandbox="" srcDoc={apercu.html_email}
+            data-testid="mr-apercu-cadre"
+            style={{ width: '100%', height: '460px', border: 'none', borderRadius: '7px',
+              background: 'rgb(255,255,255)', marginTop: '4px' }} />
+        ) : (
+          <div style={{ color: DOUX }}>Aucun e-mail sur ce canal ({libelleCanal(apercu.canal)}).</div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function quandLisible(iso, maintenant) {
   const rel = ilYa(iso, maintenant);
   return rel.indexOf('le ') === 0 ? dateCourte(iso) : `${dateCourte(iso)} · ${rel}`;
@@ -177,10 +227,14 @@ function dateOuRetard(l) {
 }
 
 /* ─── CARTE COMPACTE (liste gauche) ─── */
-function Carte({ l, maintenant, onOuvrir, active }) {
+function Carte({ l, maintenant, onOuvrir, active, campagne }) {
   const ev = l.dernierMessageLe ? { titre: 'Réponse reçue', quand: l.dernierMessageLe } : dernierEvenement(l);
   const evTexte = ev ? `${ev.titre} ${ilYa(ev.quand, maintenant)}` : '';
   const date = dateOuRetard(l);
+  /* V647 — TROIS DATES, TROIS SENS. `envoye` n'existe QUE si un envoi a eu
+     lieu : une action préparée ou approuvée n'en affiche aucune. */
+  const envoye = dateEnvoi(l);
+  const recent = envoyeRecemment(l, maintenant, 24);
   return (
     <li data-testid="mr-ligne" data-etat={l.etat} data-nouveau={l.nonLues > 0 ? 'oui' : 'non'}
       data-appel={l.appel ? 'oui' : 'non'} data-attendue={l.reponseAttendue ? 'oui' : 'non'}>
@@ -196,7 +250,8 @@ function Carte({ l, maintenant, onOuvrir, active }) {
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {l.organisation}
           </span>
-          <span style={{ display: 'flex', gap: '3px', flexShrink: 0 }}>
+          <span style={{ display: 'flex', gap: '3px', flexShrink: 0, alignItems: 'center' }}>
+            {recent && <PointRecent />}
             <Badges l={l} />
           </span>
         </div>
@@ -221,6 +276,19 @@ function Carte({ l, maintenant, onOuvrir, active }) {
             {l.preparation.modifieLe && <span>· modifié le {dateCourte(l.preparation.modifieLe)}</span>}
           </div>
         )}
+        {/* V647 — LA LIGNE DES FAITS : campagne, canal, dernière activité, et la
+            date d'envoi SEULEMENT si un envoi a réellement eu lieu. */}
+        <div data-testid="mr-carte-dates" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap',
+          fontSize: '10px', color: DOUX }}>
+          {campagne ? <span data-testid="mr-carte-campagne">{nomCampagne(campagne)}</span> : null}
+          <span>· {libelleCanal(l.canal)}</span>
+          <span>· activité {dateHeureZurich(dateActivite(l))}</span>
+          {envoye
+            ? <span data-testid="mr-carte-envoi" style={{ color: recent ? PRIMAIRE_LISIBLE : DOUX }}>
+                · envoyé {dateHeureZurich(envoye)}
+              </span>
+            : <span data-testid="mr-carte-non-envoye">· jamais envoyé</span>}
+        </div>
         {(l.etat === ETATS.MANUEL || evTexte) && (
           <div style={{ fontSize: '10.5px', color: DOUX, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {l.etat === ETATS.MANUEL ? SUIVI_MANUEL_INDISPONIBLE : evTexte}
@@ -355,7 +423,7 @@ function DetailEtape({ e }) {
 const ETIQUETTE = { fontSize: '10px', color: DOUX, textTransform: 'uppercase', letterSpacing: '0.04em' };
 
 /* ─── PANNEAU DE DÉTAIL (inline à droite sur desktop, plein écran mobile) ─── */
-function PanneauDetail({ l, maintenant, notes, notesEnCours, brouillon, onFermer, mobile }) {
+function PanneauDetail({ l, maintenant, notes, notesEnCours, brouillon, onFermer, mobile, apercu }) {
   const corpsRef = useRef(null);
   useEffect(() => {
     if (corpsRef.current) corpsRef.current.scrollTop = corpsRef.current.scrollHeight;
@@ -462,6 +530,9 @@ function PanneauDetail({ l, maintenant, notes, notesEnCours, brouillon, onFermer
           {notesEnCours && <div style={{ fontSize: '10.5px', color: DOUX, textAlign: 'center' }}>Chargement des notes…</div>}
         </section>
 
+        {/* V647 : l'e-mail EXACT, composé par le serveur. */}
+        <ApercuEmail apercu={(apercu || {}).valeur} enCours={(apercu || {}).enCours} />
+
         <details style={{ marginTop: '4px' }}>
           <summary style={{ cursor: 'pointer', fontSize: '11px', fontWeight: 700, color: DOUX }}>Séquence automatique</summary>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '6px' }}>
@@ -520,6 +591,37 @@ function useLectureParId(base, id, chemin, extraire) {
   }, [base, id, chemin, connu]);
   return { valeur: id ? cache[id] : undefined, enCours: !!id && enCours === id };
 }
+/* V647 — L'APERÇU, UN SEUL GET PAR DESTINATAIRE, mis en cache. Lecture seule :
+   la route ne peut rien écrire ni déclencher (voir son docstring serveur). */
+function useApercu(base, campagneId, actionId) {
+  const [cache, setCache] = useState({});
+  const [enCours, setEnCours] = useState('');
+  const cle = campagneId && actionId ? `${campagneId}|${actionId}` : '';
+  const connu = !cle || Object.prototype.hasOwnProperty.call(cache, cle);
+  useEffect(() => {
+    if (connu) return undefined;
+    let vivant = true;
+    setEnCours(cle);
+    /* `Promise.resolve().then(...)` et non `axios.get(...)` directement : un
+       appel qui lèverait AVANT de rendre sa promesse (aucune raison en
+       production, mais un simulateur de test le fait) ne doit pas casser
+       l'écran. L'aperçu est un confort, jamais une dépendance. */
+    Promise.resolve().then(() => axios.get(
+      `${base}/prospect-campaigns/${encodeURIComponent(campagneId)}`
+      + `/actions/${encodeURIComponent(actionId)}/apercu`))
+      .then((r) => (r && r.data) || null)
+      .catch(() => null)
+      .then((val) => {
+        if (!vivant) return;
+        setCache((prev) => (Object.prototype.hasOwnProperty.call(prev, cle) ? prev : { ...prev, [cle]: val }));
+        setEnCours((prev) => (prev === cle ? '' : prev));
+      });
+    return () => { vivant = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, cle, connu]);
+  return { valeur: cle ? cache[cle] : undefined, enCours: !!cle && enCours === cle };
+}
+
 const extraireNotes = (d) => (d && Array.isArray(d.notes) ? d.notes : []);
 const extraireBrouillon = (d) => (d && d.brouillon) || null;
 
@@ -545,6 +647,11 @@ export default function MessagesRelancesSection({ API, actif }) {
   const [recherche, setRecherche] = useState('');
   const [campagneId, setCampagneId] = useState('');
   const [ouverteId, setOuverteId] = useState('');
+  /* V647 — le tri et la période. Le tri par défaut reste la PRIORITÉ (V588b). */
+  const [tri, setTri] = useState('priorite');
+  const [periode, setPeriode] = useState('tout');
+  const [debut, setDebut] = useState('');
+  const [fin, setFin] = useState('');
   const mobile = useEstMobile(768);
 
   const chargement = useChargement({
@@ -577,13 +684,20 @@ export default function MessagesRelancesSection({ API, actif }) {
     ? trierRelances(lignesRelances(campagne.actions, campagne.campaign, conversations, prospects, minute * 60000))
     : []), [campagne, conversations, prospects, minute]);
   const compteurs = useMemo(() => compteursRelances(lignes), [lignes]);
+  /* « Derniers envois » n'est pas qu'un filtre : la question posée est « qu'ai-je
+     envoyé en dernier ? ». Le tri par date d'envoi décroissante est donc imposé
+     par la vue elle-même, sans toucher au choix que le coach avait fait. */
+  const triEffectif = filtre === 'derniers_envois' ? 'envoi_desc' : tri;
   /* V646 : la zone « avant envoi » n'existe que tant que la campagne n'est pas
      approuvée. Dérivé, jamais stocké. */
   const avantEnvoi = !!campagne && campagneAvantEnvoi(campagne.campaign);
-  const visibles = useMemo(() => filtrerRelances(lignes, filtre, canal, recherche), [lignes, filtre, canal, recherche]);
+  const visibles = useMemo(() => vueRelances(lignes, {
+    filtre, canal, recherche, periode, debut, fin, tri: triEffectif, maintenant: minute * 60000,
+  }), [lignes, filtre, canal, recherche, periode, debut, fin, triEffectif, minute]);
 
   const ligneOuverte = lignes.find((l) => l.id === ouverteId) || null;
   const ids = (ligneOuverte && ligneOuverte.conversation && ligneOuverte.conversation.message_ids) || [];
+  const apercu = useApercu(base, campagne ? campagne.campaign.id : '', ouverteId);
   const notes = useLectureParId(base, ids[0] || '', 'notes', extraireNotes);
   const brouillon = useLectureParId(base, ids[ids.length - 1] || '', 'brouillon', extraireBrouillon);
 
@@ -610,6 +724,17 @@ export default function MessagesRelancesSection({ API, actif }) {
           <div style={{ fontSize: '11px', color: DOUX }}>
             Lecture seule{campagne ? <> · <strong style={{ color: TEXTE }}>{nomCampagne(campagne.campaign)}</strong></> : null}
           </div>
+          {/* V647 — L'ÉTAT DE LA CAMPAGNE, EN FRANÇAIS. « preparee » affiché tel
+              quel laissait croire que tout était prêt à partir. */}
+          {campagne && (
+            <div data-testid="mr-etat-campagne" style={{ fontSize: '10.5px', color: DOUX, marginTop: '1px' }}>
+              <strong style={{ color: avantEnvoi ? AMBRE : TEXTE }}>
+                {etatCampagneLisible(campagne.campaign).titre}
+              </strong>
+              {etatCampagneLisible(campagne.campaign).detail
+                ? ` — ${etatCampagneLisible(campagne.campaign).detail}` : ''}
+            </div>
+          )}
         </div>
         <span data-testid="mr-interrupteurs" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10.5px',
           padding: '3px 8px', borderRadius: '999px', border: `1px solid ${BORD}`, color: DOUX }}>
@@ -626,7 +751,7 @@ export default function MessagesRelancesSection({ API, actif }) {
           style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`, borderRadius: '6px', padding: '5px 6px', fontSize: '12px', maxWidth: '280px' }}>
           {campagnes.map((c) => (
             <option key={c.campaign.id} value={c.campaign.id}>
-              {nomCampagne(c.campaign)}{c.campaign.etat ? ` — ${c.campaign.etat}` : ''}
+              {nomCampagne(c.campaign)} — {etatCampagneLisible(c.campaign).titre.toLowerCase()}
             </option>
           ))}
         </select>
@@ -655,7 +780,7 @@ export default function MessagesRelancesSection({ API, actif }) {
             <span style={{ fontSize: '11px', fontWeight: 700 }}>Avant envoi</span>
             <span style={{ fontSize: '10.5px', color: DOUX }}>
               {enChargement ? '…' : compteurs.brouillons > 0
-                ? `${compteurs.brouillons} message${compteurs.brouillons > 1 ? 's' : ''} à compléter avant d'approuver`
+                ? `${compteurs.brouillons} message${compteurs.brouillons > 1 ? 's' : ''} à compléter avant d’approuver`
                 : 'aucun brouillon — campagne non approuvée, rien ne peut partir'}
             </span>
           </div>
@@ -681,12 +806,79 @@ export default function MessagesRelancesSection({ API, actif }) {
             style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px 6px 28px', borderRadius: '8px', fontSize: '12px',
               background: 'rgba(255,255,255,0.04)', color: TEXTE, border: `1px solid ${BORD}`, outline: 'none' }} />
         </div>
-        <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
-          {FILTRES.map((f) => <Puce key={f.id} testid={`mr-filtre-${f.id}`} actif={filtre === f.id} onClick={() => setFiltre(f.id)}>{f.libelle}</Puce>)}
+        {/* ─── V647 : LES HUIT FILTRES RAPIDES ───
+            Une seule rangée, les questions que le coach se pose vraiment. Les
+            compteurs viennent des données réelles (`compteursRelances`), aucun
+            statut n'est inventé. */}
+        <div data-testid="mr-rapides" style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
+          {FILTRES_RAPIDES.map((f) => {
+            const n = { tous: compteurs.total, brouillons: compteurs.brouillons, a_relire: compteurs.aRelire,
+              prets: compteurs.prets, derniers_envois: compteurs.derniersEnvois,
+              en_attente_reponse: compteurs.enAttenteReponse, a_relancer: compteurs.aRelancer,
+              bloques: compteurs.bloquesErreurs }[f.id];
+            return (
+              <Puce key={f.id} testid={`mr-rapide-${f.id}`} actif={filtre === f.id} onClick={() => setFiltre(f.id)}>
+                {f.libelle}{enChargement ? '' : ` ${n || 0}`}
+              </Puce>
+            );
+          })}
         </div>
-        <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
-          {FILTRES_CANAL.map((c) => <Puce key={c.id} testid={`mr-canal-${c.id}`} actif={canal === c.id} onClick={() => setCanal(c.id)}>{c.libelle}</Puce>)}
-        </div>
+
+        {/* ─── V647 : FILTRES AVANCÉS, REPLIÉS PAR DÉFAUT ───
+            Tri, période, et les filtres détaillés d'avant V647 — tous conservés,
+            simplement rangés pour que la page reste courte (règle « épuré »). */}
+        <details data-testid="mr-avances">
+          <summary style={{ cursor: 'pointer', listStyle: 'none', fontSize: '11px', color: DOUX,
+            display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <SvgIcon name="settings" size={11} />
+            Tri et filtres avancés
+            {(tri !== 'priorite' || periode !== 'tout' || canal !== 'tous') && (
+              <span style={{ color: PRIMAIRE_LISIBLE, fontWeight: 700 }}>· actifs</span>
+            )}
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '6px' }}>
+            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '10px', color: DOUX, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                Trier par
+                <select data-testid="mr-tri" value={tri} onChange={(e) => setTri(e.target.value)}
+                  style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`,
+                    borderRadius: '6px', padding: '4px 6px', fontSize: '11.5px' }}>
+                  {TRIS.map((t) => <option key={t.id} value={t.id}>{t.libelle}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '10px', color: DOUX, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                Période (dernière activité)
+                <select data-testid="mr-periode" value={periode} onChange={(e) => setPeriode(e.target.value)}
+                  style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`,
+                    borderRadius: '6px', padding: '4px 6px', fontSize: '11.5px' }}>
+                  {PERIODES.map((x) => <option key={x.id} value={x.id}>{x.libelle}</option>)}
+                </select>
+              </label>
+              {periode === 'perso' && (
+                <>
+                  <label style={{ fontSize: '10px', color: DOUX, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    Du
+                    <input type="date" data-testid="mr-debut" value={debut} onChange={(e) => setDebut(e.target.value)}
+                      style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`,
+                        borderRadius: '6px', padding: '3px 5px', fontSize: '11.5px' }} />
+                  </label>
+                  <label style={{ fontSize: '10px', color: DOUX, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    Au
+                    <input type="date" data-testid="mr-fin" value={fin} onChange={(e) => setFin(e.target.value)}
+                      style={{ background: 'rgba(0,0,0,0.35)', color: TEXTE, border: `1px solid ${BORD}`,
+                        borderRadius: '6px', padding: '3px 5px', fontSize: '11.5px' }} />
+                  </label>
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
+              {FILTRES.map((f) => <Puce key={f.id} testid={`mr-filtre-${f.id}`} actif={filtre === f.id} onClick={() => setFiltre(f.id)}>{f.libelle}</Puce>)}
+            </div>
+            <div style={{ display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '1px' }}>
+              {FILTRES_CANAL.map((c) => <Puce key={c.id} testid={`mr-canal-${c.id}`} actif={canal === c.id} onClick={() => setCanal(c.id)}>{c.libelle}</Puce>)}
+            </div>
+          </div>
+        </details>
       </div>
 
       {!enChargement && compteurs.reponsesAttendues > 0 && (
@@ -713,10 +905,15 @@ export default function MessagesRelancesSection({ API, actif }) {
             <ul data-testid="mr-liste" style={{ listStyle: 'none', margin: 0, padding: '4px', flex: 1,
               overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {visibles.map((l) => (
-                <Carte key={l.id} l={l} maintenant={maintenant} active={ouverteId === l.id} onOuvrir={() => setOuverteId(l.id)} />
+                <Carte key={l.id} l={l} maintenant={maintenant} active={ouverteId === l.id}
+                  onOuvrir={() => setOuverteId(l.id)} campagne={campagne ? campagne.campaign : null} />
               ))}
               {!enChargement && visibles.length === 0 && (
-                <li style={{ fontSize: '12px', color: DOUX, padding: '16px 12px', textAlign: 'center' }}>Aucun destinataire ne correspond.</li>
+                <li data-testid="mr-vide" style={{ fontSize: '12px', color: DOUX, padding: '16px 12px', textAlign: 'center' }}>
+                  {filtre === 'derniers_envois'
+                    ? 'Aucun message envoyé pour cette sélection.'
+                    : 'Aucun destinataire ne correspond.'}
+                </li>
               )}
             </ul>
           </div>
@@ -727,7 +924,7 @@ export default function MessagesRelancesSection({ API, actif }) {
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             {ligneOuverte ? (
               <PanneauDetail l={ligneOuverte} maintenant={maintenant} notes={notes.valeur} notesEnCours={notes.enCours}
-                brouillon={brouillon.valeur} onFermer={fermer} mobile={mobile} />
+                brouillon={brouillon.valeur} onFermer={fermer} mobile={mobile} apercu={apercu} />
             ) : (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: DOUX, fontSize: '13px' }}>
                 <div style={{ textAlign: 'center' }}>

@@ -99,6 +99,7 @@ function serveur(url) {
       reponse_proposee: 'Merci pour votre retour, au plaisir !', updated_at: '2026-09-08T09:00:00Z' } };
   }
   if (/\/brouillon$/.test(url)) return { brouillon: null };
+  if (/\/apercu$/.test(url)) return { objet: 'Objet', destinataire: 'x@y.ch', canal: 'email', html_email: '<p>Aperçu</p>', texte: 'Texte', media: null, envoye_le: null, statut: 'pret' };   // V647
   throw new Error(`URL inattendue ${url}`);
 }
 

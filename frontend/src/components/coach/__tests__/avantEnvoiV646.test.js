@@ -66,6 +66,7 @@ function serveur(url) {
   if (url === '/api/partner-prospects') return { total: 0, prospects: [] };
   if (url === '/api/feature-flags') return { P3_RELANCE_ENABLED: false, P3_RELANCE_ENVOI_REEL: false };
   if (/\/(notes|brouillon)$/.test(url)) return { notes: [], brouillon: null };
+  if (/\/apercu$/.test(url)) return { objet: 'Une expérience originale pour vos équipes', destinataire: 'hello@costaud.ch', canal: 'email', texte: 'Bonjour,', media: { titre: 'AFROBOOST CORPORATE 16x9' }, html_email: '<p>Aperçu de l’e-mail</p>', envoye_le: null, statut: 'pret' };   // V647
   throw new Error(`URL inattendue ${url}`);
 }
 

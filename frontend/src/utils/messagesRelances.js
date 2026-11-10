@@ -435,6 +435,7 @@ export function compteursRelances(lignes) {
     stoppes: n((l) => ETATS_STOP.includes(l.etat)),
     manuel: n((l) => l.etat === ETATS.MANUEL),
     ...compteursPreparation(L),   // V646 : brouillons / aRelire / prets / bloques / envoyes
+    ...compteursRapides(L),       // V647 : derniersEnvois / enAttenteReponse / aRelancer / …
   };
 }
 
@@ -458,7 +459,12 @@ export function filtrerRelances(lignes, filtre, canal, recherche) {
       case 'brouillons': return !!l.preparation && l.preparation.code === PREPARATIONS.BROUILLON;
       case 'a_relire': return !!l.preparation && l.preparation.code === PREPARATIONS.A_RELIRE;
       case 'prets': return !!l.preparation && l.preparation.code === PREPARATIONS.PRET;
-      case 'bloques': return !!l.preparation && l.preparation.code === PREPARATIONS.BLOQUE;
+      /* V647 : « Bloqués / erreurs » — une impasse AVANT l'envoi ou un envoi
+         qui a échoué. Les deux demandent la même chose au coach : une décision. */
+      case 'bloques': return bloqueOuEnEchec(l);
+      case 'derniers_envois': return !!dateEnvoi(l);
+      case 'en_attente_reponse': return enAttenteDeReponse(l);
+      case 'a_relancer': return aRelancer(l);
       default: return true;
     }
   });
@@ -721,4 +727,260 @@ export function compteursPreparation(lignes) {
 export function campagneAvantEnvoi(campagne) {
   const e = texte((campagne || {}).etat);
   return !!e && !ETATS_CAMPAGNE_APPROUVEE.includes(e);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V647 — RETROUVER UN MESSAGE : CHRONOLOGIE, PÉRIODE, FILTRES RAPIDES
+
+   LE MANQUE. L'écran savait trier par PRIORITÉ (ce qui demande l'attention)
+   mais pas par DATE. « Qu'est-ce que je viens d'envoyer ? », « qu'ai-je
+   préparé hier ? », « qui attend une réponse depuis dix jours ? » n'avaient
+   aucune réponse directe.
+
+   TROIS DATES, TROIS SENS, JAMAIS CONFONDUES — c'est la règle de ce bloc :
+     · `dateEnvoi`        = `sent_at` de l'action. RIEN D'AUTRE. Une action
+       préparée, approuvée ou programmée n'a pas de date d'envoi, et on
+       n'affiche pas `updated_at` à sa place : ce serait annoncer un envoi qui
+       n'a pas eu lieu.
+     · `dateCreation`     = `created_at` (quand la campagne a été préparée).
+     · `dateModification` = `updated_at` (quand le texte a bougé).
+   `dateActivite` est le dernier fait RÉEL, quel qu'il soit — envoi, relance,
+   réponse reçue, réponse envoyée, ou à défaut la modification. C'est le tri
+   par défaut, et son libellé dit « dernière activité », pas « envoi ».
+
+   LE FUSEAU EST EXPLICITE. Les dates sont stockées en UTC ; le coach vit à
+   Neuchâtel. `dateHeureZurich` affiche Europe/Zurich, heure d'été comprise,
+   plutôt que l'heure du navigateur — un portable resté sur un autre fuseau
+   afficherait sinon des heures d'envoi fausses.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export const TRIS = [
+  /* LE DÉFAUT RESTE LA PRIORITÉ, et ce n'est pas un oubli. L'ordre « ce qui
+     demande l'attention d'abord » est le comportement de l'écran depuis V588b,
+     documenté par un test ; le remplacer en silence par une chronologie
+     changerait l'écran sous les yeux du coach. Les six tris par date sont donc
+     des CHOIX explicites, « dernière activité » en tête. */
+  { id: 'priorite', libelle: 'Priorité — ce qui demande une action' },
+  { id: 'activite', libelle: 'Dernière activité — plus récente' },
+  { id: 'envoi_desc', libelle: 'Date d’envoi — plus récent' },
+  { id: 'envoi_asc', libelle: 'Date d’envoi — plus ancien' },
+  { id: 'creation_desc', libelle: 'Date de création — plus récent' },
+  { id: 'creation_asc', libelle: 'Date de création — plus ancien' },
+  { id: 'modif_desc', libelle: 'Dernière modification' },
+];
+
+export const PERIODES = [
+  { id: 'tout', libelle: 'Toutes les dates' },
+  { id: 'aujourdhui', libelle: 'Aujourd’hui' },
+  { id: '7j', libelle: '7 derniers jours' },
+  { id: '30j', libelle: '30 derniers jours' },
+  { id: 'perso', libelle: 'Période personnalisée' },
+];
+
+/* Les huit filtres que le coach voit en premier. Ils ne créent AUCUN statut :
+   chacun est un prédicat sur les faits déjà calculés plus haut. */
+export const FILTRES_RAPIDES = [
+  { id: 'tous', libelle: 'Tous' },
+  { id: 'brouillons', libelle: 'Brouillons' },
+  { id: 'a_relire', libelle: 'À relire' },
+  { id: 'prets', libelle: 'Prêts' },
+  { id: 'derniers_envois', libelle: 'Derniers envois' },
+  { id: 'en_attente_reponse', libelle: 'En attente de réponse' },
+  { id: 'a_relancer', libelle: 'À relancer' },
+  { id: 'bloques', libelle: 'Bloqués / erreurs' },
+];
+
+/* V647 — L'ÉTAT D'UNE CAMPAGNE, EN FRANÇAIS. `preparee` est un mot de code :
+   affiché tel quel, il laisse croire que « c'est prêt, donc c'est parti ». Ce
+   qu'il veut dire doit être écrit — préparée, NON approuvée, NON démarrée, et
+   donc rien ne peut partir. Une campagne préparée ne vaut PAS validation
+   individuelle de chaque message : c'est à cela que sert « Avant envoi ». */
+export const ETATS_CAMPAGNE_LISIBLES = {
+  brouillon: { titre: 'Campagne en brouillon',
+    detail: 'non approuvée, non démarrée — aucun message ne peut partir' },
+  preparee: { titre: 'Campagne préparée',
+    detail: 'non approuvée, non démarrée — aucun message ne peut partir' },
+  approuvee: { titre: 'Campagne approuvée',
+    detail: 'non démarrée — l’envoi reste soumis aux interrupteurs de lancement' },
+  en_cours: { titre: 'Campagne en cours', detail: 'des envois ont commencé' },
+  terminee: { titre: 'Campagne terminée', detail: 'plus aucun envoi attendu' },
+  annulee: { titre: 'Campagne annulée', detail: 'aucun envoi' },
+};
+
+/** `{ titre, detail }` lisible pour l'état d'une campagne. Jamais le code brut. */
+export function etatCampagneLisible(campagne) {
+  const e = texte((campagne || {}).etat);
+  return ETATS_CAMPAGNE_LISIBLES[e] || { titre: e ? `État « ${e} »` : 'État inconnu', detail: '' };
+}
+
+export const FUSEAU = 'Europe/Zurich';
+
+/** « 10/11/2026 à 04:52 » en heure de Neuchâtel. '—' si la date est absente. */
+export function dateHeureZurich(iso) {
+  const t = instant(iso);
+  if (!Number.isFinite(t)) return '—';
+  /* Date et heure formatées SÉPARÉMENT, puis jointes par « à ». `toLocaleString`
+     place un séparateur qui dépend de la locale et de la version d'ICU (« , »
+     sur certaines, une espace sur d'autres) : le recoller à la main donnerait
+     un affichage différent d'un navigateur à l'autre. */
+  try {
+    const d = new Date(t);
+    const jour = d.toLocaleDateString('fr-CH', {
+      timeZone: FUSEAU, day: '2-digit', month: '2-digit', year: 'numeric' });
+    const heure = d.toLocaleTimeString('fr-CH', {
+      timeZone: FUSEAU, hour: '2-digit', minute: '2-digit' });
+    return `${jour} à ${heure}`;
+  } catch (e) {
+    return dateCourte(iso);
+  }
+}
+
+/** La date d'envoi RÉELLE, ou `null`. Jamais `updated_at`. */
+export function dateEnvoi(ligne) {
+  return ((ligne || {}).action || {}).sent_at || null;
+}
+
+export function dateCreation(ligne) {
+  return ((ligne || {}).action || {}).created_at || null;
+}
+
+export function dateModification(ligne) {
+  const a = (ligne || {}).action || {};
+  return a.updated_at || a.created_at || null;
+}
+
+/** Le dernier fait réel : envoi, relance, réponse reçue ou envoyée, défaut = modification. */
+export function dateActivite(ligne) {
+  const l = ligne || {};
+  const a = l.action || {};
+  const candidats = [a.sent_at, a.j3_sent_at, a.j7_sent_at, a.j14_sent_at,
+    l.dernierMessageLe, l.derniereReponseAfroboostLe, a.updated_at, a.created_at];
+  const ts = candidats.map(instant).filter(Number.isFinite);
+  return ts.length ? new Date(Math.max(...ts)).toISOString() : null;
+}
+
+/** Envoyé il y a moins de 24 h — le repère visuel discret de la liste. */
+export function envoyeRecemment(ligne, maintenant, heures) {
+  const t = instant(dateEnvoi(ligne));
+  if (!Number.isFinite(t)) return false;
+  const n = Number.isFinite(maintenant) ? maintenant : Date.now();
+  return n - t <= (heures || 24) * 3600000;
+}
+
+const DATE_DE_TRI = {
+  activite: dateActivite, envoi_desc: dateEnvoi, envoi_asc: dateEnvoi,
+  creation_desc: dateCreation, creation_asc: dateCreation, modif_desc: dateModification,
+};
+
+/**
+ * Trie par date. Les lignes SANS la date demandée vont toujours À LA FIN, dans
+ * les deux sens : un message jamais envoyé n'a pas sa place en tête d'un
+ * classement par date d'envoi, ni au début ni à la fin selon l'humeur du tri.
+ * À date égale, l'ordre de priorité d'avant V647 tranche — jamais le hasard.
+ */
+export function trierPar(lignes, tri) {
+  const lire = DATE_DE_TRI[tri];
+  if (!lire) return trierRelances(lignes);
+  const croissant = tri === 'envoi_asc' || tri === 'creation_asc';
+  return [...(lignes || [])].sort((x, y) => {
+    const tx = instant(lire(x));
+    const ty = instant(lire(y));
+    const bx = Number.isFinite(tx);
+    const by = Number.isFinite(ty);
+    if (bx !== by) return bx ? -1 : 1;          // sans date : toujours en fin
+    if (bx && tx !== ty) return croissant ? tx - ty : ty - tx;
+    const p = prioriteRelance(x) - prioriteRelance(y);
+    return p || x.organisation.localeCompare(y.organisation, 'fr');
+  });
+}
+
+const JOUR = 86400000;
+
+/** Le début du jour courant, en heure de Neuchâtel, rendu en ms. */
+function debutDuJourZurich(maintenant) {
+  const n = Number.isFinite(maintenant) ? maintenant : Date.now();
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: FUSEAU, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).formatToParts(new Date(n)).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+    const secondesDepuisMinuit = (Number(parts.hour) % 24) * 3600
+      + Number(parts.minute) * 60 + Number(parts.second);
+    return n - secondesDepuisMinuit * 1000;
+  } catch (e) {
+    return n - (n % JOUR);
+  }
+}
+
+/**
+ * La ligne entre-t-elle dans la période ? La date de référence est la DERNIÈRE
+ * ACTIVITÉ — une seule, pour que le filtre garde un sens quel que soit le tri
+ * choisi. `debut` / `fin` sont des `YYYY-MM-DD` (le format d'un `input date`) ;
+ * `fin` est inclusive, journée entière.
+ */
+export function dansPeriode(ligne, periode, debut, fin, maintenant) {
+  const p = periode || 'tout';
+  if (p === 'tout') return true;
+  const t = instant(dateActivite(ligne));
+  if (!Number.isFinite(t)) return false;
+  const n = Number.isFinite(maintenant) ? maintenant : Date.now();
+  if (p === 'aujourdhui') return t >= debutDuJourZurich(n);
+  if (p === '7j') return t >= n - 7 * JOUR;
+  if (p === '30j') return t >= n - 30 * JOUR;
+  if (p === 'perso') {
+    const d = debut ? Date.parse(`${debut}T00:00:00`) : NaN;
+    const f = fin ? Date.parse(`${fin}T23:59:59.999`) : NaN;
+    if (Number.isFinite(d) && t < d) return false;
+    if (Number.isFinite(f) && t > f) return false;
+    return Number.isFinite(d) || Number.isFinite(f);
+  }
+  return true;
+}
+
+/** Envoyé, sans réponse, et rien ne l'a arrêté.
+    UN ENVOI EN ÉCHEC N'ATTEND RIEN. Un `provider_status: failed` ou un rebond
+    permanent veut dire que le message n'est jamais arrivé : le compter parmi
+    les réponses attendues ferait patienter le coach pour un e-mail que
+    personne n'a reçu. Ces cas vivent dans « Bloqués / erreurs ». */
+export function enAttenteDeReponse(ligne) {
+  const l = ligne || {};
+  if (!dateEnvoi(l)) return false;
+  if (l.etat === ETATS.REPONDU || l.etat === ETATS.REFUS) return false;
+  if (l.etat === ETATS.REBOND || l.etat === ETATS.STOPPE) return false;
+  return !bloqueOuEnEchec(l);
+}
+
+/** Une relance est DUE et n'est pas partie. */
+export function aRelancer(ligne) {
+  const l = ligne || {};
+  return (l.j3 && l.j3.etat === ETATS.EN_RETARD) || (l.j7 && l.j7.etat === ETATS.EN_RETARD);
+}
+
+/** Bloqué avant l'envoi, OU un envoi qui a échoué (les deux sont des impasses). */
+export function bloqueOuEnEchec(ligne) {
+  const l = ligne || {};
+  if (l.preparation && l.preparation.code === PREPARATIONS.BLOQUE) return true;
+  const a = l.action || {};
+  if (texte(a.provider_status).toLowerCase() === 'failed') return true;
+  return texte(a.bounce_type).toLowerCase() === 'permanent';
+}
+
+/** Les compteurs des filtres rapides V647, à côté de ceux d'avant. PURE. */
+export function compteursRapides(lignes, maintenant) {
+  const L = lignes || [];
+  return {
+    derniersEnvois: L.filter((l) => !!dateEnvoi(l)).length,
+    enAttenteReponse: L.filter(enAttenteDeReponse).length,
+    aRelancer: L.filter(aRelancer).length,
+    bloquesErreurs: L.filter(bloqueOuEnEchec).length,
+    envoyes24h: L.filter((l) => envoyeRecemment(l, maintenant, 24)).length,
+  };
+}
+
+/** V647 — la chaîne complète : filtre métier, canal, recherche, PÉRIODE, puis tri. */
+export function vueRelances(lignes, options) {
+  const o = options || {};
+  const base = filtrerRelances(lignes, o.filtre, o.canal, o.recherche)
+    .filter((l) => dansPeriode(l, o.periode, o.debut, o.fin, o.maintenant));
+  return trierPar(base, o.tri);
 }
