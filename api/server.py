@@ -12594,6 +12594,37 @@ async def create_publication(request: Request):
     return {"status": "ok", "id": pub["id"], "no_expiry": _v344_permanent_applique}
 
 
+def v646_ordonner_vitrine(pubs: list) -> list:
+    """V646 — « A LA UNE » DEVANT, PUIS LA DATE. Fonction PURE.
+
+    `a_la_une` NE VAUT QUE SUR LA VITRINE DU PROPRIETAIRE. C'est la correction
+    d'un defaut de conception de la premiere version de V646, trouve par la
+    revue de securite : le tri se faisait en base sur le seul champ
+    `a_la_une`, sans regarder A QUI la publication appartient.
+
+    LE SCENARIO EXACT QUE CE CODE FERME. Une vitrine affiche DEUX choses
+    (V342) : ses propres publications, et celles qu'un auteur EXTERIEUR y a
+    BOOSTEES contre paiement. Un coach partenaire pouvait donc marquer sa
+    propre publication « a la une » — c'est son droit, c'est la sienne — puis
+    acheter un Boost vers la vitrine d'un autre coach ou vers `home`
+    (l'accueil afroboost.com) et s'y installer EN PREMIERE POSITION pendant
+    48 h. Le Boost est pourtant vendu comme une PRESENCE, jamais comme une
+    priorite : personne n'avait consenti a ceder le haut de sa page.
+
+    LA REGLE : une publication BOOSTEE ici est, par definition, etrangere a
+    cette vitrine (`boosted` est calcule juste avant l'appel et vaut vrai
+    seulement quand `coach_id != target`). Son `a_la_une` est donc IGNORE ;
+    il reprend tout son effet sur la vitrine de son propre auteur.
+
+    DEUX TRIS STABLES plutot qu'une cle composite : la date decroissante
+    d'abord, le groupe ensuite. L'ordre a l'interieur de chaque groupe est
+    ainsi garanti par le code, et non herite de celui que la base a rendu.
+    """
+    ordonne = sorted(pubs or [], key=lambda p: (p.get("created_at") or ""), reverse=True)
+    ordonne.sort(key=lambda p: 0 if (p.get("a_la_une") and not p.get("boosted")) else 1)
+    return ordonne
+
+
 @api_router.get("/publications")
 async def list_publications(coach_id: str = ""):
     """V261 / V272b: mur PUBLIC d'UNE vitrine — isole par coach.
@@ -12643,12 +12674,12 @@ async def list_publications(coach_id: str = ""):
     pubs = await db.publications.find(
         query,
         {"_id": 0, "subscriber_code": 0, "cloudinary_public_id": 0, "thumbnail_public_id": 0}
-    # V646 — « A LA UNE » PASSE DEVANT, puis la date comme avant. Le tri est fait
-    # par la BASE et non apres coup : la liste est coupee a 50, une publication
-    # mise en avant mais ancienne doit survivre a cette coupe. Les documents sans
-    # le champ (tout l'historique) trient exactement comme avant (`null` apres
-    # `true`). SEULE la vitrine publique est reordonnee : `/publications/mine`,
-    # la liste d'edition du coach, reste en ordre chronologique.
+    # V646 — CE TRI NE DECIDE PAS DE L'ORDRE AFFICHE, seulement de QUELLES 50
+    # publications sont lues : une publication mise en avant mais ancienne doit
+    # survivre a la coupe. L'ordre rendu est celui de `v646_ordonner_vitrine`
+    # ci-dessous, qui ne peut etre calcule qu'APRES `boosted` (il faut savoir si
+    # la publication appartient a cette vitrine). Les documents sans le champ
+    # (tout l'historique) trient comme avant : `null` apres `true`.
     ).sort([("a_la_une", -1), ("created_at", -1)]).to_list(50)
     for p in pubs:
         try:
@@ -12668,7 +12699,8 @@ async def list_publications(coach_id: str = ""):
         )
         for champ in ("boost_payer", "boost_payee", "boost_payment_id", "boost_amount_chf"):
             p.pop(champ, None)
-    return pubs
+    # V646 : l'ordre definitif, une fois `boosted` connu pour chaque publication.
+    return v646_ordonner_vitrine(pubs)
 
 
 @api_router.get("/publications/mine")
