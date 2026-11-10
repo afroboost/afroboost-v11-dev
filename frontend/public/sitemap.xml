@@ -43,4 +43,22 @@
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
+  <!--
+    SEO-6 (10/11/2026) — « Boutique ». Elle entre ici MAINTENANT et pas avant,
+    parce que les trois conditions sont enfin réunies : c'est une vraie route
+    du frontend, elle a son propre contenu, et depuis SEO-6 elle sert son
+    propre titre, sa propre description et son propre `canonical` dès le
+    chargement direct de l'adresse. Tant que son `canonical` désignait
+    l'accueil, l'inscrire ici aurait été se contredire.
+
+    `/offres` N'Y EST PAS, ET CE N'EST PAS UN OUBLI : ce chemin n'existe pas.
+    Les formules s'ouvrent par `/?offres=toutes`, un paramètre sur l'accueil —
+    une vue filtrée de l'accueil n'est pas une page, et son `canonical` pointe
+    à juste titre vers « / ».
+  -->
+  <url>
+    <loc>https://afroboost.com/boutique</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
 </urlset>

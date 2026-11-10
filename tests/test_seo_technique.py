@@ -207,7 +207,9 @@ v("SEO-4 : aucune adresse fixe du sitemap de l'API n'est privée ni inventée",
                      # ecrite par le serveur en amont du catch-all, lisible sans
                      # JavaScript. Elle « se presente elle-meme » : elle a sa
                      # place ici. Aucune vue React n'en a le droit.
-                     "/confidentialite"}, _locs_api)
+                     "/confidentialite",
+                     # SEO-6 : la boutique sert desormais son propre en-tete.
+                     "/boutique"}, _locs_api)
 # Les ancres historiques ne sont PAS touchées : ce sont des liens vers
 # l'accueil, pas des adresses indexables.
 v("SEO-4 : les liens legacy `/#devenir-coach` restent en place (rien n'est cassé côté produit)",
@@ -280,6 +282,39 @@ for _ko in ("/cours-de-salsa-a-geneve", "/xyzabc123", "/blog", "/devenir-coach",
             "/offres", "/partenaires", "/contact", "/mentions-legales", "/cgv",
             "/wp-admin", "/index.php", "/zumba-neuchatel"):
     v("SEO-5 : `%s` n'existe pas -> 404" % _ko, not _connue(_ko))
+
+# ── 6 ter. SEO-6 : une page publique sert SON en-tête ──────────────────────
+# AVANT, `/boutique` servait l'en-tete de l'accueil au chargement direct :
+# meme titre, meme description, et `canonical` vers « / ». Elle declarait donc
+# elle-meme que sa vraie adresse etait l'accueil, et aucun titre pose ensuite
+# par React ne pouvait contredire cette declaration.
+_sec6 = re.search(r"    _SEO6_PAGES = \{(.*?)\n    \}", SRC, re.S)
+v("SEO-6 : la table des en-têtes existe", bool(_sec6))
+_t6 = _sec6.group(1) if _sec6 else ""
+v("SEO-6 : la boutique y figure", '"boutique"' in _t6)
+v("SEO-6 : elle a son titre, sa description et son chemin",
+  '"titre"' in _t6 and '"desc"' in _t6 and '"chemin": "/boutique"' in _t6)
+# `/offres` N'EST PAS UNE ROUTE : rien dans le frontend ne lit ce chemin, les
+# formules s'ouvrent par `/?offres=toutes`. L'inscrire ici reviendrait a
+# inventer une page — exactement l'erreur de SEO-4.
+v("SEO-6 : `/offres` n'est PAS traitée comme une page (ce chemin n'existe pas)",
+  '"offres"' not in _t6)
+v("SEO-6 : l'en-tête est posé APRÈS les chemins privés et AVANT le bloc d'accueil",
+  _catch.index("_seo_est_prive(full_path)") < _catch.index("_seo6_page(full_path)")
+  < _catch.index("_seo_geo_accueil(_index)"))
+v("SEO-6 : une panne de réécriture ne casse pas la boutique",
+  "except Exception as _e6" in _catch)
+# Les huit balises doivent bouger ensemble : un `canonical` corrige avec un
+# `og:url` reste de l'accueil enverrait deux signaux contradictoires.
+_fn6 = re.search(r"def _seo6_index_page.*?return _html", SRC, re.S)
+_c6 = _fn6.group(0) if _fn6 else ""
+for _b in ("<title>", "description", "og:title", "og:description", "og:url",
+           "twitter:title", "twitter:description", "canonical"):
+    v("SEO-6 : `%s` est réécrit" % _b, _b in _c6)
+v("SEO-6 : remplacement par MOTIF, jamais par égalité de chaîne (leçon SEO-1)",
+  "_re.sub(" in _c6 and "flags=_re.I" in _c6)
+v("SEO-6 : la boutique est bien une racine servie (jamais 404)", _connue("/boutique"))
+v("SEO-6 : `/offres` reste un 404 — ce chemin n'existe pas", not _connue("/offres"))
 
 # ── 7. Les données structurées de l'accueil ────────────────────────────────
 _ld = re.findall(r'application/ld\+json">(.*?)</script>', INDEX, re.S)

@@ -22681,6 +22681,11 @@ async def get_sitemap():
         # JavaScript, `index, follow`. Les DEUX sitemaps doivent dire la même
         # chose — c'est la règle posée par SEO-GEO et vérifiée par les bancs.
         f'  <url><loc>{base_url}/confidentialite</loc><lastmod>{now}</lastmod><priority>0.3</priority></url>',
+        # SEO-6 (10/11/2026) — « Boutique » : vraie route du frontend, contenu
+        # propre, et depuis SEO-6 elle sert son propre titre et son propre
+        # `canonical` dès le chargement direct. `/offres` n'y figure pas : ce
+        # chemin n'existe pas (les formules sont `/?offres=toutes`).
+        f'  <url><loc>{base_url}/boutique</loc><lastmod>{now}</lastmod><priority>0.5</priority></url>',
     ]
 
     # Ajouter toutes les vitrines de coachs actifs
@@ -60919,6 +60924,74 @@ if _os.path.isdir(_STATIC_DIR):
         _c = "/" + str(chemin or "").strip().strip("/")
         return any(_c == _p or _c.startswith(_p + "/") for _p in _SEO_PRIVE)
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # SEO-6 — UNE PAGE QUI EXISTE DOIT DIRE SON PROPRE NOM
+    #
+    # CONSTAT. `/boutique` est une VRAIE route du frontend
+    # (`boutiqueRoute.js` : `^/boutique(?:/([^/]+))?/?$`) et affiche un contenu
+    # qui lui est propre. Mais au chargement direct de l'adresse, elle sert
+    # l'en-tete de l'accueil : meme titre, meme description, et surtout
+    # `canonical` vers « / ». Elle declarait donc elle-meme que sa vraie
+    # adresse est l'accueil — Google l'y consolide, et aucun contenu rendu
+    # ensuite par JavaScript ne peut contredire cette declaration.
+    #
+    # POURQUOI COTE SERVEUR. Le titre pose par React arrive APRES le rendu.
+    # Pour qu'un moteur lise la bonne identite au chargement direct de l'URL,
+    # elle doit etre dans le HTML servi. On reecrit donc l'en-tete ici, comme
+    # SEO-1 le fait deja pour les pages privees — meme fichier, meme
+    # application, aucun changement pour le visiteur.
+    _SEO6_PAGES = {
+        "boutique": {
+            "titre": "Boutique Afroboost — vêtements et accessoires",
+            "desc": ("Vêtements et accessoires Afroboost. Commande en ligne, "
+                     "retrait au cours à Neuchâtel."),
+            "chemin": "/boutique",
+        },
+    }
+
+    def _seo6_page(chemin: str):
+        """La fiche d'en-tete de cette page, ou None.
+
+        Une sous-adresse (`/boutique/<produit>`) herite du meme en-tete : son
+        `canonical` designe alors la boutique, ce qui est le comportement voulu
+        — un produit se consolide sur la liste qui le porte. Aller plus loin
+        demanderait de lire la base DANS le catch-all, ce qui mettrait une
+        dependance Mongo sur le chemin le plus chaud du site.
+        """
+        _seg = str(chemin or "").strip("/").split("/")[0].split("?")[0].split("#")[0]
+        return _SEO6_PAGES.get(_seg.lower())
+
+    def _seo6_index_page(fichier: str, fiche: dict) -> str:
+        """`index.html` avec le titre, la description et le `canonical` de CETTE
+        page. Remplacement par MOTIF et non par egalite de chaine : le build CRA
+        reecrit le HTML (les espaces avant `/>` disparaissent) — une comparaison
+        exacte echouait en silence, c'est la lecon de SEO-1."""
+        import re as _re
+        with open(fichier, "r", encoding="utf-8") as _f:
+            _html = _f.read()
+        _t = fiche["titre"]
+        _d = fiche["desc"]
+        _u = _M1_SITE.rstrip("/") + fiche["chemin"]
+        for _motif, _remplacement in (
+                (r"<title>.*?</title>", "<title>%s</title>" % _t),
+                (r'<meta\s+name=["\']description["\'][^>]*>',
+                 '<meta name="description" content="%s"/>' % _d),
+                (r'<meta\s+property=["\']og:title["\'][^>]*>',
+                 '<meta property="og:title" content="%s"/>' % _t),
+                (r'<meta\s+property=["\']og:description["\'][^>]*>',
+                 '<meta property="og:description" content="%s"/>' % _d),
+                (r'<meta\s+property=["\']og:url["\'][^>]*>',
+                 '<meta property="og:url" content="%s"/>' % _u),
+                (r'<meta\s+name=["\']twitter:title["\'][^>]*>',
+                 '<meta name="twitter:title" content="%s"/>' % _t),
+                (r'<meta\s+name=["\']twitter:description["\'][^>]*>',
+                 '<meta name="twitter:description" content="%s"/>' % _d),
+                (r'<link\s+rel=["\']canonical["\'][^>]*>',
+                 '<link rel="canonical" href="%s"/>' % _u)):
+            _html = _re.sub(_motif, _remplacement, _html, count=1,
+                            flags=_re.I | _re.S)
+        return _html
+
     def _seo_index_prive(fichier: str) -> str:
         """`index.html` avec `noindex` à la place de ce qu'il portait, et sans
         `canonical` (il désignait la page d'accueil : une URL privée ne
@@ -61014,6 +61087,21 @@ if _os.path.isdir(_STATIC_DIR):
                 # on sert la page telle quelle plutôt que de casser une route.
                 logger.warning("[SEO-1] noindex non posé sur %s (%s)",
                                str(full_path)[:40], type(_seo_err).__name__)
+        # SEO-6 : une page publique qui existe sert SON en-tête, pas celui de
+        # l'accueil. Placé APRÈS le test des chemins privés (une adresse ne peut
+        # pas être les deux) et AVANT le bloc de l'accueil.
+        _fiche6 = _seo6_page(full_path)
+        if _fiche6 is not None:
+            try:
+                from starlette.responses import HTMLResponse as _HTMLResponse
+                return _HTMLResponse(_seo6_index_page(_index, _fiche6),
+                                     headers=_no_cache)
+            except Exception as _e6:  # noqa: BLE001
+                # L'application passe AVANT le SEO : en cas d'échec on sert la
+                # page telle quelle plutôt que de casser la boutique.
+                logger.warning("[SEO-6] en-tête non posé sur %s (%s)",
+                               str(full_path)[:40], type(_e6).__name__)
+
         # SEO-GEO : `/` exact, sans paramètre -> le bloc de présentation visible.
         if not str(full_path or "").strip("/") and not request.url.query:
             try:
