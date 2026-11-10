@@ -534,8 +534,8 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
               margin: '8px 0 0', textAlign: 'center', fontSize: 11.5, lineHeight: 1.45,
               color: 'rgba(255,255,255,0.6)',
             }}>
-              Offre réservée à une première participation. Un seul essai gratuit par personne,
-              uniquement lors des cours récurrents.{' '}
+              Un seul essai par personne, uniquement lors des cours collectifs récurrents
+              éligibles.{' '}
               <a href="/cours-essai-gratuit-neuchatel#faq-essai"
                  style={{ color: 'inherit', textDecoration: 'underline' }}>Conditions</a>
             </p>

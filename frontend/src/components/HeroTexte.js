@@ -375,7 +375,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           className="af-hero-offre mt-2 font-semibold text-white"
           style={{ textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
         >
-          Nouveau chez Afroboost ? Essaie gratuitement un cours du mercredi ou du dimanche !
+          Nouveau chez Afroboost ? Ton premier cours est offert !
         </p>
         {/* Vrai <a> : si le JavaScript du clic echoue, la navigation se fait quand meme. */}
         <a
@@ -499,7 +499,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           className="af-hero-offre font-semibold text-white"
           style={{ fontSize: `${16 * sC}px`, lineHeight: 1.5, marginBottom: 24 * sC, textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
         >
-          Nouveau chez Afroboost ? Essaie gratuitement un cours du mercredi ou du dimanche !
+          Nouveau chez Afroboost ? Ton premier cours est offert !
         </p>
         <a
           href={HREF_ESSAI}
