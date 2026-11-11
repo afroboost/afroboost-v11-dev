@@ -6339,6 +6339,97 @@ def lotb3s1_otp_valide(doc, otp, code, maintenant=None):
     return True, "ok"
 
 
+# =========================================================================
+# V662f — DENOUER LES APPAREILS D'UNE SESSION QUI SE FERME
+# =========================================================================
+#
+# POURQUOI ICI ET PAS DANS server.py : deux deconnexions doivent faire la meme
+# chose — celle de l'espace membre (`/subscriber/session/revoke`, server.py) et
+# celle du coach (`/auth/logout`, auth_routes.py). Une seule regle, un seul
+# endroit : deux copies finiraient par divergeer, comme toujours.
+#
+# CE QU'ON RETIRE : l'adresse, l'empreinte de rotation, le drapeau de
+# verification, la preuve et son echeance. L'ABONNEMENT RESTE : l'appareil
+# continue de sonner, en NEUTRE, et redevient complet a la prochaine
+# authentification. On ne coupe personne, on ne supprime rien.
+V662F_OUBLIER = {"rotation_empreinte": "", "push_verifie": "", "email": "",
+                 "push_preuve": "", "push_verifie_le": "", "preuve_jti": "",
+                 "preuve_exp": ""}
+
+# Plafond DUR. Il n'est pas la pour limiter le travail mais pour qu'une requete
+# aberrante (filtre vide, marqueur corrompu) ne puisse jamais balayer le stock.
+V662F_PLAFOND = 500
+V662F_PAGE = 50
+
+
+async def v662f_denouer_appareils(base, marqueur, plafond=V662F_PLAFOND):
+    """(denoues, complet) — retire la verification des appareils de CETTE session.
+
+    `complet` dit la VERITE : si le plafond est atteint alors qu'il restait des
+    appareils, il vaut False et l'appelant ne doit PAS pretendre que tout a ete
+    revoque. Un rapport faux est pire qu'un travail partiel avoue.
+
+    Un par un, jamais une ecriture de masse : un marqueur vide ou corrompu ne
+    doit pas pouvoir toucher les abonnements des autres. Le marqueur est donc
+    exige non vide, et chaque document est repris par son propre endpoint.
+    """
+    _m = str(marqueur or "").strip()
+    if not _m:
+        return 0, True          # rien a denouer : c'est complet, et c'est sur
+    _faits = 0
+    while _faits < plafond:
+        try:
+            _lot = await base.push_subscriptions.find(
+                {"preuve_jti": _m}, {"_id": 0, "subscription.endpoint": 1}
+            ).to_list(V662F_PAGE)
+        except Exception:
+            return _faits, False
+        if not _lot:
+            return _faits, True          # plus rien ne porte ce marqueur
+        _avance = 0
+        for _d in _lot:
+            _ep = ((_d.get("subscription") or {}).get("endpoint") or "")
+            if not _ep:
+                continue
+            try:
+                await base.push_subscriptions.update_one(
+                    {"subscription.endpoint": _ep, "preuve_jti": _m},
+                    {"$unset": dict(V662F_OUBLIER)})
+            except Exception:
+                return _faits, False
+            _faits += 1
+            _avance += 1
+            if _faits >= plafond:
+                break
+        # GARDE ANTI-BOUCLE : si un tour n'a rien denoue (documents sans
+        # endpoint, donc jamais retires du filtre), on s'arrete en le disant
+        # plutot que de tourner indefiniment.
+        if _avance == 0:
+            return _faits, False
+    # Plafond atteint : reste-t-il des appareils ? On le VERIFIE.
+    try:
+        _reste = await base.push_subscriptions.count_documents({"preuve_jti": _m}, limit=1)
+    except Exception:
+        return _faits, False
+    return _faits, (_reste == 0)
+
+
+def v662f_marqueur_coach(jeton: str) -> str:
+    """Le marqueur de session d'un JWT coach, qui n'a PAS de `jti`.
+
+    Sa charge est `{email, role, iat, exp}` : rien d'unique a la session. On
+    derive donc le marqueur du JETON LUI-MEME. Deux consequences voulues :
+      - deux connexions differentes donnent deux `iat`, donc deux jetons, donc
+        deux marqueurs : fermer une session NE TOUCHE PAS l'autre ;
+      - on ne stocke que l'empreinte, jamais le jeton.
+    """
+    import hashlib as _h
+    _j = str(jeton or "").strip()
+    if not _j:
+        return ""
+    return "coachjwt:" + _h.sha256(("v662f:" + _j).encode()).hexdigest()[:40]
+
+
 def lotb3s1_make_token(code, email, coach_id, member_slug=None, jti=None,
                        days=LOTB3S1_JETON_JOURS):
     """Le jeton d'espace, DISTINCT de V296 — et ce qu'il porte en plus.

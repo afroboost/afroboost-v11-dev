@@ -330,6 +330,50 @@ async def logout(request: Request, response: Response):
         samesite="none"
     )
 
+    # =====================================================================
+    # V662f — LA DECONNEXION DU COACH DENOUE AUSSI SES APPAREILS
+    # =====================================================================
+    #
+    # LE DEFAUT CORRIGE ICI. V662e denouait les appareils d'un MEMBRE a la
+    # fermeture de sa session d'espace, parce que son jeton porte un `jti`. Le
+    # JWT coach, lui, n'en a pas : sa charge est `{email, role, iat, exp}`.
+    # Ses appareils restaient donc VERIFIES apres la deconnexion et
+    # continuaient de recevoir le contenu prive — nom du cours, heure, lieu.
+    #
+    # LE MARQUEUR EST DERIVE DU JETON LUI-MEME (empreinte, jamais le jeton).
+    # Deux connexions donnent deux `iat`, donc deux jetons, donc deux
+    # marqueurs : fermer une session NE TOUCHE PAS les appareils d'une autre
+    # session legitime, ni ceux d'un autre compte.
+    #
+    # POURQUOI C'EST ATTEIGNABLE EN VRAI : `handleLogout` (App.js) appelle
+    # cette route AVANT d'effacer le localStorage, et l'intercepteur axios
+    # joint encore `Authorization: Bearer <jwt>`. Verifie, pas suppose.
+    #
+    # L'ABONNEMENT RESTE : l'appareil sonne encore, en NEUTRE, et redevient
+    # complet a la prochaine connexion. Aucune suppression, aucune operation
+    # de masse — un par un, borne, et le compte rendu dit la verite.
+    try:
+        from api.routes.shared import (v662f_denouer_appareils,
+                                       v662f_marqueur_coach)
+        _auth = request.headers.get("Authorization", "") or ""
+        _tok = _auth.split(" ", 1)[1].strip() if _auth.lower().startswith("bearer ") else ""
+        _marq = v662f_marqueur_coach(_tok)
+        if _marq:
+            _n, _complet = await v662f_denouer_appareils(_db, _marq)
+            if _n or not _complet:
+                logger.info("[V662f] deconnexion coach : %d appareil(s) denoue(s), complet=%s",
+                            _n, _complet)
+            if not _complet:
+                # ON NE PRETEND PAS QUE TOUT EST FAIT. L'appelant est averti,
+                # et la trace reste pour qu'on puisse y revenir.
+                logger.warning("[V662f] denouement INCOMPLET : des appareils restent "
+                               "verifies pour cette session")
+                return {"success": True, "message": "Déconnexion réussie",
+                        "appareils_denoues": _n, "denouement_complet": False}
+    except Exception as _e662:
+        logger.warning("[V662f] appareils coach non denoues (%s) — ils resteront verifies",
+                       type(_e662).__name__)
+
     return {"success": True, "message": "Déconnexion réussie"}
 
 

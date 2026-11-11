@@ -17747,42 +17747,27 @@ async def b3s1_revoquer_session(request: Request):
     # mieux que la verifier des milliers de fois.
     try:
         # ---------------------------------------------------------------
-        # UN PAR UN, ET BORNE — JAMAIS UNE ECRITURE DE MASSE
+        # UNE SEULE REGLE, PARTAGEE AVEC LA DECONNEXION DU COACH
         # ---------------------------------------------------------------
-        # Le banc `test_push_cycle_vie_n2` (S6) interdit toute operation de
-        # masse sur `push_subscriptions`, et il a raison DEUX FOIS :
-        #   1. le stock historique ne doit jamais etre nettoye en bloc ;
-        #   2. mon propre filtre etait a une garde de la catastrophe — un
-        #      `jti` vide aurait donne `{"preuve_jti": None}`, qui matche TOUS
-        #      les documents sans ce champ, soit la totalite des abonnements.
-        # On relit donc les appareils concernes, borne a 20, et on les denoue
-        # un par un. Une session compte quelques appareils, pas des centaines.
-        # (Un second banc, `test_session_abonnee_persistante` G2, inspecte le
-        # diff et refuse jusqu'au NOM de ces operations dans une ligne ajoutee :
-        # deux gardes independantes pour la meme regle, et c'est tant mieux.)
+        # `v662f_denouer_appareils` (shared.py) fait ce travail pour les DEUX
+        # deconnexions — espace membre ici, coach dans `/auth/logout`. Deux
+        # copies d'une meme regle finissent toujours par divergeer.
         #
-        # UN SEUL OPERATEUR SUR `push_verifie` : `$set: False` ET `$unset` sur
-        # le meme champ font rejeter l'ecriture par MongoDB (« would create a
-        # conflict ») — et le `except` l'aurait AVALEE, laissant les appareils
-        # verifies sans que rien ne le dise. `V662D_OUBLIER` retire deja
-        # `push_verifie`, et l'envoi exige `is True` : absent = non verifie.
-        _jti_rev = str(charge.get("jti") or "").strip()
-        _denoues = 0
-        if _jti_rev:
-            _vises = await db.push_subscriptions.find(
-                {"preuve_jti": _jti_rev}, {"_id": 0, "subscription.endpoint": 1}
-            ).to_list(20)
-            for _vd in _vises:
-                _vep = ((_vd.get("subscription") or {}).get("endpoint") or "")
-                if not _vep:
-                    continue
-                await db.push_subscriptions.update_one(
-                    {"subscription.endpoint": _vep, "preuve_jti": _jti_rev},
-                    {"$unset": dict(V662D_OUBLIER)})
-                _denoues += 1
-        if _denoues:
-            logger.info("[V662e] deconnexion : %d appareil(s) ne sont plus verifies",
-                        _denoues)
+        # Elle rend (denoues, complet) et `complet` DIT LA VERITE : si le
+        # plafond est atteint alors qu'il reste des appareils, elle le signale
+        # au lieu de laisser croire que tout a ete revoque. Un rapport faux
+        # est pire qu'un travail partiel avoue.
+        #
+        # Un par un, jamais une ecriture de masse : un marqueur vide ne doit
+        # pas pouvoir toucher les abonnements des autres (c'est a une garde
+        # pres ce que mon premier jet faisait).
+        from api.routes.shared import v662f_denouer_appareils as _v662f_den
+        _denoues, _complet = await _v662f_den(db, str(charge.get("jti") or ""))
+        if _denoues or not _complet:
+            logger.info("[V662e] deconnexion membre : %d appareil(s) denoue(s), complet=%s",
+                        _denoues, _complet)
+        if not _complet:
+            logger.warning("[V662e] denouement INCOMPLET : des appareils restent verifies")
     except Exception as _err2:
         logger.warning("[V662e] appareils non denoues (%s) — ils resteront verifies",
                        type(_err2).__name__)
@@ -46502,7 +46487,7 @@ async def get_vapid_public_key():
 # L'espace, lui, emet `"subscriber_space"`. S'en tenir au premier aurait
 # refuse TOUS les membres reels.
 async def _v662_identite_push(request: Request):
-    """(email, source, jti) d'une identite VERIFIEE, ou ('', '', '') sinon.
+    """(email, source, jti, exp) d'une identite VERIFIEE, ou ('', '', '', None).
 
     V662d — le `jti` est l'identifiant de la SESSION qui a servi de preuve. On
     le garde pour qu'une deconnexion coupe la verification de l'appareil :
@@ -46513,7 +46498,23 @@ async def _v662_identite_push(request: Request):
     try:
         _jwt = _v311_coach_email_from_jwt(request)
         if _jwt and await _v309_is_coach_or_admin(_jwt):
-            return _jwt.lower().strip(), "coach_jwt", ""
+            # V662f — LE COACH AUSSI DOIT POUVOIR ETRE DENOUE.
+            # Son JWT ne porte PAS de `jti` : sa charge est
+            # `{email, role, iat, exp}`, rien d'unique a la session. On derive
+            # donc un marqueur du JETON LUI-MEME (empreinte, jamais le jeton).
+            # Deux connexions -> deux `iat` -> deux jetons -> deux marqueurs :
+            # fermer une session ne touche PAS l'autre.
+            _brut = request.headers.get("Authorization", "") or ""
+            _brut = _brut.split(" ", 1)[1].strip() if _brut.lower().startswith("bearer ") else ""
+            from api.routes.shared import v662f_marqueur_coach as _v662f_mc
+            _expj = None
+            try:
+                import jwt as _pj
+                _expj = _pj.decode(_brut, os.environ.get("JWT_SECRET", ""),
+                                   algorithms=["HS256"]).get("exp")
+            except Exception:  # noqa: BLE001
+                _expj = None
+            return (_jwt.lower().strip(), "coach_jwt", _v662f_mc(_brut), _expj)
     except Exception:  # noqa: BLE001
         pass
     # b) jeton d'espace : signature ET session vivante. Une signature valide ne
@@ -46532,7 +46533,7 @@ async def _v662_identite_push(request: Request):
             _ok, _motif = lotb3s1_session_utilisable(_sess, _charge)
             if _ok and _charge.get("email"):
                 return (str(_charge["email"]).lower().strip(), "espace_b3s1",
-                        str(_charge.get("jti") or ""))
+                        str(_charge.get("jti") or ""), _charge.get("exp"))
             logger.info("[V662] jeton d'espace refuse (%s)", _motif)
     except Exception as _e:  # noqa: BLE001
         logger.warning("[V662] jeton d'espace illisible: %s", type(_e).__name__)
@@ -46541,10 +46542,10 @@ async def _v662_identite_push(request: Request):
         from api.routes.shared import subscriber_from_request as _v662_v296
         _sub = _v662_v296(request)
         if _sub and _sub.get("email"):
-            return str(_sub["email"]).lower().strip(), "abonne_v296", ""
+            return str(_sub["email"]).lower().strip(), "abonne_v296", "", None
     except Exception:  # noqa: BLE001
         pass
-    return "", "", ""
+    return "", "", "", None
 
 
 # V662d — UN JETON DE ROTATION N'EST PAS ETERNEL.
@@ -46563,7 +46564,47 @@ V662D_JETON_ROTATION_JOURS = 30
 # revendu ou desinscrit gardait de quoi se refaire verifier.
 V662D_OUBLIER = {"rotation_empreinte": "", "push_verifie": "",
                  "email": "", "push_preuve": "", "push_verifie_le": "",
-                 "preuve_jti": ""}
+                 "preuve_jti": "", "preuve_exp": ""}
+
+
+def _v662f_contenu_autorise(sub, maintenant=None) -> tuple:
+    """(autorise, motif) — cet abonnement a-t-il droit au contenu PRIVE ?
+
+    PURE : aucune base, aucun reseau. Elle ne lit que des champs deja charges,
+    ce qui compte parce qu'elle s'execute POUR CHAQUE APPAREIL DE CHAQUE ENVOI,
+    sur un chemin qui tourne toutes les heures pour tout le monde.
+
+    TROIS CONDITIONS, ET LA DEUXIEME EST CELLE QUI MANQUAIT (V662f) :
+      1. l'appartenance a ete prouvee (`push_verifie`) ;
+      2. la session qui l'a prouvee n'est pas ARRIVEE A SON TERME. Jusqu'ici
+         seule une deconnexion EXPLICITE denouait l'appareil : une session qui
+         expirait sans que personne ne clique laissait le contenu complet
+         partir indefiniment. C'est vrai en particulier du coach, dont le jeton
+         n'a pas de session en base ;
+      3. la preuve n'a pas plus de 30 jours (V662d), garde de dernier recours
+         quand aucune echeance n'est connue.
+    """
+    from datetime import timedelta as _td
+    if not sub or sub.get("push_verifie") is not True:
+        return False, "non_prouve"
+    _now = maintenant or datetime.now(timezone.utc)
+    _exp = sub.get("preuve_exp")
+    if _exp:
+        try:
+            if _now.timestamp() > float(_exp):
+                return False, "session_expiree"
+        except Exception:  # noqa: BLE001
+            return False, "echeance_illisible"
+    _le = sub.get("push_verifie_le")
+    if _le:
+        try:
+            from api.routes.shared import n2_instant_reel as _n2f
+            _d = _n2f(_le)
+            if _d is not None and _now - _d > _td(days=V662D_JETON_ROTATION_JOURS):
+                return False, "preuve_perimee"
+        except Exception:  # noqa: BLE001
+            return False, "date_illisible"
+    return True, "ok"
 
 
 def _v662c_empreinte(jeton: str) -> str:
@@ -46709,7 +46750,7 @@ async def subscribe_push(request: Request):
     # endpoint prouve qu'il s'agit du MEME appareil. On reporte alors sa
     # verification. Sans cela, chaque rotation ferait retomber un telephone
     # legitime en « inconnu » et le priverait de ses rappels en silence.
-    _ident, _preuve, _preuve_jti = await _v662_identite_push(request)
+    _ident, _preuve, _preuve_jti, _preuve_exp = await _v662_identite_push(request)
     _verifie = False
     if _ident:
         _autorises = await _v662_pids_autorises(_ident)
@@ -46721,6 +46762,15 @@ async def subscribe_push(request: Request):
             _extra["push_verifie_le"] = datetime.now(timezone.utc).isoformat()
             # V662d : la session qui a prouve. Sa revocation tuera le report.
             _extra["preuve_jti"] = _preuve_jti or ""
+            # V662f — L'ECHEANCE DE LA SESSION, LUE DANS LE JETON.
+            # Elle permet d'interdire le contenu prive A L'ENVOI quand la
+            # session a expire SANS deconnexion explicite — une simple
+            # comparaison de dates sur un champ deja charge, aucune requete.
+            if _preuve_exp:
+                try:
+                    _extra["preuve_exp"] = float(_preuve_exp)
+                except Exception:  # noqa: BLE001
+                    pass
             _extra["active"] = True
         else:
             logger.warning("[V662] refus: identite %s... demande l'identifiant d'un tiers",
@@ -46865,6 +46915,10 @@ async def subscribe_push(request: Request):
             # derniere VRAIE preuve d'identite, pas depuis la derniere rotation.
             _extra["push_verifie_le"] = _herite.get("push_verifie_le")
             _extra["preuve_jti"] = _herite.get("preuve_jti") or ""
+            # L'echeance SUIT la preuve d'origine : une rotation ne la repousse
+            # pas, pas plus que la date de verification.
+            if _herite.get("preuve_exp"):
+                _extra["preuve_exp"] = _herite.get("preuve_exp")
             logger.info("[V662c] rotation prouvee : verification reportee")
         else:
             # Aucune preuve, aucun heritage : on ne stocke PAS l'adresse du
@@ -46886,7 +46940,8 @@ async def subscribe_push(request: Request):
     _ops = {"$set": None}
     if not _verifie:
         _ops["$unset"] = {"email": "", "push_preuve": "", "push_verifie_le": "",
-                          "rotation_empreinte": "", "preuve_jti": ""}
+                          "rotation_empreinte": "", "preuve_jti": "",
+                          "preuve_exp": ""}
     if endpoint:
         _maj = {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}
         _maj.update(_extra)
@@ -47036,7 +47091,7 @@ async def unsubscribe_push(participant_id: str, request: Request):
         _ep = str((request.query_params.get("endpoint") or "")).strip()
     except Exception:  # noqa: BLE001
         _ep = ""
-    _ident, _preuve, _ = await _v662_identite_push(request)
+    _ident, _preuve, _, _ = await _v662_identite_push(request)
     if _ident:
         _autorises = await _v662_pids_autorises(_ident)
         if participant_id not in _autorises:
@@ -47268,10 +47323,11 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # ou faux -> charge NEUTRE : l'appareil sonne, il n'apprend rien.
             # Il redeviendra complet tout seul au prochain enregistrement avec
             # jeton, sans rien demander a personne.
-            _charge_sure = payload if sub.get("push_verifie") is True else _neutre
-            if _charge_sure is _neutre:
-                logger.info("[V662] charge neutre (appartenance non prouvee) rang=%d emp=%s",
-                            _rang, _emp)
+            _autorise, _motif_c = _v662f_contenu_autorise(sub)
+            _charge_sure = payload if _autorise else _neutre
+            if not _autorise:
+                logger.info("[V662f] charge neutre (%s) rang=%d emp=%s",
+                            _motif_c, _rang, _emp)
             _rep439 = webpush(subscription_info=subscription_info, data=_charge_sure, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600, headers={"Urgency": _urgence})
             _st_ok = getattr(_rep439, "status_code", "?")
             logger.info("[PUSH-FCM] push_success rang=%d emp=%s statut=%s", _rang, _emp, _st_ok)

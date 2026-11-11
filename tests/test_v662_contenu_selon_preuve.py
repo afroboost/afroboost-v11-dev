@@ -103,6 +103,57 @@ async def principal():
     v("et il invite a ouvrir l'application",
       "ouvrez l'application" in str(neutre.get("body")).lower(), neutre.get("body"))
 
+    # =================================================================
+    # V662f — UNE SESSION EXPIREE N'A PLUS DROIT AU CONTENU PRIVE
+    # =================================================================
+    # LE DEFAUT QUE CECI SURVEILLE. Jusqu'a V662f, seule une deconnexion
+    # EXPLICITE denouait un appareil. Une session qui arrivait a son terme
+    # sans que personne ne clique laissait le texte complet partir
+    # indefiniment — vrai en particulier du coach, dont le jeton n'a aucune
+    # session en base a interroger.
+    print()
+    print("  == session expiree : le detail s'arrete, sans rien denouer ==")
+    del CAPTURE[:]
+    await db.push_subscriptions.delete_many({})
+    from datetime import datetime as _d2, timedelta as _t2, timezone as _z2
+    _now = _d2.now(_z2.utc)
+    await db.push_subscriptions.insert_many([
+        # Session ENCORE valable.
+        {"participant_id": PID, "active": True, "push_verifie": True,
+         "email": "coach@exemple.test", "push_verifie_le": _now.isoformat(),
+         "preuve_exp": (_now + _t2(days=3)).timestamp(),
+         "updated_at": "2026-11-11T10:00:00+00:00",
+         "subscription": {"endpoint": "https://fcm.test/coach-vivant",
+                          "keys": {"p256dh": "p" * 60, "auth": "a" * 20}}},
+        # Session EXPIREE une heure avant — personne ne s'est deconnecte.
+        {"participant_id": PID, "active": True, "push_verifie": True,
+         "email": "coach@exemple.test", "push_verifie_le": _now.isoformat(),
+         "preuve_exp": (_now - _t2(hours=1)).timestamp(),
+         "updated_at": "2026-11-11T09:00:00+00:00",
+         "subscription": {"endpoint": "https://fcm.test/coach-expire",
+                          "keys": {"p256dh": "q" * 60, "auth": "b" * 20}}},
+    ])
+    await S.send_push_notification(
+        PID, "Nouvelle reservation",
+        "Amanda a reserve Afro Cardio a 19:00",
+        {"type": "reservation", "reservation_id": "resa-coach-999"})
+    _recu2 = dict(CAPTURE)
+    _vivant = _recu2.get("https://fcm.test/coach-vivant") or {}
+    _expire = _recu2.get("https://fcm.test/coach-expire") or {}
+    v("la session valable recoit le detail",
+      "Amanda" in str(_vivant.get("body")), _vivant.get("body"))
+    v("la session EXPIREE ne recoit QUE du neutre",
+      _expire.get("title") == "Afroboost" and "Amanda" not in str(_expire), _expire)
+    _s2 = __import__("json").dumps(_expire, ensure_ascii=False)
+    v("aucun nom, aucune heure, aucun identifiant",
+      "Amanda" not in _s2 and "19:00" not in _s2 and "resa-coach-999" not in _s2, _s2[:120])
+    v("elle sonne quand meme", bool(_expire.get("body")), _expire)
+    # Et rien n'a ete modifie en base : l'envoi DECIDE, il ne denoue pas.
+    _d_exp = await db.push_subscriptions.find_one(
+        {"subscription.endpoint": "https://fcm.test/coach-expire"})
+    v("l'envoi n'a rien efface en base (il decide, il ne nettoie pas)",
+      bool(_d_exp) and _d_exp.get("push_verifie") is True, _d_exp)
+
     await db.push_subscriptions.delete_many({})
 
 

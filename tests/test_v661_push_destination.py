@@ -89,5 +89,31 @@ v("le respect des refus est toujours la", "rv2_canal_autorise" in SRC)
 v("le tag par cours evite l'empilement", "push_ui_tag_cours" in SRC)
 
 print()
+print("== V662f — LA VRAIE DECONNEXION COACH PASSE BIEN PAR LA REVOCATION ==")
+# REGLE V310c APPLIQUEE A L'ENVERS : avant d'affirmer qu'une deconnexion
+# denoue les appareils, il faut PROUVER que l'interface appelle la route. Mon
+# banc HTTP posait l'en-tete a la main — il aurait valide un correctif
+# inatteignable en production.
+APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
+_i_logout = APP.find("/auth/logout")
+_i_jwt = APP.find("removeItem('afroboost_jwt')")
+v("l'interface coach appelle bien /auth/logout", _i_logout > 0, _i_logout)
+# L'ORDRE EST LE POINT CRITIQUE : effacer le jeton d'abord, c'est appeler la
+# route SANS preuve, donc ne rien denouer. Ce controle fige l'ordre.
+v("elle l'appelle AVANT d'effacer le jeton (sinon aucune preuve n'est jointe)",
+  0 < _i_logout < _i_jwt, (_i_logout, _i_jwt))
+v("l'intercepteur joint le jeton coach", "'Bearer ' + jwt" in APP)
+# Cote serveur, la route doit vraiment denouer.
+AUTH = io.open(os.path.join(RACINE, "api", "routes", "auth_routes.py"), encoding="utf-8").read()
+v("/auth/logout denoue les appareils de CETTE session",
+  "v662f_denouer_appareils" in AUTH and "v662f_marqueur_coach" in AUTH)
+v("et il n'y a AUCUNE ecriture de masse sur les abonnements",
+  "push_subscriptions.update_many" not in AUTH
+  and "push_subscriptions.delete_many" not in AUTH)
+SH = io.open(os.path.join(RACINE, "api", "routes", "shared.py"), encoding="utf-8").read()
+v("le denouement est borne par un plafond dur", "V662F_PLAFOND" in SH)
+v("et un marqueur vide ne denoue rien", 'if not _m:' in SH)
+
+print()
 print("  %d/%d" % (_ok, _ok + _ko))
 sys.exit(0 if _ko == 0 else 1)

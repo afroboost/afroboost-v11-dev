@@ -31,6 +31,18 @@ COACH = "contact.artboost@gmail.com"
 PID_MEMBRE = "pid-membre-v662"
 PID_TIERS = "pid-tiers-v662"
 
+import asyncio
+
+
+class _FausseBase:
+    """Assez pour prouver qu'un marqueur vide ne declenche AUCUNE requete :
+    toute lecture ici leverait une erreur, donc si le controle passe, c'est que
+    la fonction s'est arretee avant."""
+    def __getattr__(self, _n):
+        raise AssertionError("aucune requete ne doit partir pour un marqueur vide")
+
+
+_FAUSSE_BASE = _FausseBase()
 _ok = _ko = 0
 _T = [4]      # court pendant l'attente du serveur, normal ensuite
 
@@ -88,7 +100,13 @@ db.subscriber_sessions.insert_one({
     "coach_id": "coach_test", "slug": None, "revoked": False,
 })
 import jwt as _pyjwt                                               # noqa: E402
-JETON_COACH = _pyjwt.encode({"email": COACH, "role": "admin"}, SECRET, algorithm="HS256")
+import time as _tps                                                # noqa: E402
+# La MEME forme que la production : `{email, role, iat, exp}`
+# (cf. `auth_routes.create_access_token`). Un jeton sans `exp` ne permettrait
+# pas de verifier la garde d'echeance — c'est tout l'objet du controle.
+JETON_COACH = _pyjwt.encode(
+    {"email": COACH, "role": "admin", "iat": int(_tps.time()),
+     "exp": int(_tps.time()) + 7 * 86400}, SECRET, algorithm="HS256")
 
 # ------------------------------------------------------------------- serveur
 os.makedirs(os.path.join(RACINE, "frontend", "build"), exist_ok=True)
@@ -399,6 +417,81 @@ try:
     })
     d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-e2"})
     v("session perimee -> report refuse", bool(d) and d.get("push_verifie") is not True, d)
+
+    print()
+    print("== 16. V662f — COACH CONNECTE : CONTENU DETAILLE AUTORISE ==")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": "coach_%s" % COACH, "subscription": abonnement("https://fcm.test/coach-A"),
+        "email": COACH, "role": "coach",
+    }, {"Authorization": "Bearer %s" % JETON_COACH})
+    v("l'appareil coach est verifie", rep.get("push_verifie") is True, rep)
+    dA = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/coach-A"})
+    v("il porte un marqueur de session (le JWT n'a pas de jti)",
+      bool(dA) and str(dA.get("preuve_jti", "")).startswith("coachjwt:"), dA and dA.get("preuve_jti"))
+    v("et l'echeance de son jeton (lue dans le JWT)",
+      bool(dA) and dA.get("preuve_exp"), dA and dA.get("preuve_exp"))
+
+    # Un SECOND appareil, sur une AUTRE session legitime du meme coach.
+    import jwt as _pj2, time as _t2
+    JETON_COACH_2 = _pj2.encode({"email": COACH, "role": "admin", "iat": int(_t2.time()) - 5,
+                                 "exp": int(_t2.time()) + 7 * 86400}, SECRET, algorithm="HS256")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": "coach_%s" % COACH, "subscription": abonnement("https://fcm.test/coach-B"),
+        "email": COACH, "role": "coach",
+    }, {"Authorization": "Bearer %s" % JETON_COACH_2})
+    v("le second appareil est verifie aussi", rep.get("push_verifie") is True, rep)
+    dB = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/coach-B"})
+    v("et porte un marqueur DIFFERENT (autre session)",
+      bool(dB) and dB.get("preuve_jti") != (dA or {}).get("preuve_jti"),
+      (dA or {}).get("preuve_jti"))
+
+    print()
+    print("== 17. V662f — COACH DECONNECTE : CONTENU PRIVE INTERDIT ==")
+    # La VRAIE route de deconnexion, avec le vrai jeton — celle que
+    # `handleLogout` (App.js) appelle avant d'effacer le localStorage.
+    st, rep = appel("POST", "/api/auth/logout", {},
+                    {"Authorization": "Bearer %s" % JETON_COACH})
+    v("la deconnexion repond 200", st == 200, (st, rep))
+    dA = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/coach-A"})
+    v("l'appareil de CETTE session n'est plus verifie",
+      bool(dA) and dA.get("push_verifie") is not True, dA)
+    v("son adresse a ete retiree", bool(dA) and not dA.get("email"), dA and dA.get("email"))
+    v("il reste ABONNE (il sonnera, en neutre)", bool(dA) and dA.get("active") is True, dA)
+
+    print()
+    print("== 18. V662f — L'AUTRE SESSION LEGITIME N'EST PAS TOUCHEE ==")
+    dB = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/coach-B"})
+    v("le second appareil reste VERIFIE", bool(dB) and dB.get("push_verifie") is True, dB)
+    v("et garde son adresse", bool(dB) and dB.get("email") == COACH, dB and dB.get("email"))
+    # Et aucun appareil MEMBRE n'a bouge.
+    dm = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-e1"})
+    v("aucun appareil membre n'a ete touche", dm is not None, dm)
+
+    print()
+    print("== 19. V662f — NOUVELLE CONNEXION : LE DETAIL REVIENT ==")
+    JETON_COACH_3 = _pj2.encode({"email": COACH, "role": "admin", "iat": int(_t2.time()),
+                                 "exp": int(_t2.time()) + 7 * 86400}, SECRET, algorithm="HS256")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": "coach_%s" % COACH, "subscription": abonnement("https://fcm.test/coach-A"),
+        "email": COACH, "role": "coach",
+    }, {"Authorization": "Bearer %s" % JETON_COACH_3})
+    v("l'appareil redevient verifie apres reconnexion", rep.get("push_verifie") is True, rep)
+    dA = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/coach-A"})
+    v("sans qu'on ait rien demande a personne",
+      bool(dA) and dA.get("email") == COACH, dA and dA.get("email"))
+
+    print()
+    print("== 20. V662f — AUCUN NETTOYAGE MASSIF, ET LE COMPTE RENDU EST HONNETE ==")
+    _tous = db.push_subscriptions.count_documents({})
+    _actifs = db.push_subscriptions.count_documents({"active": True})
+    v("les abonnements n'ont pas ete supprimes", _tous >= 10, _tous)
+    v("et la plupart restent actifs", _actifs >= 8, (_actifs, _tous))
+    # Le dénouement borné dit la vérité quand il ne peut pas tout faire.
+    from api.routes.shared import v662f_denouer_appareils as _den, V662F_PLAFOND
+    v("un marqueur vide ne denoue RIEN (et le dit complet)",
+      asyncio.get_event_loop().run_until_complete(_den(_FAUSSE_BASE, "")) == (0, True))
+    v("le plafond existe et est borne", isinstance(V662F_PLAFOND, int) and V662F_PLAFOND <= 1000,
+      V662F_PLAFOND)
 
 finally:
     proc.terminate()
