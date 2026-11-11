@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v666'; // V662c : le SW presente un jeton de rotation
+var CACHE_NAME = 'afroboost-v667'; // V669 : correctifs Reactiver + fenetre d installation au premier plan
                                    // -> sans ce bump, un appareil deja installe garderait l'ancien
                                    // bundle et continuerait d'envoyer l'instant du clic comme date.
 var SW_VERSION = 272;
