@@ -49857,17 +49857,41 @@ async def cron_reservation_reminders():
                         # par cours evite qu'un rappel de 07:00 et un de 09:30
                         # s'empilent — le second REMPLACE le premier.
                         {"type": "course_reminder", "reservation_id": _rid,
-                         # V661 — LE CLIC OUVRAIT LE CHAT, PAS LE COURS.
-                         # `send_push_notification` retombe sur
-                         # « /?openChat=true » quand la charge ne porte pas
-                         # d'`url` : un rappel de cours ouvrait donc une
-                         # conversation. L'adresse juste est deja calculee
-                         # quelques lignes plus haut pour l'e-mail
-                         # (`_e2_espace`, validee par `rv2_lien_espace` :
-                         # chaine vide si le code est douteux). On la pose ici
-                         # AUSSI. Vide, le repli d'origine s'applique — on ne
-                         # fabrique jamais une destination.
-                         **({"url": _e2_espace} if _e2_espace else {}),
+                         # ===========================================
+                         # V661b — PAS DE CODE D'ACCES DANS UN PUSH
+                         # ===========================================
+                         #
+                         # V661 posait ici `_e2_espace`, pour que toucher le
+                         # rappel ouvre le cours au lieu du chat. C'EST RETIRE.
+                         #
+                         # CE QUE CETTE URL CONTIENT : le code d'acces de la
+                         # personne (« /espace/AFR-AD4A77 »). Ce code N'EST PAS
+                         # un simple identifiant — il OUVRE l'espace a qui le
+                         # detient : seances restantes, reservations, profil.
+                         #
+                         # CE QUI REND CELA DANGEREUX : `POST /push/subscribe`
+                         # (ligne ~46411) n'exige AUCUNE authentification et lit
+                         # `email` DANS LE CORPS de la requete. N'importe qui
+                         # peut donc enregistrer SON appareil sous l'adresse de
+                         # quelqu'un d'autre et recevoir ses notifications.
+                         # Aujourd'hui cela fuite le nom et l'heure du cours ;
+                         # avec l'url, cela aurait fuite LE CODE D'ACCES.
+                         # L'e-mail, lui, part a une adresse verifiee : le meme
+                         # lien n'y a pas le meme risque.
+                         #
+                         # POURQUOI PAS DE DEMI-MESURE : la route du front est
+                         # `/espace/<CODE>` (App.js ~6134) — une adresse sans
+                         # code ne mene nulle part. Rendre le clic utile demande
+                         # donc l'un ou l'autre, en lot separe :
+                         #   a) authentifier /push/subscribe et prendre l'e-mail
+                         #      dans un jeton signe — mais la regle V310c
+                         #      l'interdit sans PROUVER d'abord que le chemin
+                         #      legitime garde l'acces ;
+                         #   b) une route d'espace sans code, qui s'appuie sur
+                         #      la session deja persistante.
+                         # Tant que ni l'un ni l'autre n'est fait, le repli
+                         # « /?openChat=true » s'applique : moins pratique,
+                         # mais il ne divulgue RIEN.
                          "tag": push_ui_tag_cours(r.get("courseId")),
                          "vibrate": PUSH_UI_VIBRATION,
                          "actions": PUSH_UI_ACTIONS_MON_COURS,

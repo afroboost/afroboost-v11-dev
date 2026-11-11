@@ -36,20 +36,41 @@ print("== V661 — la destination du rappel ==")
 _bloc = re.search(r'\{"type": "course_reminder".*?PUSH_UI_IMAGE_COURS\}', SRC, re.S)
 v("la charge du rappel de cours existe", bool(_bloc))
 _b = _bloc.group(0) if _bloc else ""
+# On compare le CODE, pas les commentaires : les lignes `#` expliquent
+# justement pourquoi `_e2_espace` est absent, et les y chercher ferait
+# echouer le controle pour la raison inverse de celle qu'il surveille.
+_bc = "\n".join(l for l in _b.split("\n") if not l.strip().startswith("#"))
 
-v("elle porte desormais une url", '"url"' in _b, _b[:120])
-v("et cette url est l'espace DEJA valide pour l'e-mail (`_e2_espace`)",
-  '_e2_espace' in _b)
-# ON NE FABRIQUE PAS DE DESTINATION. Code douteux -> `rv2_lien_espace` rend une
-# chaine vide -> aucune `url` posee -> le repli d'origine s'applique.
-v("une adresse vide n'est PAS posee (pas de destination inventee)",
-  'if _e2_espace else {}' in _b)
+# =====================================================================
+# V661b — CE BANC GARDE MAINTENANT LA PORTE FERMEE, PAS OUVERTE
+# =====================================================================
+# V661 posait l'url de l'espace dans la charge. Retire : cette url CONTIENT
+# le code d'acces, et `POST /push/subscribe` n'exige aucune authentification
+# tout en lisant `email` dans le corps de la requete. N'importe qui peut donc
+# recevoir les push de quelqu'un d'autre ; il ne doit rien y trouver qui
+# OUVRE son espace.
+v("AUCUNE url dans la charge du rappel", '"url"' not in _bc, _bc[:140])
+v("AUCUN code d'acces dans la charge du rappel", '_e2_espace' not in _bc)
+# L'url de l'espace reste calculee — pour l'E-MAIL, qui part a une adresse
+# verifiee. C'est le canal qui change le risque, pas le lien.
+v("l'espace reste envoye par e-mail (canal verifie)",
+  '_e2_espace = (rv2_lien_espace' in SRC and SRC.count('_e2_espace') >= 3)
 
 _url = re.search(r'_push_url = \(data or \{\}\)\.get\("url"\) or "([^"]+)"', SRC)
-v("le repli du serveur est inchange", bool(_url) and _url.group(1) == "/?openChat=true")
+v("le repli du serveur s'applique donc", bool(_url) and _url.group(1) == "/?openChat=true")
 
-v("`_e2_espace` est calcule AVANT l'envoi du push",
-  SRC.index("_e2_espace = (rv2_lien_espace") < SRC.index('{"type": "course_reminder"'))
+# La route du front exige le code : une adresse sans code ne mene nulle part.
+# C'est la raison pour laquelle il n'y a pas de demi-mesure possible ici.
+APP = io.open(os.path.join(RACINE, "frontend", "src", "App.js"), encoding="utf-8").read()
+v("la route de l'espace exige le code (pas de `/espace` nu)",
+  r"/^\/espace\/([^/]+)\/?$/" in APP)
+
+# LE TROU DE FOND, NOMME ET SURVEILLE : tant que cette route est ouverte, aucun
+# secret ne doit voyager par push. Si elle est fermee un jour, ce controle le
+# dira — et le lien pourra revenir.
+_sub = re.search(r'@api_router\.post\("/push/subscribe"\)(.{0,4000})', SRC, re.S)
+v("/push/subscribe lit toujours l'e-mail dans le corps (trou connu, non corrige ici)",
+  bool(_sub) and 'body.get("email")' in _sub.group(1))
 
 print()
 print("== V661 — le Service Worker suit bien cette url ==")
