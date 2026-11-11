@@ -76,6 +76,27 @@ export function oublierSession() {
   // Sans cette ligne, se déconnecter puis rouvrir l'application relancerait le
   // retour automatique vers l'espace qu'on vient de quitter.
   try { window.sessionStorage.removeItem(ESPACE_CLE_RETOUR); } catch (e) { /* ignore */ }
+  // =====================================================================
+  // V662d — SE DÉCONNECTER EFFACE AUSSI LA PREUVE DE L'APPAREIL
+  // =====================================================================
+  // Le jeton de rotation (cache `afroboost-push-owner`) sert à l'appareil
+  // pour se faire re-vérifier sans session. Le laisser derrière soi, c'est
+  // laisser de quoi continuer à recevoir les notifications COMPLÈTES d'un
+  // compte qu'on vient de quitter — sur un téléphone prêté, revendu ou
+  // partagé, c'est exactement ce qu'il ne faut pas.
+  //
+  // Le serveur coupe déjà le report quand la session est révoquée ; ceci
+  // ferme le même trou côté appareil, sans attendre un aller-retour.
+  // `caches` n'existe pas partout (anciens navigateurs, mode privé) : on
+  // échoue en silence, le serveur reste la garde qui compte.
+  try {
+    if (typeof caches !== "undefined" && caches.open) {
+      caches.open("afroboost-push-owner").then((c) => {
+        c.delete("rotation");
+        c.delete("owner");
+      }).catch(() => { /* rien à oublier */ });
+    }
+  } catch (e) { /* ignore */ }
 }
 
 /** L'adresse de l'espace de cette session, ou "" s'il n'y en a pas. */

@@ -46442,11 +46442,18 @@ async def get_vapid_public_key():
 # L'espace, lui, emet `"subscriber_space"`. S'en tenir au premier aurait
 # refuse TOUS les membres reels.
 async def _v662_identite_push(request: Request):
-    """(email, source) d'une identite VERIFIEE, ou ('', '') si rien ne la prouve."""
+    """(email, source, jti) d'une identite VERIFIEE, ou ('', '', '') sinon.
+
+    V662d — le `jti` est l'identifiant de la SESSION qui a servi de preuve. On
+    le garde pour qu'une deconnexion coupe la verification de l'appareil :
+    sans lui, « fermer sa session » ne voudrait rien dire cote notifications.
+    Un JWT coach n'en a pas — la chaine est alors vide, et aucun controle de
+    session n'est tente.
+    """
     try:
         _jwt = _v311_coach_email_from_jwt(request)
         if _jwt and await _v309_is_coach_or_admin(_jwt):
-            return _jwt.lower().strip(), "coach_jwt"
+            return _jwt.lower().strip(), "coach_jwt", ""
     except Exception:  # noqa: BLE001
         pass
     # b) jeton d'espace : signature ET session vivante. Une signature valide ne
@@ -46464,7 +46471,8 @@ async def _v662_identite_push(request: Request):
             _sess = await db[_B3S1_COLL_SESSIONS].find_one({"jti": _charge.get("jti")})
             _ok, _motif = lotb3s1_session_utilisable(_sess, _charge)
             if _ok and _charge.get("email"):
-                return str(_charge["email"]).lower().strip(), "espace_b3s1"
+                return (str(_charge["email"]).lower().strip(), "espace_b3s1",
+                        str(_charge.get("jti") or ""))
             logger.info("[V662] jeton d'espace refuse (%s)", _motif)
     except Exception as _e:  # noqa: BLE001
         logger.warning("[V662] jeton d'espace illisible: %s", type(_e).__name__)
@@ -46473,10 +46481,29 @@ async def _v662_identite_push(request: Request):
         from api.routes.shared import subscriber_from_request as _v662_v296
         _sub = _v662_v296(request)
         if _sub and _sub.get("email"):
-            return str(_sub["email"]).lower().strip(), "abonne_v296"
+            return str(_sub["email"]).lower().strip(), "abonne_v296", ""
     except Exception:  # noqa: BLE001
         pass
-    return "", ""
+    return "", "", ""
+
+
+# V662d — UN JETON DE ROTATION N'EST PAS ETERNEL.
+# 30 jours : exactement la duree du jeton d'espace (`LOTB3S1_JETON_JOURS`).
+# Au-dela, la personne a de toute facon du reprouver son identite pour entrer
+# dans son espace ; il n'y a aucune raison qu'un appareil garde une
+# verification plus longtemps que la session qui l'a produite. Passe ce delai
+# l'appareil n'est plus verifie : il recoit des notifications neutres jusqu'a
+# la prochaine ouverture de l'application, qui le reverifie. Auto-reparant.
+V662D_JETON_ROTATION_JOURS = 30
+
+# V662d — CE QU'ON EFFACE QUAND UN ABONNEMENT MEURT.
+# Un abonnement desactive — desinscription, remplacement par rotation, ou
+# endpoint refuse par FCM (404/410) — ne doit plus rien transmettre NI servir
+# de preuve. Sans ce retrait, son jeton restait valide : un appareil perdu,
+# revendu ou desinscrit gardait de quoi se refaire verifier.
+V662D_OUBLIER = {"rotation_empreinte": "", "push_verifie": "",
+                 "email": "", "push_preuve": "", "push_verifie_le": "",
+                 "preuve_jti": ""}
 
 
 def _v662c_empreinte(jeton: str) -> str:
@@ -46484,6 +46511,41 @@ def _v662c_empreinte(jeton: str) -> str:
     une fuite de la base ne doit pas livrer de quoi usurper un appareil."""
     import hashlib as _h
     return _h.sha256(("v662c:" + str(jeton or "")).encode()).hexdigest()
+
+
+def _v662d_report_encore_valable(doc, maintenant=None) -> tuple:
+    """(ok, motif) — ce report de verification tient-il toujours ?
+
+    LE DEFAUT CORRIGE ICI. Le jeton ne regardait que son empreinte : il
+    survivait a une desinscription, a la revocation de la session qui l'avait
+    produit, et se transmettait indefiniment de rotation en rotation. Un
+    appareil perdu ou revendu gardait son acces aux donnees privees.
+    """
+    from datetime import timedelta as _td
+    _now = maintenant or datetime.now(timezone.utc)
+    if not doc:
+        return False, "inconnu"
+    # ON N'EXIGE PAS `active`, ET C'EST DELIBERE. La mise au rebut P1-c
+    # s'execute sur toute rotation declaree, meme non prouvee : exiger
+    # `active` laissait un inconnu desactiver l'endpoint d'un appareil
+    # legitime pour lui retirer sa verification. Les vraies fins effacent la
+    # preuve a la source (`V662D_OUBLIER` sur desinscription et 404/410) :
+    # apres elles, l'empreinte n'existe plus et la recherche ne trouve RIEN.
+    # C'est une garde plus solide qu'un drapeau `active` manipulable.
+    _depuis = doc.get("push_verifie_le")
+    if _depuis:
+        # `n2_instant_reel` vit dans `api.routes.shared`, pas ici : server.py
+        # l'importe localement partout ailleurs (cf. ligne ~21371). L'appeler
+        # sans import levait un NameError SILENCIEUX pour le banc — c'est ce
+        # qui a fait tomber 6 controles de rotation d'un coup.
+        from api.routes.shared import n2_instant_reel as _n2_v662d
+        _d = _n2_v662d(_depuis)
+        if _d is not None and _now - _d > _td(days=V662D_JETON_ROTATION_JOURS):
+            return False, "preuve_perimee"
+    else:
+        # Pas de date = on ne peut pas affirmer que la preuve est fraiche.
+        return False, "preuve_sans_date"
+    return True, "ok"
 
 
 def _v662c_nouveau_jeton() -> tuple:
@@ -46587,7 +46649,7 @@ async def subscribe_push(request: Request):
     # endpoint prouve qu'il s'agit du MEME appareil. On reporte alors sa
     # verification. Sans cela, chaque rotation ferait retomber un telephone
     # legitime en « inconnu » et le priverait de ses rappels en silence.
-    _ident, _preuve = await _v662_identite_push(request)
+    _ident, _preuve, _preuve_jti = await _v662_identite_push(request)
     _verifie = False
     if _ident:
         _autorises = await _v662_pids_autorises(_ident)
@@ -46597,6 +46659,9 @@ async def subscribe_push(request: Request):
             _extra["push_verifie"] = True
             _extra["push_preuve"] = _preuve
             _extra["push_verifie_le"] = datetime.now(timezone.utc).isoformat()
+            # V662d : la session qui a prouve. Sa revocation tuera le report.
+            _extra["preuve_jti"] = _preuve_jti or ""
+            _extra["active"] = True
         else:
             logger.warning("[V662] refus: identite %s... demande l'identifiant d'un tiers",
                            _ident[:3])
@@ -46666,9 +46731,27 @@ async def subscribe_push(request: Request):
                     {"rotation_empreinte": _v662c_empreinte(_jeton_presente),
                      "push_verifie": True, "participant_id": participant_id},
                     {"_id": 0, "email": 1, "push_preuve": 1, "push_verifie_le": 1,
-                     "subscription.endpoint": 1})
+                     "subscription.endpoint": 1, "active": 1, "preuve_jti": 1})
             except Exception:  # noqa: BLE001
                 _d = None
+            _val, _motif_val = _v662d_report_encore_valable(_d)
+            if _d and not _val:
+                logger.info("[V662d] report refuse (%s)", _motif_val)
+                _d = None
+            # V662d — SI LA SESSION QUI A PROUVE EST REVOQUEE, LE REPORT MEURT.
+            # Se deconnecter de son espace doit couper la verification de
+            # l'appareil, sinon « fermer sa session » ne veut rien dire.
+            # Un JWT coach n'a pas de `jti` : on ne verifie que s'il y en a un.
+            if _d and _d.get("preuve_jti"):
+                try:
+                    from api.routes.shared import lotb3s1_session_utilisable
+                    _sx = await db[_B3S1_COLL_SESSIONS].find_one({"jti": _d["preuve_jti"]})
+                    if not _sx or _sx.get("revoked") is True:
+                        logger.info("[V662d] report refuse : session revoquee")
+                        _d = None
+                except Exception:  # noqa: BLE001
+                    logger.warning("[V662d] session de preuve illisible : report refuse")
+                    _d = None
             if _d and _d.get("email"):
                 # Double verrou conserve : l'identifiant doit rester joignable
                 # depuis l'adresse heritee. Un appariement douteux en base
@@ -46703,7 +46786,12 @@ async def subscribe_push(request: Request):
             _extra["email"] = str(_herite.get("email"))[:120]
             _extra["push_verifie"] = True
             _extra["push_preuve"] = "rotation:%s" % (_herite.get("push_preuve") or "?")
+            # V662d — LA DATE D'ORIGINE EST CONSERVEE, PAS RAFRAICHIE. Sinon
+            # une suite de rotations repousserait l'echeance a l'infini et la
+            # preuve ne perimerait JAMAIS. La fraicheur se compte depuis la
+            # derniere VRAIE preuve d'identite, pas depuis la derniere rotation.
             _extra["push_verifie_le"] = _herite.get("push_verifie_le")
+            _extra["preuve_jti"] = _herite.get("preuve_jti") or ""
             logger.info("[V662c] rotation prouvee : verification reportee")
         else:
             # Aucune preuve, aucun heritage : on ne stocke PAS l'adresse du
@@ -46725,7 +46813,7 @@ async def subscribe_push(request: Request):
     _ops = {"$set": None}
     if not _verifie:
         _ops["$unset"] = {"email": "", "push_preuve": "", "push_verifie_le": "",
-                          "rotation_empreinte": ""}
+                          "rotation_empreinte": "", "preuve_jti": ""}
     if endpoint:
         _maj = {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}
         _maj.update(_extra)
@@ -46805,6 +46893,19 @@ async def subscribe_push(request: Request):
                 {"$set": {"active": False,
                           "superseded_at": datetime.now(timezone.utc).isoformat(),
                           "superseded_by": endpoint}},
+                # =========================================================
+                # V662d — UN REMPLACEMENT N'EST PAS UNE MORT
+                # =========================================================
+                # J'avais ajoute ici un `$unset` de la preuve. C'etait une
+                # ERREUR, et le banc l'a montree : cette mise au rebut
+                # s'execute AUSSI sur une rotation NON PROUVEE (il faut la
+                # garder ainsi, sinon les endpoints s'accumulent, cf. P1-c).
+                # Effacer la preuve ici donnait donc a quiconque connait
+                # (identifiant, endpoint) un moyen simple de DEPOUILLER un
+                # appareil legitime de sa verification.
+                # Un endpoint remplace appartient a un appareil qui a bouge,
+                # pas a un appareil mort : sa preuve se transmet. Les vraies
+                # fins — desinscription, refus 404/410 — l'effacent, elles.
             )
             if getattr(_r, "modified_count", 0):
                 logger.info("[PUSH] endpoint remplace mis au rebut pour %s", participant_id[:24])
@@ -46862,7 +46963,7 @@ async def unsubscribe_push(participant_id: str, request: Request):
         _ep = str((request.query_params.get("endpoint") or "")).strip()
     except Exception:  # noqa: BLE001
         _ep = ""
-    _ident, _preuve = await _v662_identite_push(request)
+    _ident, _preuve, _ = await _v662_identite_push(request)
     if _ident:
         _autorises = await _v662_pids_autorises(_ident)
         if participant_id not in _autorises:
@@ -46873,11 +46974,15 @@ async def unsubscribe_push(participant_id: str, request: Request):
     if _ep:
         _r = await db.push_subscriptions.update_one(
             {"participant_id": participant_id, "subscription.endpoint": _ep},
-            {"$set": {"active": False}})
+            # V662d : se desinscrire efface aussi la preuve. Sans cela, le
+            # jeton restait valide et l'appareil pouvait se refaire verifier.
+            {"$set": {"active": False}, "$unset": dict(V662D_OUBLIER)})
         logger.info("[V662] desinscription ciblee (1 appareil, modifie=%d)", _r.modified_count)
         return {"success": True, "portee": "appareil"}
     logger.info("[V662] desinscription SANS endpoint (ancien client) : portee large")
-    await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"active": False}})
+    await db.push_subscriptions.update_one(
+        {"participant_id": participant_id},
+        {"$set": {"active": False}, "$unset": dict(V662D_OUBLIER)})
     return {"success": True, "portee": "identifiant"}
 
 async def send_push_notification(participant_id: str, title: str, body: str, data: dict = None, session_id: str = None):
@@ -47111,10 +47216,16 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             if e.response is not None and e.response.status_code in [404, 410]:
                 # V245: desactiver PAR endpoint, pas tout le participant — sinon
                 # une souscription morte tuerait aussi les fraiches du meme pid.
+                # V662d — UN ENDPOINT REFUSE PAR FCM NE SERT PLUS DE PREUVE.
+                # Sans ce retrait, son jeton de rotation restait valide alors
+                # que l'appareil est injoignable : de quoi se refaire verifier
+                # depuis un abonnement mort.
                 if _endpoint:
-                    await db.push_subscriptions.update_one({"subscription.endpoint": _endpoint}, {"$set": {"active": False}})
+                    await db.push_subscriptions.update_one(
+                        {"subscription.endpoint": _endpoint},
+                        {"$set": {"active": False}, "$unset": dict(V662D_OUBLIER)})
                 else:
-                    await db.push_subscriptions.update_one({"participant_id": participant_id, "subscription": subscription_info}, {"$set": {"active": False}})
+                    await db.push_subscriptions.update_one({"participant_id": participant_id, "subscription": subscription_info}, {"$set": {"active": False}, "$unset": dict(V662D_OUBLIER)})
                 logger.debug(f"[PUSH] Souscription expiree desactivee (410/404)")
             else:
                 logger.error(f"[PUSH] Echec critique: {str(e)}")

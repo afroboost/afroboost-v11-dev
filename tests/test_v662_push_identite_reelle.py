@@ -293,6 +293,66 @@ try:
                     None, {"X-Subscriber-Token": JETON_MEMBRE})
     v("REFUSE (403)", st == 403, (st, rep))
 
+    print()
+    print("== 11. V662d — UNE PREUVE DE PLUS DE 30 JOURS NE SE REPORTE PLUS ==")
+    # On vieillit artificiellement la preuve : la personne a de toute facon du
+    # se reauthentifier pour entrer dans son espace depuis.
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    db.push_subscriptions.update_one(
+        {"subscription.endpoint": "https://fcm.test/membre-3"},
+        {"$set": {"push_verifie_le": (_dt.now(_tz.utc) - _td(days=31)).isoformat()}})
+    _j3 = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-3"})
+    # On repose un jeton connu pour pouvoir le presenter.
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-vieux"),
+        "previous_endpoint": "https://fcm.test/membre-3",
+        "rotation_jeton": JETON_ROT[0],
+    })
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-vieux"})
+    v("une preuve perimee ne verifie plus", bool(d) and d.get("push_verifie") is not True, d)
+
+    print()
+    print("== 12. V662d — SE DECONNECTER (SESSION REVOQUEE) COUPE LE REPORT ==")
+    # On remet une preuve fraiche, puis on revoque la session qui l'a produite.
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-s1"),
+        "email": MEMBRE,
+    }, {"X-Subscriber-Token": JETON_MEMBRE})
+    _jr = str(rep.get("rotation_jeton") or "")
+    v("l'appareil est verifie avant revocation", rep.get("push_verifie") is True, rep)
+    db.subscriber_sessions.update_one({"jti": JTI_MEMBRE}, {"$set": {"revoked": True}})
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-s2"),
+        "previous_endpoint": "https://fcm.test/membre-s1",
+        "rotation_jeton": _jr,
+    })
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-s2"})
+    v("session revoquee -> le report est refuse", bool(d) and d.get("push_verifie") is not True, d)
+    db.subscriber_sessions.update_one({"jti": JTI_MEMBRE}, {"$set": {"revoked": False}})
+
+    print()
+    print("== 13. V662d — SE DESINSCRIRE EFFACE LA PREUVE DE L'APPAREIL ==")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-u1"),
+        "email": MEMBRE,
+    }, {"X-Subscriber-Token": JETON_MEMBRE})
+    _ju = str(rep.get("rotation_jeton") or "")
+    v("verifie avant desinscription", rep.get("push_verifie") is True, rep)
+    appel("DELETE", "/api/push/subscribe/%s?endpoint=%s"
+          % (PID_MEMBRE, "https%3A%2F%2Ffcm.test%2Fmembre-u1"))
+    du = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-u1"})
+    v("la preuve a ete effacee en base", bool(du) and not du.get("rotation_empreinte"), du)
+    v("l'adresse aussi", bool(du) and not du.get("email"), du and du.get("email"))
+    # Et le jeton ne vaut plus rien.
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-u2"),
+        "previous_endpoint": "https://fcm.test/membre-u1",
+        "rotation_jeton": _ju,
+    })
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-u2"})
+    v("le jeton d'un appareil desinscrit ne verifie plus",
+      bool(d) and d.get("push_verifie") is not True, d)
+
 finally:
     proc.terminate()
     try:
