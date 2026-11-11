@@ -18003,6 +18003,75 @@ def _inv3_seance_invitee(courses_autorises, linked_ids, course, occurrence, main
     return None
 
 
+# =========================================================================
+# V668 — L'ESPACE MEMBRE AFFICHAIT CHAQUE SÉANCE DEUX FOIS
+# =========================================================================
+#
+# LE DÉFAUT, REPRODUIT. Depuis V647, une séance physique est portée par DEUX
+# fiches : la fiche « forfait » (`agenda_abonne: true`) et la fiche publiée.
+# `GET /sessions/agenda` les regroupe — vérifié en production le 11/11/2026 :
+# 36 occurrences, 36 portant `seance_physique`, une seule `principale` par
+# paire. La vitrine et « Découvrir » affichent donc UNE carte.
+#
+# MAIS L'ESPACE MEMBRE N'UTILISE PAS CETTE ROUTE. Il construit ses propres
+# occurrences, fiche par fiche (`_v184_next_occurrences` dans la boucle
+# ci-dessous), et ne regroupait RIEN. Le membre voyait donc, pour chaque date :
+#     mercredi 18:45 — Afroboost Silent – Session Cardio
+#     mercredi 18:45 — Cours à l'unité
+# C'est exactement la capture d'écran signalée. Le groupement existait, il
+# n'était simplement pas appliqué ici.
+#
+# ON RÉUTILISE LA MÊME FONCTION, on n'en écrit pas une seconde :
+# `v647_groupes_depuis_base` est celle qui décide déjà, pour l'agenda public et
+# pour le comptage des inscrits, que deux fiches sont un seul cours.
+#
+# CE QU'ON GARDE DE CHAQUE PAIRE : l'occurrence de la fiche PRINCIPALE (la
+# fiche forfait), car c'est son nom que la vitrine affiche — les deux surfaces
+# disent ainsi la même chose. Et on expose `ids`, les deux fiches, pour que le
+# comptage des participants reste commun.
+#
+# EN CAS DE DOUTE, ON NE TOUCHE À RIEN : sans groupe, ou si la lecture échoue,
+# la liste repart telle quelle. Perdre une séance serait pire qu'en afficher
+# deux.
+async def _v668_regrouper_occurrences(occurrences):
+    """Une seule occurrence par séance physique et par instant."""
+    if not occurrences:
+        return occurrences
+    try:
+        from api.routes.shared import v647_groupes_depuis_base as _v668_grp
+        _groupes = await _v668_grp(db)
+    except Exception as _e668:  # noqa: BLE001
+        logger.warning("[V668] groupes illisibles (%s) : liste inchangée",
+                       type(_e668).__name__)
+        return occurrences
+    if not _groupes:
+        return occurrences
+    _sortie, _vus = [], {}
+    for _o in occurrences:
+        _info = _groupes.get((_o or {}).get("course_id"))
+        if not _info:
+            _sortie.append(_o)
+            continue
+        _cle = (_info["id"], str(_o.get("datetime")))
+        _principale = _info.get("principale") == _o.get("course_id")
+        _ids = sorted({x for x in str(_info.get("id") or "").split("+") if x})
+        _enrichi = dict(_o)
+        _enrichi["seance_physique"] = _info["id"]
+        _enrichi["seance_principale"] = _principale
+        _enrichi["ids"] = _ids
+        if _cle not in _vus:
+            _vus[_cle] = len(_sortie)
+            _sortie.append(_enrichi)
+        elif _principale:
+            # La principale arrive après : elle REMPLACE, pour que le nom
+            # affiché soit le même que sur la vitrine.
+            _sortie[_vus[_cle]] = _enrichi
+    _retires = len(occurrences) - len(_sortie)
+    if _retires:
+        logger.info("[V668] espace membre : %d occurrence(s) en double retirée(s)", _retires)
+    return _sortie
+
+
 @api_router.get("/subscriber/space/{access_code}")
 async def get_subscriber_space(access_code: str, request: Request, m: Optional[str] = None,
                                course: Optional[str] = None, occurrence: Optional[str] = None):
@@ -18332,6 +18401,8 @@ async def get_subscriber_space(access_code: str, request: Request, m: Optional[s
     occurrences = []
     for course in courses_raw:
         occurrences.extend(_v184_next_occurrences(course, days_ahead=14))
+    # V668 : une seule occurrence par séance physique — même règle que la vitrine.
+    occurrences = await _v668_regrouper_occurrences(occurrences)
 
     # V243/V244: repli, RESSERRE. Depuis V244 le sentinelle bassi_default est
     # migre : un coach_id valide (email d'un coach reel) qui n'a aucun cours
