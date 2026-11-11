@@ -7,6 +7,7 @@ import React, { useRef, useCallback, memo, useMemo, useState, useEffect } from '
 import axios from 'axios';
 import { ChevronDown, Trash2, Send, Copy, Check, ExternalLink, Phone, Edit2, Save, X, MessageCircle, Link2, Users, Bell, Zap, Search, RefreshCw, Bot, UserRound, Wifi, WifiOff } from 'lucide-react';
 import SmartLinksSection from './SmartLinksSection'; // v98: Liens Intelligents
+import NotificationGrande from '../NotificationGrande'; // V659 — le MEME panneau que l'abonne
 import GroupChatModule from './GroupChatModule'; // v100: Groupes de chat
 import { renderTextWithLinks } from '../chat/ChatBubbles'; // V156.3: Liens cliquables
 import { cl1DoitSonder } from '../../utils/chatPolling'; // CHAT-LOOP3 : garde de visibilité
@@ -136,10 +137,24 @@ NotificationBlockedBanner.displayName = 'NotificationBlockedBanner';
 
 // ====== COMPOSANT TOAST NOTIFICATIONS ======
 const ToastNotifications = memo(({ toastNotifications, handleToastClick, dismissToast }) => {
-  if (toastNotifications.length === 0) return null;
+  // V659 — « Lire » OUVRE LA GRANDE FENETRE, le reste de la vignette garde son
+  // role d'origine : ouvrir la conversation. On ajoute une porte, on n'en
+  // deplace aucune — un coach au milieu d'une saisie n'est jamais interrompu
+  // par un panneau qu'il n'a pas demande.
+  const [enGrand, setEnGrand] = useState(null);
+  if (toastNotifications.length === 0 && !enGrand) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2 max-w-sm" data-testid="notification-toasts">
+    /* V659 — SUR TELEPHONE, LA VIGNETTE PRENAIT 384 px ET COUPAIT A 60
+       CARACTERES. Elle occupe desormais 94 % de la largeur, le texte passe a
+       16 px et n'est plus tronque. Le clic garde EXACTEMENT son role : ouvrir
+       la conversation. Les encoches sont respectees. */
+    <div className="af-toasts" data-testid="notification-toasts"
+         style={{ position: 'fixed', zIndex: 50,
+                  top: 'max(12px, env(safe-area-inset-top))',
+                  right: 'max(12px, env(safe-area-inset-right))',
+                  left: 'auto', width: 'min(94vw, 380px)',
+                  display: 'grid', gap: 8 }}>
       {toastNotifications.map(toast => (
         <div
           key={toast.id}
@@ -147,8 +162,8 @@ const ToastNotifications = memo(({ toastNotifications, handleToastClick, dismiss
           style={{
             background: 'rgba(15, 15, 15, 0.95)',
             backdropFilter: 'blur(20px)',
-            borderRadius: '16px',
-            padding: '14px 18px',
+            borderRadius: '18px',
+            padding: '16px 18px',
             cursor: 'pointer',
             boxShadow: GLOW.violet,
             borderLeft: '3px solid var(--primary-color, #D91CD2)',
@@ -158,23 +173,50 @@ const ToastNotifications = memo(({ toastNotifications, handleToastClick, dismiss
         >
           <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: '12px' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: '600', fontSize: '13px', margin: 0 }}>
+              <p style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 700, fontSize: '15px', margin: 0 }}>
                 {toast.senderName}
               </p>
-              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {toast.content.substring(0, 60)}{toast.content.length > 60 ? '…' : ''}
+              {/* V659 — PLUS DE COUPE A 60 CARACTERES. Le texte s'affiche sur
+                  trois lignes au plus ; la suite se lit dans la conversation,
+                  qu'un clic ouvre deja. */}
+              <p style={{ color: 'rgba(255,255,255,0.82)', fontSize: '16px', lineHeight: 1.45,
+                          marginTop: '6px', display: '-webkit-box', WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                {toast.content}
               </p>
             </div>
             <button
+              onClick={(e) => { e.stopPropagation(); setEnGrand(toast); }}
+              aria-label="Lire la notification en entier"
+              data-testid={`toast-lire-${toast.id}`}
+              style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), .18)', border: 'none',
+                       color: 'var(--primary-color, #D91CD2)', cursor: 'pointer', height: 36,
+                       padding: '0 14px', borderRadius: 999, fontWeight: 700, fontSize: 14,
+                       flexShrink: 0 }}
+            >
+              Lire
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); dismissToast(toast.id); }}
               aria-label="Fermer la notification"
-              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '2px', fontSize: '14px' }}
+              style={{ background: 'rgba(255,255,255,0.08)', border: 'none', color: 'rgba(255,255,255,0.75)',
+                       cursor: 'pointer', width: 36, height: 36, borderRadius: 999, padding: 0,
+                       flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              <SvgIcon name="close" size={14} />
+              <SvgIcon name="close" size={16} />
             </button>
           </div>
         </div>
       ))}
+      {enGrand && (
+        <NotificationGrande
+          file={[{ id: enGrand.id, titre: enGrand.senderName, texte: enGrand.content,
+                   type: 'message',
+                   action: { libelle: 'Ouvrir la conversation',
+                             onClick: () => handleToastClick(enGrand) } }]}
+          onFermer={() => setEnGrand(null)}
+        />
+      )}
     </div>
   );
 });

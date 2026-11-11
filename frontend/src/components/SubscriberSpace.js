@@ -13,7 +13,8 @@ import { sessionPourEspace, ecrireSession, oublierSession } from "../utils/espac
 import { retenirIntentionMembre } from "../utils/participationEvenement"; // V610p
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
-import CarteNotifications from './CarteNotifications'; // PUSH-PWA — état des notifications + réactivation automatique
+import CarteNotifications from './CarteNotifications';
+import InstallationAfroboost from './InstallationAfroboost'; // V659 // PUSH-PWA — état des notifications + réactivation automatique
 import CarteCreateur from './createur/CarteCreateur'; // V559 — « Devenir créateur » / « Dashboard Créateur »
 import MenuRapide from './espace/MenuRapide'; // V560 — raccourcis en haut de l'espace
 import AfficheEvenementEspace from './espace/AfficheEvenementEspace'; // V565 — l'affiche du coach, en ligne
@@ -1414,6 +1415,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             déjà accordée — sans ouvrir la moindre popup. Si elle n'a jamais été
             demandée, elle propose un bouton ; si elle a été refusée, elle le dit une
             fois et n'insiste plus. */}
+        {/* V659 — INSTALLER AVANT D'ACTIVER, ET DANS CET ORDRE.
+            Sur iPhone, les notifications n'arrivent QUE si l'application a ete
+            ajoutee a l'ecran d'accueil : c'est une regle d'Apple. Proposer
+            d'activer les notifications a quelqu'un qui est reste dans Safari,
+            c'est lui promettre ce qu'il ne recevra pas. La fenetre passe donc
+            AVANT la carte d'activation — et se tait des que l'application est
+            installee, ou des que la personne a repondu « Plus tard ».
+            Elle ne bloque rien : le compte, les reservations et les paiements
+            restent accessibles derriere. */}
+        <InstallationAfroboost
+          estAbonne={Boolean(subscriber?.email)}
+          prompt={typeof window !== 'undefined' ? window.__pwaInstallPrompt : null}
+        />
+
         <CarteNotifications
           participantId={subscriber?.email ? `sub_${String(subscriber.email).toLowerCase()}` : null}
           role="subscriber"

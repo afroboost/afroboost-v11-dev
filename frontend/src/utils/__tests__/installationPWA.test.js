@@ -1,0 +1,78 @@
+import {
+  PLATEFORME, plateforme, estInstallee, peutInstallerNativement,
+  modeInstallation, faudraitMontrer, ETAPES_IOS, ETAPES_ANDROID,
+} from '../installationPWA';
+
+const UA = {
+  iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+  ipad13: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+  android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36',
+  mac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36',
+};
+
+describe('V659 — reconnaître le téléphone', () => {
+  test('iPhone, iPad moderne, Android, ordinateur', () => {
+    expect(plateforme(UA.iphone)).toBe(PLATEFORME.IOS);
+    expect(plateforme(UA.ipad13)).toBe(PLATEFORME.IOS);   // iPadOS se dit « Macintosh »
+    expect(plateforme(UA.android)).toBe(PLATEFORME.ANDROID);
+    expect(plateforme(UA.mac)).toBe(PLATEFORME.AUTRE);     // un Mac n'est pas un iPad
+    expect(plateforme(null)).toBe(PLATEFORME.AUTRE);
+  });
+
+  test('déjà installée : les deux signes comptent', () => {
+    expect(estInstallee(true, false)).toBe(true);    // Android : display-mode
+    expect(estInstallee(false, true)).toBe(true);    // iOS : navigator.standalone
+    expect(estInstallee(false, false)).toBe(false);
+    expect(estInstallee(undefined, undefined)).toBe(false);
+  });
+
+  test("un bouton natif n'existe que si le navigateur l'a promis", () => {
+    expect(peutInstallerNativement({ prompt: () => {} })).toBe(true);
+    expect(peutInstallerNativement(null)).toBe(false);
+    expect(peutInstallerNativement(undefined)).toBe(false);
+  });
+});
+
+describe('V659 — que montrer, et à qui', () => {
+  test('iPhone : JAMAIS de bouton, toujours le guide', () => {
+    // La règle la plus importante du fichier : sur iPhone, aucune page web ne
+    // peut installer. Même si un prompt traînait, on montre le guide.
+    expect(modeInstallation({ userAgent: UA.iphone, prompt: null })).toBe('guide-ios');
+    expect(modeInstallation({ userAgent: UA.iphone, prompt: { prompt: () => {} } })).toBe('guide-ios');
+    expect(modeInstallation({ userAgent: UA.ipad13, prompt: null })).toBe('guide-ios');
+  });
+
+  test('Android : bouton natif si le navigateur le permet, sinon instructions', () => {
+    expect(modeInstallation({ userAgent: UA.android, prompt: { prompt: () => {} } })).toBe('bouton-natif');
+    expect(modeInstallation({ userAgent: UA.android, prompt: null })).toBe('instructions-android');
+  });
+
+  test('déjà installée : on ne montre plus rien, quel que soit le téléphone', () => {
+    for (const ua of Object.values(UA)) {
+      expect(modeInstallation({ userAgent: ua, standaloneMedia: true })).toBe('deja-installee');
+      expect(modeInstallation({ userAgent: ua, navigatorStandalone: true })).toBe('deja-installee');
+    }
+  });
+
+  test('ordinateur sans prompt : on le dit, on n’invente pas', () => {
+    expect(modeInstallation({ userAgent: UA.mac, prompt: null })).toBe('non-supporte');
+  });
+
+  test('la fenêtre ne s’impose qu’aux abonnés, et une seule fois', () => {
+    const base = { mode: 'guide-ios', estAbonne: true, dejaVue: false };
+    expect(faudraitMontrer(base)).toBe(true);
+    expect(faudraitMontrer({ ...base, estAbonne: false })).toBe(false);   // visiteur : jamais
+    expect(faudraitMontrer({ ...base, dejaVue: true })).toBe(false);      // on n'insiste pas
+    expect(faudraitMontrer({ ...base, mode: 'deja-installee' })).toBe(false);
+  });
+
+  test('les guides existent et tiennent en quelques étapes', () => {
+    expect(ETAPES_IOS.length).toBe(5);
+    expect(ETAPES_ANDROID.length).toBe(4);
+    expect(ETAPES_IOS.map(e => e.n)).toEqual([1, 2, 3, 4, 5]);
+    expect(ETAPES_IOS.every(e => e.texte.length > 10)).toBe(true);
+    // Le guide iOS doit nommer le vrai chemin, pas un raccourci inventé.
+    expect(ETAPES_IOS.some(e => /Partager/i.test(e.texte))).toBe(true);
+    expect(ETAPES_IOS.some(e => /écran d’accueil/i.test(e.texte))).toBe(true);
+  });
+});
