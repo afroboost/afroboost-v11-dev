@@ -17726,6 +17726,66 @@ async def b3s1_revoquer_session(request: Request):
         logger.info("[B3-S1] session revoquee (jti=%s)", str(charge.get("jti"))[:8])
     except Exception as _err:
         logger.warning("[B3-S1] revocation impossible (%s)", type(_err).__name__)
+    # =====================================================================
+    # V662e — SE DECONNECTER RETIRE LA VERIFICATION DES APPAREILS, TOUT DE SUITE
+    # =====================================================================
+    #
+    # CE QUE J'AVAIS AFFIRME A TORT EN V662d. J'ai ecrit « se deconnecter coupe
+    # la verification de l'appareil ». C'etait a MOITIE vrai : le controle de
+    # session ne s'executait QU'A LA ROTATION d'endpoint. Un appareil deja
+    # verifie continuait donc de recevoir le texte COMPLET — nom du cours,
+    # heure, lieu — indefiniment apres la deconnexion, puisque l'envoi ne
+    # regarde que `push_verifie`.
+    #
+    # ON LE FAIT DONC ICI, AU MOMENT DE LA DECONNEXION : tous les appareils
+    # verifies PAR CETTE SESSION perdent leur liaison. Ils restent abonnes et
+    # continuent de sonner — en NEUTRE. Se reconnecter les reverifie.
+    #
+    # POURQUOI PAS UN CONTROLE A L'ENVOI : il faudrait une requete de session
+    # par notification et par appareil, sur un chemin qui tourne toutes les
+    # heures pour tout le monde. Fermer la porte une fois, au bon moment, vaut
+    # mieux que la verifier des milliers de fois.
+    try:
+        # ---------------------------------------------------------------
+        # UN PAR UN, ET BORNE — JAMAIS UNE ECRITURE DE MASSE
+        # ---------------------------------------------------------------
+        # Le banc `test_push_cycle_vie_n2` (S6) interdit toute operation de
+        # masse sur `push_subscriptions`, et il a raison DEUX FOIS :
+        #   1. le stock historique ne doit jamais etre nettoye en bloc ;
+        #   2. mon propre filtre etait a une garde de la catastrophe — un
+        #      `jti` vide aurait donne `{"preuve_jti": None}`, qui matche TOUS
+        #      les documents sans ce champ, soit la totalite des abonnements.
+        # On relit donc les appareils concernes, borne a 20, et on les denoue
+        # un par un. Une session compte quelques appareils, pas des centaines.
+        # (Un second banc, `test_session_abonnee_persistante` G2, inspecte le
+        # diff et refuse jusqu'au NOM de ces operations dans une ligne ajoutee :
+        # deux gardes independantes pour la meme regle, et c'est tant mieux.)
+        #
+        # UN SEUL OPERATEUR SUR `push_verifie` : `$set: False` ET `$unset` sur
+        # le meme champ font rejeter l'ecriture par MongoDB (« would create a
+        # conflict ») — et le `except` l'aurait AVALEE, laissant les appareils
+        # verifies sans que rien ne le dise. `V662D_OUBLIER` retire deja
+        # `push_verifie`, et l'envoi exige `is True` : absent = non verifie.
+        _jti_rev = str(charge.get("jti") or "").strip()
+        _denoues = 0
+        if _jti_rev:
+            _vises = await db.push_subscriptions.find(
+                {"preuve_jti": _jti_rev}, {"_id": 0, "subscription.endpoint": 1}
+            ).to_list(20)
+            for _vd in _vises:
+                _vep = ((_vd.get("subscription") or {}).get("endpoint") or "")
+                if not _vep:
+                    continue
+                await db.push_subscriptions.update_one(
+                    {"subscription.endpoint": _vep, "preuve_jti": _jti_rev},
+                    {"$unset": dict(V662D_OUBLIER)})
+                _denoues += 1
+        if _denoues:
+            logger.info("[V662e] deconnexion : %d appareil(s) ne sont plus verifies",
+                        _denoues)
+    except Exception as _err2:
+        logger.warning("[V662e] appareils non denoues (%s) — ils resteront verifies",
+                       type(_err2).__name__)
     return {"success": True}
 
 
@@ -46744,10 +46804,23 @@ async def subscribe_push(request: Request):
             # Un JWT coach n'a pas de `jti` : on ne verifie que s'il y en a un.
             if _d and _d.get("preuve_jti"):
                 try:
-                    from api.routes.shared import lotb3s1_session_utilisable
                     _sx = await db[_B3S1_COLL_SESSIONS].find_one({"jti": _d["preuve_jti"]})
-                    if not _sx or _sx.get("revoked") is True:
-                        logger.info("[V662d] report refuse : session revoquee")
+                    # V662e — ON REGARDE AUSSI L'EXPIRATION, pas seulement
+                    # `revoked`. Une session peut etre arrivee a son terme sans
+                    # avoir ete fermee explicitement ; la traiter comme vivante
+                    # etait une faille de plus. On ne peut PAS appeler
+                    # `lotb3s1_session_utilisable` ici : elle recompare la
+                    # charge du jeton (code, coach_id, slug), et nous n'avons
+                    # que le `jti` stocke. On controle donc exactement les deux
+                    # champs dont on dispose, et c'est dit.
+                    _morte = (not _sx) or _sx.get("revoked") is True
+                    if not _morte and _sx.get("expires_at"):
+                        from api.routes.shared import n2_instant_reel as _n2x
+                        _fin = _n2x(_sx.get("expires_at"))
+                        if _fin is not None and datetime.now(timezone.utc) > _fin:
+                            _morte = True
+                    if _morte:
+                        logger.info("[V662e] report refuse : session fermee ou perimee")
                         _d = None
                 except Exception:  # noqa: BLE001
                     logger.warning("[V662d] session de preuve illisible : report refuse")

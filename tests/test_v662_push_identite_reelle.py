@@ -353,6 +353,53 @@ try:
     v("le jeton d'un appareil desinscrit ne verifie plus",
       bool(d) and d.get("push_verifie") is not True, d)
 
+    print()
+    print("== 14. V662e — LA DECONNEXION RETIRE LA VERIFICATION, TOUT DE SUITE ==")
+    # LE DEFAUT QUE CE CONTROLE SURVEILLE. V662d ne verifiait la session QU'A
+    # LA ROTATION : un appareil deja verifie continuait de recevoir le texte
+    # COMPLET indefiniment apres la deconnexion, puisque l'envoi ne regarde
+    # que `push_verifie`. La deconnexion doit DENOUER l'appareil en base.
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-d1"),
+        "email": MEMBRE,
+    }, {"X-Subscriber-Token": JETON_MEMBRE})
+    v("l'appareil est verifie avant la deconnexion", rep.get("push_verifie") is True, rep)
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-d1"})
+    v("et porte bien la session qui l'a prouve", bool(d) and d.get("preuve_jti") == JTI_MEMBRE,
+      d and d.get("preuve_jti"))
+
+    # La vraie deconnexion, par la route reelle, avec le jeton d'espace.
+    st, rep = appel("POST", "/api/subscriber/session/revoke", {},
+                    {"x-espace-token": JETON_MEMBRE})
+    v("la deconnexion repond 200", st == 200, (st, rep))
+
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-d1"})
+    v("l'appareil N'EST PLUS verifie", bool(d) and d.get("push_verifie") is not True, d)
+    v("son adresse a ete retiree", bool(d) and not d.get("email"), d and d.get("email"))
+    v("son jeton de rotation a ete retire", bool(d) and not d.get("rotation_empreinte"), d)
+    # Il reste ABONNE : il sonnera, en neutre. On ne coupe personne.
+    v("il reste abonne (il sonnera, en neutre)", bool(d) and d.get("active") is True, d)
+
+    print()
+    print("== 15. V662e — UNE SESSION PERIMEE NE REPORTE PLUS RIEN ==")
+    db.subscriber_sessions.update_one({"jti": JTI_MEMBRE}, {"$set": {"revoked": False}})
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-e1"),
+        "email": MEMBRE,
+    }, {"X-Subscriber-Token": JETON_MEMBRE})
+    _je = str(rep.get("rotation_jeton") or "")
+    v("verifie a nouveau apres reconnexion", rep.get("push_verifie") is True, rep)
+    # La session arrive a son terme SANS avoir ete fermee explicitement.
+    db.subscriber_sessions.update_one(
+        {"jti": JTI_MEMBRE},
+        {"$set": {"expires_at": (_dt.now(_tz.utc) - _td(days=1)).isoformat()}})
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-e2"),
+        "previous_endpoint": "https://fcm.test/membre-e1", "rotation_jeton": _je,
+    })
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-e2"})
+    v("session perimee -> report refuse", bool(d) and d.get("push_verifie") is not True, d)
+
 finally:
     proc.terminate()
     try:
