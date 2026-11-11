@@ -2515,7 +2515,7 @@ async def create_course(course: CourseCreate, request: Request):
     # V664 : refus AVANT l'écriture. Rien n'est inséré puis nettoyé.
     _v664_dej = await _v664_doublon_existant(course_obj.model_dump())
     if _v664_dej:
-        _v664_refus(_v664_dej)
+        _v664_refus(_v664_dej, course_obj.model_dump())
     await db.courses.insert_one(course_obj.model_dump())
     return course_obj
 
@@ -2581,8 +2581,25 @@ def _v664_cle_creneau(cours) -> tuple:
               "rte": "route", "pl": "place", "r": "rue", "imp": "impasse",
               "sq": "square", "all": "allee", "qu": "quai", "fbg": "faubourg"}
     _lieu = " ".join(_voies.get(_mot, _mot) for _mot in _lieu.split())
-    if not _lieu:
-        return None                      # lieu inconnu : on ne conclut pas
+    # =====================================================================
+    # V664c — UN COACH N'EST PAS À DEUX ENDROITS À LA FOIS
+    # =====================================================================
+    # Le lieu ne sort PLUS de la clé. V664 refusait deux fiches au même
+    # créneau SEULEMENT au même endroit : un même coach pouvait donc être
+    # programmé à 18:45 à Neuchâtel ET à 18:45 à Martigny. Physiquement
+    # impossible, et c'est désormais refusé.
+    #
+    # Conséquence voulue : la comparaison n'a plus besoin du lieu, donc un
+    # cours sans adresse est comparé lui aussi — il n'y a plus d'angle mort.
+    # Ce qui reste autorisé : deux coachs DIFFÉRENTS au même créneau, et le
+    # même coach à des heures ou des jours différents.
+    #
+    # ⚠️ CE QUI N'EST PAS EXPRIMABLE, ET QUE JE NE DEVINE PAS : un cours ne
+    # porte AUCUNE DURÉE en base (vérifié : aucun champ de fin). Un vrai
+    # chevauchement — 18:45 et 19:00 pour des séances d'une heure — ne peut
+    # donc pas être détecté. Inventer une durée par défaut refuserait des
+    # cours légitimes. On compare l'heure de DÉBUT, et c'est dit.
+    _ = _lieu                            # conservé pour le journal, hors clé
     _date = str(c.get("date") or "").strip()
     if _date:
         _moment = ("date", _date)
@@ -2594,22 +2611,31 @@ def _v664_cle_creneau(cours) -> tuple:
             _moment = ("jour", int(str(_j).strip()))
         except Exception:  # noqa: BLE001
             return None
-    return (_coach, _h * 60 + _mn, _lieu, _moment)
+    return (_coach, _h * 60 + _mn, _moment)
 
 
 async def _v664_doublon_existant(cours, exclure_id=None):
     """Le cours du MÊME coach occupant déjà cette séance physique, ou None.
 
-    On ne lit que les cours NON ARCHIVÉS du même coach : un cours archivé n'est
-    plus proposé, et refuser à cause de lui bloquerait une reprogrammation
-    légitime.
+    SEULS LES COURS VIVANTS COMPTENT : ni archivés, ni masqués.
+      - archivé  -> plus proposé ; refuser à cause de lui empêcherait une
+        reprogrammation légitime ;
+      - masqué (`visible: false`) -> absent de tous les agendas, donc en
+        conflit avec personne. C'est AUSSI l'état des brouillons que
+        l'assistant d'offres crée avant enregistrement, et celui des doublons
+        neutralisés par la migration V665 : sans cette condition, un doublon
+        masqué empêcherait le coach de modifier le cours qui le remplace.
+
+    Corollaire traité à l'appel : publier un brouillon (`visible: true`) doit
+    repasser par cette garde, sinon deux brouillons masqués au même créneau
+    pourraient devenir visibles tous les deux.
     """
     _cle = _v664_cle_creneau(cours)
     if not _cle:
         return None
     try:
         _autres = await db.courses.find(
-            {"coach_id": _cle[0], "archived": {"$ne": True}},
+            {"coach_id": _cle[0], "archived": {"$ne": True}, "visible": {"$ne": False}},
             {"_id": 0, "id": 1, "name": 1, "time": 1, "weekday": 1, "date": 1,
              "locationName": 1, "location": 1, "coach_id": 1}).to_list(400)
     except Exception:  # noqa: BLE001
@@ -2622,8 +2648,23 @@ async def _v664_doublon_existant(cours, exclure_id=None):
     return None
 
 
-def _v664_refus(existant):
+def _v664_refus(existant, candidat=None):
+    """Un refus qui DIT LEQUEL des deux problèmes il décrit.
+
+    Même lieu  -> c'est la même séance en double : on rattache.
+    Lieu autre -> le coach est déjà pris à cette heure-là : on déplace.
+    Dire « doublon » dans le second cas enverrait le coach chercher une fiche
+    qui n'existe pas.
+    """
+    def _l(d):
+        return str((d or {}).get("locationName") or (d or {}).get("location") or "").strip().lower()
     _n = str((existant or {}).get("name") or "ce cours")
+    if candidat is not None and _l(existant) and _l(candidat) and _l(existant) != _l(candidat):
+        raise HTTPException(
+            status_code=409,
+            detail=("Ce coach est déjà pris à cette heure-là : « %s » a lieu au même "
+                    "moment, ailleurs. Choisis un autre horaire, ou un autre coach."
+                    % _n[:80]))
     raise HTTPException(
         status_code=409,
         detail=("Cette séance existe déjà : « %s » occupe le même créneau, au même "
@@ -2663,12 +2704,16 @@ async def update_course(course_id: str, course_update: dict, request: Request):
     # V664 : la garde vaut AUSSI à la modification — déplacer un cours sur un
     # créneau déjà occupé par le même coach créerait le même doublon qu'une
     # création. On compare le cours TEL QU'IL SERA, pas tel qu'il était.
-    if any(k in update_data for k in ("time", "weekday", "date", "locationName", "location")):
+    # `visible` est dans la liste : publier un brouillon est le moment où il
+    # entre en concurrence avec les autres. Sans cela, deux brouillons masqués
+    # au même créneau devenaient visibles tous les deux.
+    if any(k in update_data for k in ("time", "weekday", "date", "locationName",
+                                      "location", "visible")):
         _v664_apres = dict(existing)
         _v664_apres.update(update_data)
         _v664_dej2 = await _v664_doublon_existant(_v664_apres, exclure_id=course_id)
         if _v664_dej2:
-            _v664_refus(_v664_dej2)
+            _v664_refus(_v664_dej2, _v664_apres)
     await db.courses.update_one({"id": course_id}, {"$set": update_data})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     # V618L : la date de l'événement a bougé -> les paliers de son offre suivent.

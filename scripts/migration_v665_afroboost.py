@@ -17,8 +17,24 @@ archivée mais toujours utilisée.
 CE QUE FAIT CETTE MIGRATION
   1. les deux fiches principales -> nom « Afroboost » + description sans casque,
      et DÉSARCHIVÉES pour redevenir le créneau servi ;
-  2. les deux doublons -> ARCHIVÉS (jamais supprimés : leurs 25 réservations
-     restent intactes et consultables) ;
+  2. les deux doublons -> rendus INVISIBLES (`visible: false`), PAS archivés ;
+
+POURQUOI PAS « ARCHIVÉS », ET C'EST LE POINT LE PLUS IMPORTANT DE CE SCRIPT.
+`DELETE /courses/archived/purge` (api/server.py ~2742) supprime les cours
+archivés ET LEURS RÉSERVATIONS :
+
+    deleted_reservations = await db.reservations.delete_many(
+        {"courseId": {"$in": archived_ids}})
+
+Archiver les doublons mettrait donc leurs 25 réservations à UN CLIC d'une
+suppression définitive. `visible: false` produit le même résultat à l'écran —
+l'agenda abonné filtre `visible != False` AUTANT que `archived != True`
+(api/server.py ~2915) — sans les exposer à cette purge.
+
+EFFET DE BORD HEUREUX : les deux fiches principales sont aujourd'hui ARCHIVÉES
+alors qu'elles portent 126 réservations, donc actuellement supprimables en un
+clic. Les désarchiver les met à l'abri. Après migration : 0 réservation
+exposée, contre 126 maintenant.
   3. rien d'autre. Aucun identifiant changé, aucune réservation déplacée,
      aucune capacité ni offre touchée.
 
@@ -48,7 +64,7 @@ PRINCIPALES = {
     "64b4c975-f507-447b-a44d-4623349fd24b": "mercredi 18:45 (71 réservations)",
     "23534f7c-938f-41ff-872b-d62a5314a5d6": "dimanche 18:30 (55 réservations)",
 }
-# Les DOUBLONS : on les archive, on ne supprime rien.
+# Les DOUBLONS : on les rend INVISIBLES. On ne les archive PAS — voir ci-dessous.
 DOUBLONS = {
     "62fcac27-75ad-4429-bfb1-aee613858bdc": "mercredi 18:45 (13 réservations)",
     "01f3b303-1f64-48de-81f0-7c71dbbcb3b6": "dimanche 18:30 (12 réservations)",
@@ -128,7 +144,9 @@ def main():
         nres = db.reservations.count_documents({"courseId": i})
         print("DOUBLON     %s" % quoi)
         print("   nom        « %s »  (inchangé : c'est une trace)" % d.get("name"))
-        print("   archivée   %s  ->  True" % d.get("archived"))
+        print("   visible    %s  ->  False   (retiré de l'agenda)" % d.get("visible"))
+        print("   archivée   %s  ->  False   (NON archivé : la purge ne peut "
+              "pas le supprimer)" % d.get("archived"))
         print("   réservations %d CONSERVÉES, aucune suppression" % nres)
     print()
 
@@ -149,10 +167,17 @@ def main():
             "archived": False, "visible": True,
             "v665_renomme_le": datetime.now(timezone.utc).isoformat()}})
     for i in DOUBLONS:
+        # `visible: false` et NON `archived` : voir l'en-tête du script.
+        # Les réservations restent lisibles dans l'espace membre (requêtes par
+        # e-mail), scannables (le cours est cherché par son id, sans filtre
+        # d'archivage) et hors d'atteinte de la purge.
         db.courses.update_one({"id": i}, {"$set": {
-            "archived": True,
-            "v665_archive_le": datetime.now(timezone.utc).isoformat(),
-            "v665_motif": "doublon de la seance physique, reservations conservees"}})
+            "visible": False,
+            "archived": False,
+            "v665_masque_le": datetime.now(timezone.utc).isoformat(),
+            "v665_motif": ("doublon de la seance physique : masque, NON archive, "
+                           "pour que la purge des archives ne puisse pas "
+                           "supprimer ses reservations")}})
 
     print()
     print("=== VÉRIFICATION APRÈS ÉCRITURE ===")
@@ -180,6 +205,7 @@ def rollback(chemin):
         maj = {k: v for k, v in d.items() if k != "id"}
         db.courses.update_one({"id": i}, {"$set": maj,
                                          "$unset": {"v665_renomme_le": "", "v665_archive_le": "",
+                                                    "v665_masque_le": "",
                                                     "v665_motif": ""}})
         print("  restauré : « %s »  arch=%s" % (d.get("name"), d.get("archived")))
     return 0

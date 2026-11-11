@@ -84,7 +84,15 @@ ENT = {"Authorization": "Bearer %s" % _jet(COACH)}
 
 
 def creer(nom, **kw):
-    corps = {"name": nom, "locationName": kw.pop("lieu", VAL), "visible": False}
+    """Un cours VIVANT (visible). C'est le seul état qui entre en conflit.
+
+    V664d : un cours masqué n'est sur aucun agenda, donc en concurrence avec
+    personne — y compris les brouillons que l'assistant d'offres crée avant
+    enregistrement. Ce banc créait des cours masqués : ses refus ne testaient
+    donc plus rien une fois cette règle posée. Il crée désormais des cours
+    visibles, et le cas du brouillon est traité à part (V664d).
+    """
+    corps = {"name": nom, "locationName": kw.pop("lieu", VAL), "visible": True}
     corps.update(kw)
     return appel("POST", "/api/courses", corps, ENT)
 
@@ -143,14 +151,31 @@ try:
     v("une DATE précise face à un récurrent", st == 200, (st, r3))
     st, r4 = creer("Afroboost", date="2026-12-02", time="18:45")
     v("une SECONDE date du même cours", st == 200, (st, r4))
+    # V664c — CE CAS A CHANGÉ DE CAMP, ET C'EST VOULU.
+    # V664 l'autorisait (lieux différents). Mais le même coach ne peut pas être
+    # à Neuchâtel et à Martigny à 18:45 : c'est désormais refusé, avec un
+    # message qui dit « ce coach est déjà pris » et non « doublon » — l'envoyer
+    # chercher une fiche inexistante ne l'aiderait pas.
     st, r5 = creer("Afroboost Live", weekday=3, time="18:45", lieu=AILLEURS)
-    v("un AUTRE CONCEPT, même heure, AUTRE LIEU", st == 200, (st, r5))
+    v("le MÊME coach ailleurs à la même heure -> 409", st == 409, (st, r5))
+    v("et le message parle du COACH, pas d'un doublon",
+      "deja pris" in str(r5.get("detail", "")).lower()
+      or "déjà pris" in str(r5.get("detail", "")), r5)
+    # Le concept distinct reste possible : à une AUTRE heure.
+    st, r5 = creer("Afroboost Live", weekday=3, time="20:15", lieu=AILLEURS)
+    v("un AUTRE CONCEPT à une autre heure reste autorisé", st == 200, (st, r5))
     st, r6 = appel("POST", "/api/courses", {
         "name": "Afroboost", "weekday": 3, "time": "18:45",
         "locationName": VAL, "visible": False, "coach_id": AUTRE_COACH}, ENT)
     v("un AUTRE COACH au même créneau", st == 200, (st, r6))
+    # V664c — plus d'angle mort : le lieu ne sort plus de la comparaison, donc
+    # un cours SANS adresse est comparé lui aussi. Même coach, même créneau,
+    # pas d'adresse -> refusé. Avant, l'absence d'adresse suffisait à passer.
     st, r7 = creer("Afroboost sans lieu", weekday=3, time="18:45", lieu="")
-    v("un lieu INCONNU n'est jamais refusé (on ne conclut pas)", st == 200, (st, r7))
+    v("un cours SANS LIEU ne contourne plus la garde -> 409", st == 409, (st, r7))
+    # Et un coach sans heure lisible n'est pas comparable : on ne refuse pas.
+    st, r7b = creer("Afroboost heure floue", weekday=3, time="bientôt")
+    v("une heure illisible ne provoque aucun refus", st == 200, (st, r7b))
 
     print()
     print("== UN CRÉNEAU LIBÉRÉ PAR ARCHIVAGE SE REPROGRAMME ==")
@@ -177,6 +202,25 @@ try:
     st, rep = appel("PUT", "/api/courses/%s" % ID_REF,
                     {"weekday": 3, "time": "18:45", "locationName": VAL}, ENT)
     v("un cours ne se bloque pas lui-même", st == 200, (st, rep))
+
+    print()
+    print("== V664d — UN COURS MASQUÉ NE BLOQUE RIEN, MAIS SA PUBLICATION EST GARDÉE ==")
+    # Ce cas vient de la migration V665 : le doublon y est MASQUÉ (et non
+    # archivé, pour que la purge ne puisse pas supprimer ses réservations).
+    # Sans cette règle, ce doublon masqué empêcherait le coach de modifier le
+    # cours qui le remplace.
+    db.courses.insert_one({
+        "id": "masque-1", "name": "Doublon neutralisé", "coach_id": COACH,
+        "weekday": 3, "time": "18:45", "locationName": VAL,
+        "visible": False, "archived": False})
+    st, rep = appel("PUT", "/api/courses/%s" % ID_REF,
+                    {"time": "18:45", "weekday": 3, "locationName": VAL}, ENT)
+    v("un cours MASQUÉ ne bloque pas la modification du cours vivant", st == 200, (st, rep))
+    # Mais le publier, lui, repasse par la garde.
+    st, rep = appel("PUT", "/api/courses/masque-1", {"visible": True}, ENT)
+    v("publier un brouillon sur un créneau occupé -> 409", st == 409, (st, rep))
+    _m = db.courses.find_one({"id": "masque-1"}, {"_id": 0, "visible": 1})
+    v("et il est resté masqué", _m.get("visible") is False, _m)
 
 finally:
     proc.terminate()
