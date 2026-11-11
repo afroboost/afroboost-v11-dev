@@ -31,6 +31,70 @@ possibles — c'est toi qui choisis, je n'en ai engagé aucune :
 
 ---
 
+## Recette de l'option A — une préproduction qui ne peut RIEN envoyer
+
+Vérifié dans le code avant d'écrire ceci, pas supposé.
+
+### 1. L'application Coolify
+
+| Réglage | Valeur |
+|---|---|
+| Dépôt / branche | `afroboost/afroboost-v11-dev` · la branche à tester |
+| Build | le **`Dockerfile`** à la racine (comme la production) |
+| Domaine | `preprod.afroboost.com` |
+| Health Check | **`/healthz`**, port **8080** — jamais `/health`, qui ping Mongo et redémarrerait en boucle sur un hoquet d'Atlas |
+
+DNS : un enregistrement Cloudflare avec **proxy actif** — c'est lui qui fournit
+le certificat HTTPS valide, sans lequel ni l'installation ni le push ne
+fonctionnent.
+
+### 2. Les variables à POSER
+
+| Variable | Valeur | Pourquoi |
+|---|---|---|
+| `MONGO_URL` | le même cluster | — |
+| `DB_NAME` | **`afroboost_preprod`** | ⚠️ **LE POINT CRITIQUE.** Une base distincte. Pointer la préproduction sur la base de production ferait écrire de vraies notifications à de vrais clients, et les boucles horaires (rappels, campagnes, relances J+3) tourneraient sur tes vraies données. |
+| `JWT_SECRET` | une valeur **propre à la préproduction** | sans lui, l'auth retombe sur `X-User-Email` falsifiable — et les trois preuves d'identité de V662 ne fonctionnent pas du tout |
+| `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | les mêmes que la production, c'est sans risque | les abonnements push vivent dans la base **de la préproduction** : aucun appareil réel n'y est inscrit. Le front lit la clé publique au runtime (`GET /api/push/vapid-key`), donc **aucune variable de build** n'est nécessaire. |
+
+### 3. Les variables à NE SURTOUT PAS POSER
+
+Les laisser vides rend l'envoi **techniquement impossible**, ce qui vaut mieux
+que de compter sur un drapeau :
+
+| Variable | Si absente |
+|---|---|
+| `RESEND_API_KEY` | aucun e-mail ne peut partir (17 points d'appel) |
+| `META_WHATSAPP_TOKEN` | aucun WhatsApp |
+| `STRIPE_SECRET_KEY` | aucun paiement — ou **uniquement** une clé `sk_test_…` |
+| `PAWAPAY_API_TOKEN` · `CINETPAY_API_KEY` | aucun Mobile Money |
+| `OPENAI_API_KEY` | pas d'IA (inutile pour ce test) |
+
+Les drapeaux de campagne (`feature_flags`) sont à **False** par défaut dans une
+base neuve : aucune campagne ni relance ne peut démarrer.
+
+### 4. Empêcher l'indexation et les visiteurs
+
+Le dépôt sert un `robots.txt` qui **autorise** les moteurs de recherche : une
+préproduction sur un domaine public serait indexée (contenu dupliqué, site de
+test visible). Avant d'ouvrir le domaine, poser **l'un** des deux :
+
+- **Cloudflare Access** (Zero Trust) avec code à usage unique par e-mail — ton
+  téléphone peut s'authentifier, les robots non. **Recommandé.**
+- ou une règle WAF Cloudflare bloquant les robots sur ce nom d'hôte.
+
+### 5. Les comptes de test à créer (dans la base de préproduction UNIQUEMENT)
+
+| Quoi | Où | Minimum |
+|---|---|---|
+| Un **code d'accès** membre | `discount_codes` | le code, les séances, le propriétaire |
+| Une **réservation** à venir | `reservations` | pour déclencher un rappel (section 4) |
+| Un **compte coach** | `coach_auth` | e-mail + mot de passe de test |
+
+N'importe quel e-mail de test suffit : sans `RESEND_API_KEY`, rien ne part.
+
+---
+
 ## Avant de commencer — à préparer
 
 - [ ] Un **compte membre de test** (code d'accès dédié, adresse que tu relèves)
