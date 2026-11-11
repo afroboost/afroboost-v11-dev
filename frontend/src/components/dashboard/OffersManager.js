@@ -626,6 +626,10 @@ const OffersManager = ({
         open={wizardOpen}
         initialOffer={newOffer}
         courses={courses}
+        // V663 : les noms COMMERCIAUX connus. Le wizard s'en sert pour refuser
+        // qu'un nom d'offre devienne le nom d'une seance — « Cours a l'unite »
+        // etait devenu un COURS, en double de l'Afroboost Silent reel.
+        offerNames={(offers || []).map((o) => (o && o.name) || '').filter(Boolean)}
         isEditing={!!editingOfferId}
         // V645.4k : `newOffer` est une liste blanche qui ne porte PAS `id` —
         // le wizard ne peut pas identifier seul l'offre en cours d'edition.

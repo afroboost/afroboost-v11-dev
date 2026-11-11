@@ -22,6 +22,8 @@ import BanniereBoutiqueSection from './BanniereBoutiqueSection';
 // U1b : champ d'adresse avec suggestions OpenStreetMap. Reste un input texte
 // libre : si le service est injoignable, le champ se comporte comme avant.
 import ChampAdresse from './ChampAdresse';
+// V663 — cours, séance et offre sont trois choses distinctes.
+import { creneauDejaPris, nomDeSeance } from '../../utils/creneauDoublon';
 // SCHEDULES : le type d'un bloc horaire (recurrent / date unique) vit dans un
 // module pur, teste a part. Une offre MELANGE les deux — voir horaireType.js.
 import {
@@ -197,6 +199,8 @@ export default function OfferWizard({
   open,
   initialOffer,
   courses,
+  // V663 : les noms commerciaux, pour qu'aucun ne devienne un nom de seance.
+  offerNames,
   isEditing,
   offerId,
   onSave,
@@ -713,10 +717,26 @@ export default function OfferWizard({
     setAddingCourse(true);
     setCoursesError('');
     try {
+      // =====================================================================
+      // V663 — UNE SÉANCE NE PORTE JAMAIS LE NOM D'UNE OFFRE
+      // =====================================================================
+      //
+      // V251 faisait hériter le nom de l'offre « pour que le coach n'ait plus à
+      // le retaper ». C'est CE raccourci qui a créé le doublon : l'offre
+      // « Cours à l'unité » a fabriqué un COURS du même nom, en double de
+      // l'Afroboost Silent réel. Mesuré en production le 11/11/2026 :
+      //   mercredi 18:45, Valangines 97 — « Session Cardio » : 71 réservations
+      //   mercredi 18:45, Valangines 97 — « Cours à l'unité » : 13 réservations
+      // La même séance physique, réservée sous deux fiches.
+      //
+      // Une offre est une CONDITION D'ACCÈS (unité, pack, abonnement). Elle ne
+      // décrit aucune activité. Le nom de la séance décrit l'ACTIVITÉ, et c'est
+      // le coach qui le donne — `nomDeSeance` refuse tout nom commercial connu,
+      // sans exception codée pour un nom particulier.
+      //
+      // LE LIEU, LUI, EST LÉGITIMEMENT PARTAGÉ : on continue de l'hériter.
       const res = await axios.post(`${API}/courses`, {
-        // V251: le nouvel horaire herite du nom et du lieu de l'offre — le coach
-        // n'a plus a les retaper. Repli sur les valeurs par defaut si vides.
-        name: (form.name && form.name.trim()) || 'Nouveau cours',
+        name: nomDeSeance(form.name, offerNames),
         weekday: 3,
         time: '18:30',
         locationName: form.location || form.locationName || '',
@@ -1881,6 +1901,48 @@ export default function OfferWizard({
                 listes (lecture seule puis editables), ce qui reordonnait
                 l'affichage des qu'une offre melangeait les deux cas. Le
                 caractere editable se decide desormais carte par carte. */}
+            {/* =================================================================
+                V663 — ON AVERTIT, ON NE FUSIONNE PAS
+                =================================================================
+                Quand deux fiches décrivent la même occurrence physique — même
+                jour, même heure, MÊME LIEU — on le DIT, et on propose de
+                rattacher l'existante. On ne fusionne rien, on ne supprime
+                rien : deux cours réellement différents à la même heure doivent
+                rester deux créneaux (c'est pour cela que le lieu entre dans la
+                comparaison, et qu'un lieu inconnu ne conclut jamais).
+                La décision reste au coach. */}
+            {(() => {
+              const collisions = linkedCourses
+                .map((c) => ({ c, autre: creneauDejaPris(courses, c, c.id) }))
+                .filter((x) => x.autre);
+              if (!collisions.length) return null;
+              return (
+                <div
+                  data-testid="v663-avertissement-doublon"
+                  className="p-3 rounded-xl text-sm"
+                  style={{
+                    background: 'rgba(var(--primary-rgb, 217, 28, 210), .10)',
+                    border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), .35)',
+                    color: '#fff', borderRadius: '12px', marginBottom: 10,
+                  }}
+                >
+                  <div className="font-semibold mb-1" style={{ color: 'var(--primary-color, #D91CD2)' }}>
+                    Ce créneau existe déjà
+                  </div>
+                  {collisions.map(({ c, autre }) => (
+                    <div key={c.id} className="text-white/80" style={{ fontSize: 13, lineHeight: 1.45 }}>
+                      « {c.name || 'Séance'} » occupe le même jour, la même heure et le même
+                      lieu que « {autre.name || 'un autre cours'} ».
+                    </div>
+                  ))}
+                  <div className="text-white/60 mt-1" style={{ fontSize: 12 }}>
+                    Si c'est la même séance, retire celle-ci et rattache l'existante
+                    ci-dessous : les réservations et la capacité resteront sur une seule fiche.
+                    Si ce sont deux cours différents, ignore ce message.
+                  </div>
+                </div>
+              );
+            })()}
             {linkedCourses.map(course => (!isCourseEditable(course.id) ? (
               <div
                 key={course.id}
