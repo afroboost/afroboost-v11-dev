@@ -46590,6 +46590,30 @@ async def subscribe_push(request: Request):
                 detail="Cet appareil ne peut pas s'abonner aux notifications d'un autre compte.")
     if not _verifie:
         # Report de verification par POSSESSION DE L'ENDPOINT (meme appareil).
+        # =================================================================
+        # V662b — LE REPORT N'EST PAS UN HERITAGE OUVERT
+        # =================================================================
+        #
+        # LA FAILLE QUE J'AVAIS INTRODUITE EN V662. Je cherchais un abonnement
+        # verifie par son SEUL endpoint. Or un endpoint est une chaine : qui la
+        # connait pouvait poser son PROPRE appareil avec
+        # `previous_endpoint = <endpoint verifie de la victime>`, hériter de son
+        # adresse, et recevoir ses rappels EN CLAIR. Pire : poser l'adresse
+        # rendait aussi l'identifiant de l'attaquant joignable, puisque
+        # `send_push_by_email` resout l'adresse EN identifiants via
+        # `push_subscriptions.email`. La fuite que V662 fermait se rouvrait par
+        # la fenetre.
+        #
+        # CE QUI MANQUAIT : l'endpoint ne prouve RIEN TOUT SEUL. Il ne prouve la
+        # continuite d'un appareil que s'il appartenait DEJA au MEME
+        # participant. On l'exige donc dans le filtre, et on verifie en plus que
+        # cet identifiant est bien joignable depuis l'adresse heritee — la meme
+        # regle que pour une liaison directe, jamais une regle plus souple.
+        #
+        # LE PARCOURS LEGITIME EST INTACT : lors d'une rotation, le Service
+        # Worker relit l'identifiant dans son cache `afroboost-push-owner` et
+        # renvoie LE MEME. Un appareil qui tourne garde son `participant_id` ;
+        # seul son endpoint change. C'est exactement ce que ce filtre autorise.
         _anc = str(body.get("previous_endpoint") or "").strip()
         _herite = None
         for _cle in (endpoint, _anc):
@@ -46597,12 +46621,20 @@ async def subscribe_push(request: Request):
                 continue
             try:
                 _d = await db.push_subscriptions.find_one(
-                    {"subscription.endpoint": _cle, "push_verifie": True},
+                    {"subscription.endpoint": _cle, "push_verifie": True,
+                     "participant_id": participant_id},
                     {"_id": 0, "email": 1, "push_preuve": 1, "push_verifie_le": 1})
             except Exception:  # noqa: BLE001
                 _d = None
             if _d and _d.get("email"):
-                _herite = _d
+                # Double verrou : l'identifiant doit etre joignable depuis
+                # l'adresse heritee. Si la base porte un appariement douteux,
+                # le report s'arrete ici au lieu de le propager.
+                if participant_id in await _v662_pids_autorises(str(_d.get("email"))):
+                    _herite = _d
+                else:
+                    logger.warning("[V662b] report refuse : identifiant non joignable "
+                                   "depuis l'adresse heritee")
         if _herite:
             _verifie = True
             _extra["email"] = str(_herite.get("email"))[:120]

@@ -200,6 +200,36 @@ try:
     v("la portee est annoncee", rep.get("portee") == "appareil", rep)
 
     print()
+    print("== 9. V662b — CONNAITRE UN ENDPOINT VERIFIE NE DONNE PAS L'IDENTITE ==")
+    # L'attaque exacte que V662 avait laissee ouverte : poser SON PROPRE
+    # appareil en declarant l'endpoint verifie de la victime comme « ancien ».
+    # Le report d'une rotation ne doit JAMAIS traverser les comptes.
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_TIERS,                       # un AUTRE compte
+        "subscription": abonnement("https://fcm.test/pirate-rotation"),
+        "previous_endpoint": "https://fcm.test/membre-2",   # endpoint VERIFIE du membre
+    })
+    v("l'appel n'est pas refuse (rotation legitime preservee)", st == 200, (st, rep))
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/pirate-rotation"})
+    v("l'appareil N'EST PAS verifie", bool(d) and d.get("push_verifie") is not True, d)
+    v("et n'a herite AUCUNE adresse", bool(d) and not d.get("email"), d and d.get("email"))
+    # Et l'abonnement de la victime n'a pas ete abime au passage.
+    dv = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-2"})
+    v("l'appareil de la victime reste intact et verifie",
+      bool(dv) and dv.get("push_verifie") is True and dv.get("email") == MEMBRE, dv)
+
+    print()
+    print("== 10. LA ROTATION DU MEME APPAREIL MARCHE TOUJOURS ==")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE,                      # LE MEME compte
+        "subscription": abonnement("https://fcm.test/membre-3"),
+        "previous_endpoint": "https://fcm.test/membre-2",
+    })
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-3"})
+    v("le meme participant garde sa verification",
+      st == 200 and bool(d) and d.get("push_verifie") is True, (st, d))
+
+    print()
     print("== 8. UN TIERS AUTHENTIFIE NE PEUT PAS FAIRE TAIRE QUELQU'UN ==")
     st, rep = appel("DELETE", "/api/push/subscribe/%s" % PID_TIERS,
                     None, {"X-Subscriber-Token": JETON_MEMBRE})
