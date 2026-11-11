@@ -2512,8 +2512,124 @@ async def create_course(course: CourseCreate, request: Request):
     else:
         course_data["coach_id"] = user_email
     course_obj = Course(**course_data)
+    # V664 : refus AVANT l'écriture. Rien n'est inséré puis nettoyé.
+    _v664_dej = await _v664_doublon_existant(course_obj.model_dump())
+    if _v664_dej:
+        _v664_refus(_v664_dej)
     await db.courses.insert_one(course_obj.model_dump())
     return course_obj
+
+# =========================================================================
+# V664 — UN MÊME COACH NE PROGRAMME PAS DEUX FOIS LA MÊME SÉANCE
+# =========================================================================
+#
+# LE FAIT MESURÉ (11/11/2026). La même séance physique existait deux fois :
+#   mercredi 18:45, Valangines 97 — « Session Cardio »   (71 réservations)
+#   mercredi 18:45, Valangines 97 — « Cours à l'unité »  (13 réservations)
+# V663 a supprimé la CAUSE côté interface (une offre ne donne plus son nom à
+# une séance). Cette garde-ci ferme la porte CÔTÉ SERVEUR : aucune route, aucun
+# script, aucune régénération de calendrier ne peut plus recréer un doublon.
+#
+# CE QUI DÉFINIT « LA MÊME SÉANCE PHYSIQUE » — quatre conditions, TOUTES
+# nécessaires. En retirer une produirait des faux positifs qui empêcheraient
+# des cours légitimes :
+#   1. le même COACH (`coach_id`) — deux coachs peuvent animer en parallèle ;
+#   2. la même HEURE ;
+#   3. le même LIEU — deux salles différentes à la même heure sont deux
+#      séances, et un lieu inconnu ne conclut JAMAIS ;
+#   4. le même MOMENT : la même date exacte pour un cours ponctuel, le même
+#      jour de semaine pour un récurrent. Un ponctuel et un récurrent ne sont
+#      jamais rapprochés.
+#
+# CE QUE CETTE GARDE N'EMPÊCHE PAS, ET C'EST VOULU :
+#   - plusieurs DATES du même cours (chaque date est une séance distincte) ;
+#   - plusieurs CONCEPTS différents, même à la même heure, dans des lieux
+#     différents ;
+#   - deux coachs DIFFÉRENTS au même créneau.
+# On ne compare JAMAIS les noms : deux cours peuvent porter le même nom à des
+# créneaux différents, et deux noms différents peuvent désigner la même séance
+# — c'est exactement ce qui s'est produit ici.
+def _v664_cle_creneau(cours) -> tuple:
+    """(coach, heure_en_minutes, lieu, moment) ou None si on ne peut pas conclure."""
+    import re as _re
+    c = cours or {}
+    _coach = str(c.get("coach_id") or "").strip().lower()
+    _m = _re.match(r"^\s*(\d{1,2})\s*[:hH.]\s*(\d{1,2})\s*$", str(c.get("time") or ""))
+    if not _coach or not _m:
+        return None
+    _h, _mn = int(_m.group(1)), int(_m.group(2))
+    if not (0 <= _h <= 23 and 0 <= _mn <= 59):
+        return None
+    _lieu = str(c.get("locationName") or c.get("location") or "")
+    _lieu = _re.sub(r"[^a-z0-9]+", " ",
+                    _lieu.lower().translate(str.maketrans(
+                        "àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc"))).strip()
+    # =====================================================================
+    # V664b — « CHEM. » ET « CHEMIN » SONT LA MÊME RUE
+    # =====================================================================
+    # Trouvé par le garde-fou de la migration, pas par moi : les deux fiches du
+    # mercredi 18:45 portent la MÊME adresse écrite différemment —
+    #   « Chem. des Valangines 97, 2000 Neuchâtel »
+    #   « Chemin des Valangines 97, 2000 Neuchâtel »
+    # Sans cette normalisation, ma garde laissait passer le doublon qu'elle est
+    # censée empêcher : un simple « Chem. » suffisait à la contourner.
+    #
+    # Liste VOLONTAIREMENT COURTE, limitée aux types de voie. On ne touche ni
+    # aux noms propres ni aux numéros : élargir reviendrait à rapprocher des
+    # adresses réellement différentes.
+    _voies = {"chem": "chemin", "av": "avenue", "bd": "boulevard", "blvd": "boulevard",
+              "rte": "route", "pl": "place", "r": "rue", "imp": "impasse",
+              "sq": "square", "all": "allee", "qu": "quai", "fbg": "faubourg"}
+    _lieu = " ".join(_voies.get(_mot, _mot) for _mot in _lieu.split())
+    if not _lieu:
+        return None                      # lieu inconnu : on ne conclut pas
+    _date = str(c.get("date") or "").strip()
+    if _date:
+        _moment = ("date", _date)
+    else:
+        _j = c.get("weekday")
+        if _j is None or str(_j).strip() == "" or str(_j).strip().lower() == "none":
+            return None                  # ni date ni jour : on ne conclut pas
+        try:
+            _moment = ("jour", int(str(_j).strip()))
+        except Exception:  # noqa: BLE001
+            return None
+    return (_coach, _h * 60 + _mn, _lieu, _moment)
+
+
+async def _v664_doublon_existant(cours, exclure_id=None):
+    """Le cours du MÊME coach occupant déjà cette séance physique, ou None.
+
+    On ne lit que les cours NON ARCHIVÉS du même coach : un cours archivé n'est
+    plus proposé, et refuser à cause de lui bloquerait une reprogrammation
+    légitime.
+    """
+    _cle = _v664_cle_creneau(cours)
+    if not _cle:
+        return None
+    try:
+        _autres = await db.courses.find(
+            {"coach_id": _cle[0], "archived": {"$ne": True}},
+            {"_id": 0, "id": 1, "name": 1, "time": 1, "weekday": 1, "date": 1,
+             "locationName": 1, "location": 1, "coach_id": 1}).to_list(400)
+    except Exception:  # noqa: BLE001
+        return None                      # une lecture ratée ne doit rien bloquer
+    for _a in _autres:
+        if exclure_id and _a.get("id") == exclure_id:
+            continue
+        if _v664_cle_creneau(_a) == _cle:
+            return _a
+    return None
+
+
+def _v664_refus(existant):
+    _n = str((existant or {}).get("name") or "ce cours")
+    raise HTTPException(
+        status_code=409,
+        detail=("Cette séance existe déjà : « %s » occupe le même créneau, au même "
+                "lieu, avec le même coach. Modifie-la ou rattache-la, plutôt que "
+                "d'en créer une seconde." % _n[:80]))
+
 
 @api_router.put("/courses/{course_id}")
 async def update_course(course_id: str, course_update: dict, request: Request):
@@ -2544,6 +2660,15 @@ async def update_course(course_id: str, course_update: dict, request: Request):
                                        % ", ".join(M1GEO1_REGIONS))
         update_data["region"] = _reg or None
 
+    # V664 : la garde vaut AUSSI à la modification — déplacer un cours sur un
+    # créneau déjà occupé par le même coach créerait le même doublon qu'une
+    # création. On compare le cours TEL QU'IL SERA, pas tel qu'il était.
+    if any(k in update_data for k in ("time", "weekday", "date", "locationName", "location")):
+        _v664_apres = dict(existing)
+        _v664_apres.update(update_data)
+        _v664_dej2 = await _v664_doublon_existant(_v664_apres, exclure_id=course_id)
+        if _v664_dej2:
+            _v664_refus(_v664_dej2)
     await db.courses.update_one({"id": course_id}, {"$set": update_data})
     updated = await db.courses.find_one({"id": course_id}, {"_id": 0})
     # V618L : la date de l'événement a bougé -> les paliers de son offre suivent.

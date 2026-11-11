@@ -10,6 +10,8 @@ const UA = {
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
   android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36',
   firefox: 'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
+  // V666 : un ordinateur. Aucune installation possible, donc aucune barriere.
+  bureau: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36',
 };
 
 let conteneur, racine;
@@ -82,44 +84,62 @@ describe('V659 — parcours d’installation', () => {
     expect(el('installation-lien-discret')).toBeNull();   // visiteur : rien du tout
   });
 
-  test('V660 — « Plus tard » reporte, et la fenêtre revient après une semaine', async () => {
+  // ===================================================================
+  // V666 — L'INSTALLATION EST UNE ÉTAPE, PLUS UNE SUGGESTION
+  // ===================================================================
+  // Ces trois contrôles REMPLACENT ceux du report (V660/V661) : sur un mobile
+  // compatible, un abonné ne contourne plus la fenêtre. Ce qui protégeait
+  // quelqu'un reste couvert ailleurs — visiteur, ordinateur et application
+  // déjà installée sont testés plus haut, inchangés.
+
+  test('V666 — sur mobile, l’abonné ne peut PAS fermer la fenêtre', async () => {
     simuler({ ua: UA.iphone });
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
-    await clic('installation-plus-tard');
-    expect(el('installation-afroboost')).toBeNull();
-    // On note la date, PAS un « jamais plus ».
-    expect(localStorage.getItem(CLE_VUE)).toBeNull();
-    expect(JSON.parse(localStorage.getItem(CLE_REPORT)).fois).toBe(1);
-    // Tout de suite après : elle se tait.
-    act(() => racine.unmount()); conteneur.remove();
-    await monter(<InstallationAfroboost estAbonne prompt={null} />);
-    expect(el('installation-afroboost')).toBeNull();
-    expect(el('installation-lien-discret')).toBeTruthy();  // la porte reste ouverte
-    // Une semaine plus tard : elle revient.
-    act(() => racine.unmount()); conteneur.remove();
-    localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 8 * 86400000, fois: 1 }));
-    await monter(<InstallationAfroboost estAbonne prompt={null} />);
+    const f = el('installation-afroboost');
+    expect(f).toBeTruthy();
+    // Le titre dit que c'est une étape d'accès, pas une invitation.
+    expect(f.textContent).toMatch(/pour accéder à ton espace membre/i);
+    // Ni « Plus tard », ni croix.
+    expect(el('installation-plus-tard')).toBeNull();
+    expect(conteneur.querySelector('[aria-label="Fermer"]')).toBeNull();
+    // Un clic à côté ne la ferme pas non plus.
+    await act(async () => { f.click(); });
     expect(el('installation-afroboost')).toBeTruthy();
   });
 
-  test('V660 — après trois reports, on n’insiste plus jamais', async () => {
+  test('V666 — mais « je n’arrive pas à installer » donne l’accès, et s’en souvient', async () => {
     simuler({ ua: UA.iphone });
-    localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 400 * 86400000, fois: 3 }));
+    await monter(<InstallationAfroboost estAbonne prompt={null} />);
+    const porte = el('installation-depannage');
+    expect(porte).toBeTruthy();
+    expect(porte.textContent).toMatch(/accéder quand même/i);
+    await clic('installation-depannage');
+    expect(el('installation-afroboost')).toBeNull();
+    // Au rechargement, on ne la redemande pas : personne n'est pris en otage
+    // d'un téléphone récalcitrant.
+    act(() => racine.unmount()); conteneur.remove();
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
     expect(el('installation-afroboost')).toBeNull();
   });
 
-  test('V661 — après les trois rappels, un lien discret reste accessible', async () => {
-    simuler({ ua: UA.iphone });
-    localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 400 * 86400000, fois: 3 }));
+  test('V666 — un ORDINATEUR n’est jamais bloqué', async () => {
+    simuler({ ua: UA.bureau });
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
-    const lien = el('installation-lien-discret');
-    expect(lien).toBeTruthy();
-    expect(lien.textContent).toMatch(/Installer Afroboost/);
-    // Et il rouvre le guide quand on le touche : rien n'est perdu.
-    await clic('installation-lien-discret');
-    expect(el('installation-guide-ios')).toBeTruthy();
+    // Sur ordinateur, la fenêtre EXPLIQUE (comportement d'origine, conservé)
+    // mais ne barre jamais la route : le titre n'est pas celui d'une étape
+    // d'accès, « Plus tard » est là, et aucune porte de dépannage n'est
+    // nécessaire puisqu'il n'y a rien à dépanner.
+    const f = el('installation-afroboost');
+    if (f) {
+      expect(f.textContent).not.toMatch(/pour accéder à ton espace membre/i);
+      expect(el('installation-plus-tard')).toBeTruthy();
+      expect(el('installation-depannage')).toBeNull();
+    } else {
+      // Rien du tout convient aussi : dans les deux cas, rien ne bloque.
+      expect(el('installation-depannage')).toBeNull();
+    }
   });
+
 
   test('navigateur incompatible : on explique, on ne bloque rien', async () => {
     simuler({ ua: UA.firefox });

@@ -74,6 +74,48 @@ export const ETAPES_ANDROID = [
 // des notifications sur iPhone : y renoncer au premier « Plus tard », c'est
 // laisser un abonné injoignable pour toujours. Elle revient donc, mais
 // espacée, et elle finit par se taire pour de bon.
+// =============================================================================
+// V666 — L'INSTALLATION DEVIENT UNE ÉTAPE DU PARCOURS, PAS UNE SUGGESTION
+// =============================================================================
+//
+// CE QUI CHANGE. V660 proposait l'installation et acceptait « Plus tard » trois
+// fois. Sur un mobile compatible, un abonné doit maintenant PASSER PAR LÀ pour
+// atteindre son espace : la fenêtre ne se ferme plus d'un geste.
+//
+// CE QUI NE CHANGE PAS, ET QUI COMPTE AUTANT :
+//   - un VISITEUR n'est jamais bloqué ;
+//   - un ORDINATEUR n'est jamais bloqué (`non-supporte` -> aucune barrière) ;
+//   - sur iPhone, Afroboost NE PEUT PAS installer à la place de la personne :
+//     on guide, puis on invite à ouvrir l'icône. Aucune confirmation
+//     d'installation n'est affichée tant que le mode application n'est pas
+//     RÉELLEMENT constaté (`estInstallee`) — jamais sur parole ;
+//   - et surtout : UNE PORTE DE DÉPANNAGE. Si l'installation échoue ou si
+//     l'appareil ne la permet pas, la personne garde l'accès. Un compte ne se
+//     bloque pas parce qu'un téléphone est récalcitrant : paiements,
+//     assistance, récupération de compte et actions essentielles doivent
+//     rester atteignables.
+export const CLE_DEPANNAGE = 'af_installation_depannage';
+
+/** Un mobile où l'installation a un sens. Ailleurs, aucune barrière. */
+export function mobileCompatible(mode) {
+  return mode === 'guide-ios' || mode === 'bouton-natif' || mode === 'instructions-android';
+}
+
+/**
+ * LA FENÊTRE EST-ELLE UNE ÉTAPE OBLIGATOIRE ICI ?
+ *
+ * Trois conditions, et chacune protège quelqu'un :
+ *   `estAbonne`        — un visiteur n'a rien à installer pour regarder ;
+ *   `mobileCompatible` — un ordinateur ne peut pas installer, donc on n'exige
+ *                        rien ; `deja-installee` sort aussi par là ;
+ *   pas de dépannage   — la personne n'a pas déjà déclaré que ça ne marche pas.
+ */
+export function installationObligatoire({ mode, estAbonne, depannage }) {
+  if (!estAbonne) return false;
+  if (!mobileCompatible(mode)) return false;
+  return !depannage;
+}
+
 export const CLE_VUE = 'af_installation_vue';        // historique : « jamais plus »
 export const CLE_REPORT = 'af_installation_report';  // { le: <ms>, fois: <n> }
 export const DELAI_RAPPEL_JOURS = 7;

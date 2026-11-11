@@ -49,10 +49,26 @@ export function minutesDeLHeure(valeur) {
   return h * 60 + mn;
 }
 
+// V664b — « CHEM. » ET « CHEMIN » SONT LA MÊME RUE.
+// Trouvé par le garde-fou de la migration : les deux fiches du mercredi 18:45
+// portaient la même adresse écrite autrement (« Chem. des Valangines 97 » et
+// « Chemin des Valangines 97 »). Sans cela, un simple point d'abréviation
+// suffisait à contourner la règle qu'elle est censée appliquer.
+// Liste VOLONTAIREMENT COURTE, limitée aux types de voie : ni noms propres, ni
+// numéros. L'élargir rapprocherait des adresses réellement différentes.
+const TYPES_DE_VOIE = {
+  chem: 'chemin', av: 'avenue', bd: 'boulevard', blvd: 'boulevard',
+  rte: 'route', pl: 'place', r: 'rue', imp: 'impasse',
+  sq: 'square', all: 'allee', qu: 'quai', fbg: 'faubourg',
+};
+
 /** Le lieu d'un cours, quel que soit le champ qui le porte. */
 export function lieuDe(cours) {
   const c = cours || {};
-  return normaliser(c.locationName || c.location || '');
+  return normaliser(c.locationName || c.location || '')
+    .split(' ')
+    .map((mot) => TYPES_DE_VOIE[mot] || mot)
+    .join(' ');
 }
 
 /**

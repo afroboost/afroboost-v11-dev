@@ -2,6 +2,7 @@ import {
   PLATEFORME, plateforme, estInstallee, peutInstallerNativement,
   modeInstallation, faudraitMontrer, ETAPES_IOS, ETAPES_ANDROID,
   lireReport, reportSuivant, RAPPELS_MAX, DELAI_RAPPEL_JOURS,
+  installationObligatoire, mobileCompatible,
 } from '../installationPWA';
 
 const T0 = new Date('2026-11-11T09:00:00Z').getTime();
@@ -68,6 +69,30 @@ describe('V659 — que montrer, et à qui', () => {
     expect(faudraitMontrer({ ...base, estAbonne: false })).toBe(false);          // visiteur : jamais
     expect(faudraitMontrer({ ...base, mode: 'deja-installee' })).toBe(false);    // installée : jamais
     expect(faudraitMontrer({ ...base, jamaisPlus: true })).toBe(false);
+  });
+
+  test('V666 — l’installation est une ÉTAPE sur mobile, et seulement là', () => {
+    // Un ABONNÉ sur mobile compatible : c'est une étape.
+    expect(installationObligatoire({ mode: 'guide-ios', estAbonne: true })).toBe(true);
+    expect(installationObligatoire({ mode: 'bouton-natif', estAbonne: true })).toBe(true);
+    expect(installationObligatoire({ mode: 'instructions-android', estAbonne: true })).toBe(true);
+    // Un VISITEUR n'a rien à installer pour regarder.
+    expect(installationObligatoire({ mode: 'guide-ios', estAbonne: false })).toBe(false);
+    // Un ORDINATEUR ne peut pas installer : on n'exige rien.
+    expect(installationObligatoire({ mode: 'non-supporte', estAbonne: true })).toBe(false);
+    // DÉJÀ INSTALLÉE : il n'y a plus d'étape.
+    expect(installationObligatoire({ mode: 'deja-installee', estAbonne: true })).toBe(false);
+    // Et la porte de dépannage est respectée : personne n'est pris en otage.
+    expect(installationObligatoire({ mode: 'guide-ios', estAbonne: true, depannage: true })).toBe(false);
+  });
+
+  test('V666 — « mobile compatible » ne déborde jamais sur l’ordinateur', () => {
+    expect(mobileCompatible('guide-ios')).toBe(true);
+    expect(mobileCompatible('bouton-natif')).toBe(true);
+    expect(mobileCompatible('instructions-android')).toBe(true);
+    expect(mobileCompatible('non-supporte')).toBe(false);
+    expect(mobileCompatible('deja-installee')).toBe(false);
+    expect(mobileCompatible(null)).toBe(false);
   });
 
   test('V660 — « Plus tard » reporte d’une semaine, trois fois au plus', () => {

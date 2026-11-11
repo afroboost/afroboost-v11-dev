@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  CLE_REPORT, CLE_VUE, ETAPES_ANDROID, ETAPES_IOS, faudraitMontrer, lireReport,
-  modeInstallation, reportSuivant,
+  CLE_DEPANNAGE, CLE_REPORT, CLE_VUE, ETAPES_ANDROID, ETAPES_IOS, faudraitMontrer,
+  installationObligatoire, lireReport, modeInstallation, reportSuivant,
 } from '../utils/installationPWA';
 
 /**
@@ -30,6 +30,17 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
   const [occupe, setOccupe] = useState(false);
   // V661 — la personne a demandé elle-même à revoir la fenêtre.
   const [forcee, setForcee] = useState(false);
+  // V666 — « je n'arrive pas à installer ». Déclaré UNE fois, respecté ensuite :
+  // on ne retient personne en otage d'un téléphone récalcitrant.
+  const [depannage, setDepannage] = useState(() => {
+    try { return localStorage.getItem(CLE_DEPANNAGE) === '1'; } catch (err) { return false; }
+  });
+  const ouvrirDepannage = useCallback(() => {
+    try { localStorage.setItem(CLE_DEPANNAGE, '1'); } catch (err) { /* mode privé */ }
+    setDepannage(true);
+    setFerme(true);
+    if (typeof onFermer === 'function') onFermer();
+  }, [onFermer]);
 
   useEffect(() => {
     try {
@@ -78,6 +89,12 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
     report = lireReport(localStorage.getItem(CLE_REPORT));
   } catch (e) { /* mode privé : on propose, c'est le cas le moins pénalisant */ }
   const spontanee = faudraitMontrer({ mode, estAbonne, report, jamaisPlus });
+  // V666 — SUR UN MOBILE COMPATIBLE, C'EST UNE ÉTAPE, PAS UNE SUGGESTION.
+  // `installationObligatoire` sort d'elle-même pour un visiteur, pour un
+  // ordinateur, pour une application déjà installée, et pour qui a déclaré
+  // que l'installation échoue. Ailleurs, la fenêtre ne se referme pas d'un
+  // geste : ni croix, ni clic à côté, ni « Plus tard ».
+  const obligatoire = installationObligatoire({ mode, estAbonne, depannage });
   if (!mode || !estAbonne || mode === 'deja-installee') return null;
 
   // V661 — APRÈS LES TROIS RAPPELS, UNE PORTE RESTE OUVERTE.
@@ -85,7 +102,11 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
   // notifications sur iPhone : la faire disparaître pour toujours, c'est
   // condamner quelqu'un qui changerait d'avis. Un lien discret prend donc le
   // relais — visible, jamais imposé — jusqu'à l'installation effective.
-  if ((ferme || !spontanee) && !forcee) {
+  // V666 — APRÈS « JE N'ARRIVE PAS À INSTALLER », ON SE TAIT.
+  // Sans `depannage` ici, la grande fenêtre revenait dès la visite suivante —
+  // sous sa forme reportable, certes, mais elle revenait. Déclarer que ça ne
+  // marche pas doit être respecté : il reste le lien discret, rien de plus.
+  if (((ferme || !spontanee) && !forcee && !obligatoire) || (depannage && !forcee)) {
     return (
       <button type="button" onClick={() => { setForcee(true); setFerme(false); }}
         data-testid="installation-lien-discret"
@@ -118,7 +139,11 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
         padding: 'max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom))',
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) fermer(true); }}
+      onClick={(e) => {
+        // V666 : un clic à côté ne contourne pas une étape obligatoire.
+        if (obligatoire) return;
+        if (e.target === e.currentTarget) fermer(true);
+      }}
     >
       <div
         className="af-inst-panneau"
@@ -134,8 +159,11 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
           <img src="/logo192.png" alt="" width="44" height="44"
                style={{ borderRadius: 12, flexShrink: 0 }} />
           <h2 id="af-inst-titre" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.25 }}>
-            Installe Afroboost sur ton téléphone
+            {obligatoire
+              ? 'Installe Afroboost pour accéder à ton espace membre'
+              : 'Installe Afroboost sur ton téléphone'}
           </h2>
+          {!obligatoire && (
           <button type="button" onClick={() => fermer(true)} aria-label="Fermer"
             style={{ marginLeft: 'auto', background: 'rgba(255,255,255,.08)', border: 0,
                      color: '#fff', borderRadius: 999, width: 36, height: 36, cursor: 'pointer',
@@ -145,6 +173,7 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
+          )}
         </div>
 
         <p style={{ margin: '0 0 14px', color: 'rgba(255,255,255,.82)', fontSize: 15, lineHeight: 1.55 }}>
@@ -212,12 +241,34 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
           </p>
         )}
 
-        <button type="button" onClick={() => fermer(true)} data-testid="installation-plus-tard"
-          style={{ width: '100%', marginTop: 16, minHeight: 46, background: 'transparent',
-                   border: '1px solid rgba(255,255,255,.18)', borderRadius: 14,
-                   color: 'rgba(255,255,255,.72)', fontSize: 15, cursor: 'pointer' }}>
-          Plus tard
-        </button>
+        {/* ===============================================================
+            V666 — OBLIGATOIRE N'EST PAS « SANS ISSUE »
+            ===============================================================
+            Sur un mobile compatible, « Plus tard » disparaît : l'installation
+            est une étape. Mais il reste UNE porte, et elle est honnête — pas
+            un bouton caché, pas un contournement : « Je n'arrive pas à
+            installer ». Un téléphone trop ancien, un navigateur restreint, un
+            réglage d'entreprise : cela existe, et personne ne doit perdre
+            l'accès à ses paiements, à l'assistance ou à son compte pour
+            autant. Le choix est mémorisé : on ne le redemande pas à chaque
+            visite. */}
+        {obligatoire ? (
+          <button type="button" onClick={ouvrirDepannage}
+            data-testid="installation-depannage"
+            style={{ width: '100%', marginTop: 16, minHeight: 46, background: 'transparent',
+                     border: '1px solid rgba(255,255,255,.18)', borderRadius: 14,
+                     color: 'rgba(255,255,255,.72)', fontSize: 14, cursor: 'pointer',
+                     lineHeight: 1.35, padding: '8px 12px' }}>
+            Je n’arrive pas à installer — accéder quand même
+          </button>
+        ) : (
+          <button type="button" onClick={() => fermer(true)} data-testid="installation-plus-tard"
+            style={{ width: '100%', marginTop: 16, minHeight: 46, background: 'transparent',
+                     border: '1px solid rgba(255,255,255,.18)', borderRadius: 14,
+                     color: 'rgba(255,255,255,.72)', fontSize: 15, cursor: 'pointer' }}>
+            Plus tard
+          </button>
+        )}
       </div>
     </div>
   );
