@@ -71,28 +71,39 @@ describe('V659 — que montrer, et à qui', () => {
     expect(faudraitMontrer({ ...base, jamaisPlus: true })).toBe(false);
   });
 
-  test('V666 — l’installation est une ÉTAPE sur mobile, et seulement là', () => {
-    // Un ABONNÉ sur mobile compatible : c'est une étape.
-    expect(installationObligatoire({ mode: 'guide-ios', estAbonne: true })).toBe(true);
-    expect(installationObligatoire({ mode: 'bouton-natif', estAbonne: true })).toBe(true);
-    expect(installationObligatoire({ mode: 'instructions-android', estAbonne: true })).toBe(true);
+  test('V666/V669 — l’installation est une ÉTAPE sur mobile, et seulement là', () => {
+    const IOS = { mode: 'guide-ios', estAbonne: true, plate: PLATEFORME.IOS };
+    const AND = { mode: 'bouton-natif', estAbonne: true, plate: PLATEFORME.ANDROID };
+    expect(installationObligatoire(IOS)).toBe(true);
+    expect(installationObligatoire(AND)).toBe(true);
+    expect(installationObligatoire({ ...AND, mode: 'instructions-android' })).toBe(true);
     // Un VISITEUR n'a rien à installer pour regarder.
-    expect(installationObligatoire({ mode: 'guide-ios', estAbonne: false })).toBe(false);
+    expect(installationObligatoire({ ...IOS, estAbonne: false })).toBe(false);
     // Un ORDINATEUR ne peut pas installer : on n'exige rien.
-    expect(installationObligatoire({ mode: 'non-supporte', estAbonne: true })).toBe(false);
+    expect(installationObligatoire({ mode: 'non-supporte', estAbonne: true,
+                                     plate: PLATEFORME.AUTRE })).toBe(false);
     // DÉJÀ INSTALLÉE : il n'y a plus d'étape.
-    expect(installationObligatoire({ mode: 'deja-installee', estAbonne: true })).toBe(false);
+    expect(installationObligatoire({ ...AND, mode: 'deja-installee' })).toBe(false);
     // Et la porte de dépannage est respectée : personne n'est pris en otage.
-    expect(installationObligatoire({ mode: 'guide-ios', estAbonne: true, depannage: true })).toBe(false);
+    expect(installationObligatoire({ ...IOS, depannage: true })).toBe(false);
   });
 
-  test('V666 — « mobile compatible » ne déborde jamais sur l’ordinateur', () => {
-    expect(mobileCompatible('guide-ios')).toBe(true);
-    expect(mobileCompatible('bouton-natif')).toBe(true);
-    expect(mobileCompatible('instructions-android')).toBe(true);
-    expect(mobileCompatible('non-supporte')).toBe(false);
-    expect(mobileCompatible('deja-installee')).toBe(false);
-    expect(mobileCompatible(null)).toBe(false);
+  test('V669 — « mobile compatible » ne déborde PLUS sur l’ordinateur', () => {
+    // LE DÉFAUT CORRIGÉ : Chrome de bureau déclenche `beforeinstallprompt`,
+    // donc `bouton-natif` y apparaît aussi. Le mode dit COMMENT installer, pas
+    // SUR QUOI : sans la plateforme, il rendait l'étape obligatoire sur
+    // ordinateur — exactement ce que la consigne interdit.
+    expect(mobileCompatible('bouton-natif', PLATEFORME.AUTRE)).toBe(false);
+    expect(mobileCompatible('instructions-android', PLATEFORME.AUTRE)).toBe(false);
+    expect(mobileCompatible('bouton-natif')).toBe(false);        // plateforme inconnue : prudence
+    // Les mobiles, eux, restent couverts.
+    expect(mobileCompatible('guide-ios', PLATEFORME.IOS)).toBe(true);
+    expect(mobileCompatible('guide-ios')).toBe(true);            // iPhone : le mode suffit
+    expect(mobileCompatible('bouton-natif', PLATEFORME.ANDROID)).toBe(true);
+    expect(mobileCompatible('instructions-android', PLATEFORME.ANDROID)).toBe(true);
+    expect(mobileCompatible('non-supporte', PLATEFORME.ANDROID)).toBe(false);
+    expect(mobileCompatible('deja-installee', PLATEFORME.ANDROID)).toBe(false);
+    expect(mobileCompatible(null, PLATEFORME.ANDROID)).toBe(false);
   });
 
   test('V660 — « Plus tard » reporte d’une semaine, trois fois au plus', () => {

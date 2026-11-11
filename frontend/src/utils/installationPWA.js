@@ -97,8 +97,22 @@ export const ETAPES_ANDROID = [
 export const CLE_DEPANNAGE = 'af_installation_depannage';
 
 /** Un mobile où l'installation a un sens. Ailleurs, aucune barrière. */
-export function mobileCompatible(mode) {
-  return mode === 'guide-ios' || mode === 'bouton-natif' || mode === 'instructions-android';
+export function mobileCompatible(mode, plate) {
+  // V669 — UN ORDINATEUR N'EST PAS UN MOBILE, MÊME QUAND IL SAIT INSTALLER.
+  //
+  // DÉFAUT REPRODUIT dans un vrai Chrome de bureau (11/11/2026) : Chrome
+  // desktop déclenche `beforeinstallprompt`, donc `modeInstallation` rendait
+  // `bouton-natif`, et l'installation devenait OBLIGATOIRE sur ordinateur —
+  // exactement ce que la consigne interdit. Le mode décrit COMMENT installer,
+  // pas SUR QUOI : il ne peut pas décider seul.
+  //
+  // On exige donc la PLATEFORME. Sans elle (appel historique à un argument),
+  // on reste prudent : `bouton-natif` ne suffit plus à rendre obligatoire.
+  if (mode === 'guide-ios') return true;                 // iPhone : toujours mobile
+  if (plate === PLATEFORME.ANDROID) {
+    return mode === 'bouton-natif' || mode === 'instructions-android';
+  }
+  return false;
 }
 
 /**
@@ -110,9 +124,9 @@ export function mobileCompatible(mode) {
  *                        rien ; `deja-installee` sort aussi par là ;
  *   pas de dépannage   — la personne n'a pas déjà déclaré que ça ne marche pas.
  */
-export function installationObligatoire({ mode, estAbonne, depannage }) {
+export function installationObligatoire({ mode, estAbonne, depannage, plate }) {
   if (!estAbonne) return false;
-  if (!mobileCompatible(mode)) return false;
+  if (!mobileCompatible(mode, plate)) return false;
   return !depannage;
 }
 

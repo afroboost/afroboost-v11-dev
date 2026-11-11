@@ -1,0 +1,69 @@
+[
+  {
+    "id": "64b4c975-f507-447b-a44d-4623349fd24b",
+    "name": "Afroboost Silent – Session Cardio",
+    "weekday": 3,
+    "time": "18:45",
+    "locationName": "Chem. des Valangines 97, 2000 Neuchâtel",
+    "mapsUrl": "",
+    "audio_tracks": [],
+    "playlist": [
+      "https://example.com/test.mp3",
+      "/api/files/dbd1f9869ac845ce/audio_dbd1f9869ac845ce.mp3"
+    ],
+    "coach_id": "contact.artboost@gmail.com",
+    "archived": true,
+    "location": "Chem. des Valangines 97, 2000 Neuchâtel",
+    "visible": true,
+    "agenda_abonne": true,
+    "date": "",
+    "reminder_rules": [
+      {
+        "type": "relative",
+        "minutes": 1440
+      },
+      {
+        "type": "same_day",
+        "heure": 7,
+        "minute": 0
+      }
+    ],
+    "reminders_enabled": true,
+    "reminders_updated_at": "2026-09-18T06:58:32.288347+00:00",
+    "region": "neuchatel",
+    "filmed": true,
+    "dates_annulees": [
+      "2026-10-28"
+    ]
+  },
+  {
+    "id": "23534f7c-938f-41ff-872b-d62a5314a5d6",
+    "name": "Afroboost Silent – Sunday Vibes",
+    "weekday": 0,
+    "time": "18:30",
+    "locationName": "Chem. des Valangines 97, 2000 Neuchâtel)",
+    "mapsUrl": "",
+    "coach_id": "contact.artboost@gmail.com",
+    "audio_tracks": [],
+    "archived": true,
+    "location": "Chem. des Valangines 97, 2000 Neuchâtel)",
+    "visible": true,
+    "agenda_abonne": true,
+    "date": "",
+    "region": "neuchatel",
+    "reminder_rules": [
+      {
+        "type": "relative",
+        "minutes": 1440
+      },
+      {
+        "type": "same_day",
+        "heure": 7,
+        "minute": 0
+      }
+    ],
+    "reminders_enabled": true,
+    "reminders_updated_at": "2026-09-18T06:58:32.384030+00:00",
+    "filmed": true
+  }
+]

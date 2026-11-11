@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   CLE_DEPANNAGE, CLE_REPORT, CLE_VUE, ETAPES_ANDROID, ETAPES_IOS, faudraitMontrer,
-  installationObligatoire, lireReport, modeInstallation, reportSuivant,
+  installationObligatoire, lireReport, modeInstallation, plateforme, reportSuivant,
 } from '../utils/installationPWA';
 
 /**
@@ -94,7 +94,12 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
   // ordinateur, pour une application déjà installée, et pour qui a déclaré
   // que l'installation échoue. Ailleurs, la fenêtre ne se referme pas d'un
   // geste : ni croix, ni clic à côté, ni « Plus tard ».
-  const obligatoire = installationObligatoire({ mode, estAbonne, depannage });
+  // V669 : la plateforme entre dans la décision — un ordinateur qui sait
+  // installer (Chrome de bureau déclenche `beforeinstallprompt`) ne doit
+  // jamais se voir imposer l'étape.
+  let plate;
+  try { plate = plateforme(navigator.userAgent); } catch (err) { plate = undefined; }
+  const obligatoire = installationObligatoire({ mode, estAbonne, depannage, plate });
   if (!mode || !estAbonne || mode === 'deja-installee') return null;
 
   // V661 — APRÈS LES TROIS RAPPELS, UNE PORTE RESTE OUVERTE.
@@ -134,7 +139,18 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
       role="dialog" aria-modal="true" aria-labelledby="af-inst-titre"
       data-testid="installation-afroboost"
       style={{
-        position: 'fixed', inset: 0, zIndex: 10000,
+        position: 'fixed', inset: 0,
+        // =============================================================
+        // V669 — L'INSTALLATION PASSE DEVANT TOUT
+        // =============================================================
+        // DÉFAUT REPRODUIT ET MESURÉ dans un vrai navigateur (11/11/2026) :
+        // la fenêtre d'installation s'affichait bien, mais DERRIÈRE la grande
+        // fenêtre de notification (`NotificationGrande`, z-index 10050) —
+        // donc invisible. C'est le « je ne vois aucune demande
+        // d'installation » signalé : la fenêtre était là, cachée.
+        // Mon propre commentaire V659 disait « INSTALLER AVANT D'ACTIVER, ET
+        // DANS CET ORDRE » ; l'empilement disait le contraire.
+        zIndex: 10200,
         background: 'rgba(0,0,0,.72)', backdropFilter: 'blur(6px)',
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
         padding: 'max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom))',
@@ -177,8 +193,16 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
         </div>
 
         <p style={{ margin: '0 0 14px', color: 'rgba(255,255,255,.82)', fontSize: 15, lineHeight: 1.55 }}>
-          Ton espace devient une application : un geste pour y entrer, et surtout
-          les <strong>informations importantes qui arrivent jusqu’à toi</strong>.
+          {/* V669 — le texte demandé mot pour mot quand c'est une ÉTAPE ; la
+              formulation d'origine reste pour la proposition simple. */}
+          {obligatoire ? (
+            <>Retrouve tes <strong>réservations</strong>, ton <strong>QR code</strong>,
+              tes <strong>cours</strong> et tes <strong>rappels</strong> directement depuis
+              l’application Afroboost sur ton téléphone.</>
+          ) : (
+            <>Ton espace devient une application : un geste pour y entrer, et surtout
+              les <strong>informations importantes qui arrivent jusqu’à toi</strong>.</>
+          )}
         </p>
 
         <ul style={{ margin: '0 0 18px', padding: 0, listStyle: 'none', display: 'grid', gap: 9 }}>
