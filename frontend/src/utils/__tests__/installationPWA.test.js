@@ -1,7 +1,11 @@
 import {
   PLATEFORME, plateforme, estInstallee, peutInstallerNativement,
   modeInstallation, faudraitMontrer, ETAPES_IOS, ETAPES_ANDROID,
+  lireReport, reportSuivant, RAPPELS_MAX, DELAI_RAPPEL_JOURS,
 } from '../installationPWA';
+
+const T0 = new Date('2026-11-11T09:00:00Z').getTime();
+const JOUR = 86400000;
 
 const UA = {
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
@@ -58,12 +62,43 @@ describe('V659 — que montrer, et à qui', () => {
     expect(modeInstallation({ userAgent: UA.mac, prompt: null })).toBe('non-supporte');
   });
 
-  test('la fenêtre ne s’impose qu’aux abonnés, et une seule fois', () => {
-    const base = { mode: 'guide-ios', estAbonne: true, dejaVue: false };
+  test('la fenêtre ne s’impose qu’aux abonnés', () => {
+    const base = { mode: 'guide-ios', estAbonne: true, report: null, maintenant: T0 };
     expect(faudraitMontrer(base)).toBe(true);
-    expect(faudraitMontrer({ ...base, estAbonne: false })).toBe(false);   // visiteur : jamais
-    expect(faudraitMontrer({ ...base, dejaVue: true })).toBe(false);      // on n'insiste pas
-    expect(faudraitMontrer({ ...base, mode: 'deja-installee' })).toBe(false);
+    expect(faudraitMontrer({ ...base, estAbonne: false })).toBe(false);          // visiteur : jamais
+    expect(faudraitMontrer({ ...base, mode: 'deja-installee' })).toBe(false);    // installée : jamais
+    expect(faudraitMontrer({ ...base, jamaisPlus: true })).toBe(false);
+  });
+
+  test('V660 — « Plus tard » reporte d’une semaine, trois fois au plus', () => {
+    const base = { mode: 'guide-ios', estAbonne: true, maintenant: T0 };
+    // Le lendemain : on se tait.
+    expect(faudraitMontrer({ ...base, report: { le: T0 - JOUR, fois: 1 } })).toBe(false);
+    // Six jours : toujours trop tôt.
+    expect(faudraitMontrer({ ...base, report: { le: T0 - 6 * JOUR, fois: 1 } })).toBe(false);
+    // Sept jours : on repropose.
+    expect(faudraitMontrer({ ...base, report: { le: T0 - 7 * JOUR, fois: 1 } })).toBe(true);
+    expect(faudraitMontrer({ ...base, report: { le: T0 - 30 * JOUR, fois: 2 } })).toBe(true);
+    // Au troisième « Plus tard », on n'insiste plus JAMAIS — même un an après.
+    expect(faudraitMontrer({ ...base, report: { le: T0 - 365 * JOUR, fois: 3 } })).toBe(false);
+    expect(RAPPELS_MAX).toBe(3);
+    expect(DELAI_RAPPEL_JOURS).toBe(7);
+  });
+
+  test('V660 — un report illisible ne bloque rien', () => {
+    expect(lireReport('nawak')).toBeNull();
+    expect(lireReport(null)).toBeNull();
+    expect(lireReport('{}')).toBeNull();
+    expect(lireReport('{"le":0}')).toBeNull();
+    expect(lireReport('{"le":123}')).toEqual({ le: 123, fois: 1 });
+    // Illisible = jamais reporté = on propose : le cas le moins pénalisant.
+    expect(faudraitMontrer({ mode: 'guide-ios', estAbonne: true, report: null, maintenant: T0 })).toBe(true);
+  });
+
+  test('V660 — chaque report incrémente le compteur', () => {
+    expect(reportSuivant(null).fois).toBe(1);
+    expect(reportSuivant({ le: 1, fois: 1 }).fois).toBe(2);
+    expect(reportSuivant({ le: 1, fois: 2 }).fois).toBe(3);
   });
 
   test('les guides existent et tiennent en quelques étapes', () => {

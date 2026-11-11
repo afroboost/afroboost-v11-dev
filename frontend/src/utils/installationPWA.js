@@ -69,15 +69,43 @@ export const ETAPES_ANDROID = [
   { n: 4, texte: 'Ouvre Afroboost depuis sa nouvelle icône.' },
 ];
 
-// ON NE REDEMANDE PAS À QUELQU'UN QUI A DÉJÀ DIT NON. La fenêtre se montre une
-// fois, puis se tait — sauf si la personne demande elle-même à la revoir.
-export const CLE_VUE = 'af_installation_vue';
+// « PLUS TARD » VEUT DIRE PLUS TARD, PAS JAMAIS — ET PAS DEMAIN NON PLUS.
+// V660 : la fenêtre revenait jamais. L'installation est pourtant la condition
+// des notifications sur iPhone : y renoncer au premier « Plus tard », c'est
+// laisser un abonné injoignable pour toujours. Elle revient donc, mais
+// espacée, et elle finit par se taire pour de bon.
+export const CLE_VUE = 'af_installation_vue';        // historique : « jamais plus »
+export const CLE_REPORT = 'af_installation_report';  // { le: <ms>, fois: <n> }
+export const DELAI_RAPPEL_JOURS = 7;
+export const RAPPELS_MAX = 3;   // au-delà, on n'insiste plus jamais
+
+/** Lecture tolérante du report. PURE. Une valeur illisible vaut « jamais reporté ». */
+export function lireReport(brut) {
+  try {
+    const o = JSON.parse(brut);
+    if (!o || typeof o !== 'object') return null;
+    const le = Number(o.le);
+    const fois = Number(o.fois);
+    if (!Number.isFinite(le) || le <= 0) return null;
+    return { le, fois: Number.isFinite(fois) && fois > 0 ? fois : 1 };
+  } catch (e) { return null; }
+}
 
 /** Faut-il montrer la fenêtre ? PURE.
- *  `estAbonne` : les visiteurs de passage n'ont rien à installer. */
-export function faudraitMontrer({ mode, estAbonne, dejaVue }) {
+ *  `estAbonne` : les visiteurs de passage n'ont rien à installer.
+ *  `report`    : ce qu'a rendu `lireReport`, ou null.
+ *  `jamaisPlus`: l'ancien drapeau, respecté s'il existe déjà. */
+export function faudraitMontrer({ mode, estAbonne, report, jamaisPlus, maintenant }) {
   if (!estAbonne) return false;
-  if (mode === 'deja-installee') return false;
-  if (dejaVue) return false;
-  return true;
+  if (mode === 'deja-installee') return false;   // installée : plus jamais, et c'est définitif
+  if (jamaisPlus) return false;
+  if (!report) return true;                      // jamais reportée : on propose
+  if (report.fois >= RAPPELS_MAX) return false;  // trois « Plus tard » : on se tait
+  const now = typeof maintenant === 'number' ? maintenant : Date.now();
+  return (now - report.le) >= DELAI_RAPPEL_JOURS * 86400000;
+}
+
+/** Ce qu'on écrit quand la personne répond « Plus tard ». PURE. */
+export function reportSuivant(report) {
+  return { le: Date.now(), fois: ((report && report.fois) || 0) + 1 };
 }

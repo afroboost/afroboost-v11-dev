@@ -26,6 +26,7 @@ import { QRScannerModal } from "./QRScanner";
 import { classerEchec } from "../utils/authSession"; // P0-SOCLE : qualifier un echec
 import { SectionErreur } from "./ui/EtatChargement"; // CO-1 : refus de session dit, jamais une liste vide muette
 import { ongletsAutorises, ongletValide } from "../utils/co1OngletsCoach"; // CO-1 : une seule liste d'onglets
+import InstallationAfroboost from './InstallationAfroboost'; // V660
 import ReservationTab from "./coach/ReservationTab"; // Import Reservation Tab
 import CourseRemindersCard from "./coach/CourseRemindersCard"; // RAPPELS V2 : rappels choisis cours par cours
 import SuiviAbonnes from "./coach/SuiviAbonnes"; // V334 etape 3
@@ -6923,6 +6924,17 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
   // (Mais normalement dashboardReady passe à true après 100ms)
   
   return (
+    <>
+    {/* V660 — LE COACH AUSSI DOIT POUVOIR INSTALLER. Il recevait la meme
+        remarque que ses abonnes : les notifications n'arrivent sur un iPhone
+        que si l'application est a l'ecran d'accueil. C'est LE MEME composant
+        que l'espace abonne, pas un second : une seule regle iPhone/Android a
+        tenir, un seul endroit a corriger. Il reporte, revient dans une semaine,
+        trois fois au plus, et ne bloque jamais le tableau de bord. */}
+    <InstallationAfroboost
+      estAbonne={Boolean(coachUser)}
+      prompt={typeof window !== 'undefined' ? window.__pwaInstallPrompt : null}
+    />
     <div className="w-full min-h-screen section-gradient" style={{ padding: '4px', boxSizing: 'border-box', overflowX: 'hidden', maxWidth: '100vw' }}>
       {/* V443 — une section qui n'a pas pu se charger le DIT. Avant, l'echec
           n'existait que dans la console : a l'ecran, « rien n'a pu etre charge »
@@ -9736,6 +9748,7 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
         {/* V639b : le bouton Partenaires est dans Campagnes → Invitation & Parrainage → Mes invitations */}
       </div>
     </div>
+    </>
   );
 };
 

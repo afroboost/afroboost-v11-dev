@@ -4,7 +4,7 @@ import path from 'path';
 import { createRoot } from 'react-dom/client';
 import InstallationAfroboost from '../InstallationAfroboost';
 import NotificationGrande from '../NotificationGrande';
-import { CLE_VUE } from '../../utils/installationPWA';
+import { CLE_REPORT, CLE_VUE } from '../../utils/installationPWA';
 
 const UA = {
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
@@ -79,13 +79,28 @@ describe('V659 — parcours d’installation', () => {
     expect(el('installation-afroboost')).toBeNull();
   });
 
-  test('« Plus tard » est respecté, même au rechargement', async () => {
+  test('V660 — « Plus tard » reporte, et la fenêtre revient après une semaine', async () => {
     simuler({ ua: UA.iphone });
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
     await clic('installation-plus-tard');
     expect(el('installation-afroboost')).toBeNull();
-    expect(localStorage.getItem(CLE_VUE)).toBe('1');
+    // On note la date, PAS un « jamais plus ».
+    expect(localStorage.getItem(CLE_VUE)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(CLE_REPORT)).fois).toBe(1);
+    // Tout de suite après : elle se tait.
     act(() => racine.unmount()); conteneur.remove();
+    await monter(<InstallationAfroboost estAbonne prompt={null} />);
+    expect(el('installation-afroboost')).toBeNull();
+    // Une semaine plus tard : elle revient.
+    act(() => racine.unmount()); conteneur.remove();
+    localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 8 * 86400000, fois: 1 }));
+    await monter(<InstallationAfroboost estAbonne prompt={null} />);
+    expect(el('installation-afroboost')).toBeTruthy();
+  });
+
+  test('V660 — après trois reports, on n’insiste plus jamais', async () => {
+    simuler({ ua: UA.iphone });
+    localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 400 * 86400000, fois: 3 }));
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
     expect(el('installation-afroboost')).toBeNull();
   });

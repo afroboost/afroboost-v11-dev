@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  CLE_VUE, ETAPES_ANDROID, ETAPES_IOS, faudraitMontrer, modeInstallation,
+  CLE_REPORT, CLE_VUE, ETAPES_ANDROID, ETAPES_IOS, faudraitMontrer, lireReport,
+  modeInstallation, reportSuivant,
 } from '../utils/installationPWA';
 
 /**
@@ -39,9 +40,19 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
     } catch (e) { setMode('non-supporte'); }
   }, [prompt]);
 
-  const fermer = useCallback((definitif) => {
+  // V660 — « PLUS TARD » REPORTE, IL N'EFFACE PAS. On note la date et le
+  // nombre de fois : la fenêtre revient dans une semaine, trois fois au plus,
+  // puis se tait pour de bon. `jamaisPlus` n'est écrit QU'APRÈS une
+  // installation réussie — la seule raison de ne plus jamais demander.
+  const fermer = useCallback((reporter, jamaisPlus) => {
     setFerme(true);
-    if (definitif) { try { localStorage.setItem(CLE_VUE, '1'); } catch (e) { /* mode privé */ } }
+    try {
+      if (jamaisPlus) localStorage.setItem(CLE_VUE, '1');
+      else if (reporter) {
+        localStorage.setItem(CLE_REPORT,
+          JSON.stringify(reportSuivant(lireReport(localStorage.getItem(CLE_REPORT)))));
+      }
+    } catch (e) { /* mode privé : la fenêtre reviendra, sans dommage */ }
     if (typeof onFermer === 'function') onFermer();
   }, [onFermer]);
 
@@ -53,15 +64,18 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
       const choix = await prompt.userChoice;
       if (choix && choix.outcome === 'accepted') {
         if (typeof onInstallee === 'function') onInstallee();
-        fermer(true);
+        fermer(false, true);   // installée : on ne redemande plus jamais
       }
     } catch (e) { /* l'invite a expiré : les instructions restent à l'écran */ }
     setOccupe(false);
   }, [prompt, occupe, onInstallee, fermer]);
 
-  let dejaVue = false;
-  try { dejaVue = localStorage.getItem(CLE_VUE) === '1'; } catch (e) { dejaVue = false; }
-  if (ferme || !mode || !faudraitMontrer({ mode, estAbonne, dejaVue })) return null;
+  let jamaisPlus = false; let report = null;
+  try {
+    jamaisPlus = localStorage.getItem(CLE_VUE) === '1';
+    report = lireReport(localStorage.getItem(CLE_REPORT));
+  } catch (e) { /* mode privé : on propose, c'est le cas le moins pénalisant */ }
+  if (ferme || !mode || !faudraitMontrer({ mode, estAbonne, report, jamaisPlus })) return null;
 
   const C = 'var(--primary-color, #D91CD2)';
   const etapes = mode === 'guide-ios' ? ETAPES_IOS
@@ -77,7 +91,7 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
         padding: 'max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom))',
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) fermer(false); }}
+      onClick={(e) => { if (e.target === e.currentTarget) fermer(true); }}
     >
       <div
         className="af-inst-panneau"
@@ -95,7 +109,7 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
           <h2 id="af-inst-titre" style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.25 }}>
             Installe Afroboost sur ton téléphone
           </h2>
-          <button type="button" onClick={() => fermer(false)} aria-label="Fermer"
+          <button type="button" onClick={() => fermer(true)} aria-label="Fermer"
             style={{ marginLeft: 'auto', background: 'rgba(255,255,255,.08)', border: 0,
                      color: '#fff', borderRadius: 999, width: 36, height: 36, cursor: 'pointer',
                      flexShrink: 0, fontSize: 18, lineHeight: '36px', padding: 0 }}>

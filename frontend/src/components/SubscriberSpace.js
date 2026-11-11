@@ -14,7 +14,9 @@ import { retenirIntentionMembre } from "../utils/participationEvenement"; // V61
 import SubscriberOnboarding from "./SubscriberOnboarding"; // V223
 import CarteProfilSpordateur from './CarteProfilSpordateur'; // F3 SUITE — carte compacte vers la VRAIE page profil Spordateur
 import CarteNotifications from './CarteNotifications';
-import InstallationAfroboost from './InstallationAfroboost'; // V659 // PUSH-PWA — état des notifications + réactivation automatique
+import InstallationAfroboost from './InstallationAfroboost'; // V659
+import NotificationGrande from './NotificationGrande'; // V660 — le MEME panneau que le coach
+import { notificationsAbonne } from '../utils/notificationsAbonne'; // V660 // PUSH-PWA — état des notifications + réactivation automatique
 import CarteCreateur from './createur/CarteCreateur'; // V559 — « Devenir créateur » / « Dashboard Créateur »
 import MenuRapide from './espace/MenuRapide'; // V560 — raccourcis en haut de l'espace
 import AfficheEvenementEspace from './espace/AfficheEvenementEspace'; // V565 — l'affiche du coach, en ligne
@@ -201,6 +203,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const [renvoiDispoA, setRenvoiDispoA] = useState(0);
   const [maintenantSec, setMaintenantSec] = useState(() => Date.now());
   const [data, setData] = useState(null);
+  // V660 — les notifications deja lues, pour ne pas rouvrir la meme fenetre a
+  // chaque visite. Lecture tolerante : un stockage illisible vaut « rien lu ».
+  const [notifsLues, setNotifsLues] = useState(() => {
+    try {
+      const b = JSON.parse(localStorage.getItem('af_notifs_lues'));
+      return Array.isArray(b) ? b.filter((x) => typeof x === 'string') : [];
+    } catch (e) { return []; }
+  });
   const [reservingKey, setReservingKey] = useState(null);
   // ESSAI-5a-1 : l'acceptation vaut pour UNE occurrence — l'annonce de
   // captation depend du cours, elle ne peut donc pas etre globale a l'ecran.
@@ -1415,6 +1425,29 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             déjà accordée — sans ouvrir la moindre popup. Si elle n'a jamais été
             demandée, elle propose un bouton ; si elle a été refusée, elle le dit une
             fois et n'insiste plus. */}
+        {/* V660 — LE FIL DE L'ABONNE, TIRE DE SES PROPRES DONNEES.
+            La collection `notifications` du serveur ne porte que des avis
+            destines au COACH : rien n'y est ecrit pour un abonne. Plutot que
+            d'ouvrir un second entrepot a tenir a jour, on LIT ce que cet
+            espace a deja en main — ses reservations et son abonnement. Les
+            faits sont les memes, ils ne peuvent pas diverger, et chacun ne
+            voit que les siens PAR CONSTRUCTION : aucune requete ne pourrait
+            rapporter la ligne d'un autre compte.
+            La fenetre s'ouvre une fois par notification NOUVELLE : ce qui a
+            deja ete lu ne revient pas a chaque visite. */}
+        <NotificationGrande
+          file={notificationsAbonne({
+            reservations: data?.reservations,
+            subscription: data?.subscription,
+          }).map((n) => ({ ...n, lu: notifsLues.includes(n.id) }))}
+          onLue={(n) => setNotifsLues((prev) => {
+            if (prev.includes(n.id)) return prev;          // objet identique : aucun effet relance
+            const suite = [...prev, n.id].slice(-40);      // on ne garde pas un journal infini
+            try { localStorage.setItem('af_notifs_lues', JSON.stringify(suite)); } catch (e) { /* mode prive */ }
+            return suite;
+          })}
+        />
+
         {/* V659 — INSTALLER AVANT D'ACTIVER, ET DANS CET ORDRE.
             Sur iPhone, les notifications n'arrivent QUE si l'application a ete
             ajoutee a l'ecran d'accueil : c'est une regle d'Apple. Proposer
