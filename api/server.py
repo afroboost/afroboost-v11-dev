@@ -19927,13 +19927,47 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
         user_name = subscription.get("name") or (user_email.split("@")[0] if "@" in user_email else "Abonné")
 
     # V185 F3: Empêcher la double réservation (même cours + même occurrence)
+    # =====================================================================
+    # V667 — « LA MÊME SÉANCE », C'EST LE GROUPE, PAS LA FICHE
+    # =====================================================================
+    #
+    # LE TROU MESURÉ. L'anti-doublon ci-dessous comparait `courseId` à UNE
+    # fiche. Or depuis V647, une séance physique est portée par DEUX fiches
+    # groupées : la fiche « forfait » (`agenda_abonne: true`) et la fiche
+    # publiée. Un même membre pouvait donc réserver la MÊME séance deux fois —
+    # une fois par chaque fiche — et occuper deux places.
+    #
+    # Mesure du 11/11/2026 : 0 cas sur les 151 réservations des deux groupes
+    # actifs. Le trou n'a jamais été emprunté, mais il était ouvert.
+    #
+    # ON RÉUTILISE LE GROUPEMENT EXISTANT, on n'en invente pas un second :
+    # `v647_groupes_depuis_base` est la MÊME fonction qui décide, pour l'agenda
+    # ET pour le comptage des inscrits, que deux fiches sont un seul cours.
+    #
+    # SI LE GROUPEMENT ÉCHOUE, on retombe sur la fiche seule : le comportement
+    # d'avant, jamais un refus de trop.
+    _v667_ids = [course_id]
+    try:
+        from api.routes.shared import v647_groupes_depuis_base as _v667_grp
+        _v667_info = (await _v667_grp(db)).get(course_id)
+        if _v667_info:
+            _v667_lot = [x for x in str(_v667_info.get("id") or "").split("+") if x]
+            if _v667_lot:
+                _v667_ids = sorted(set(_v667_lot) | {course_id})
+    except Exception as _e667:  # noqa: BLE001
+        logger.warning("[V667] groupe de séance illisible (%s) : on s'en tient à la fiche",
+                       type(_e667).__name__)
+    _v667_filtre_cours = ({"courseId": course_id} if len(_v667_ids) <= 1
+                          else {"courseId": {"$in": _v667_ids}})
+
     # V208: Pour les groupes, vérifier par member_slug (pas juste email)
     # car plusieurs membres peuvent partager le même email
     if user_email or member_slug:
         import re as _re_mod
         if member_slug:
             # V208: Groupe — vérifier par member_slug
-            dup_query = {"member_slug": member_slug, "courseId": course_id}
+            dup_query = {"member_slug": member_slug}
+            dup_query.update(_v667_filtre_cours)   # V667 : toutes les fiches du groupe
             if occurrence_iso:
                 dup_query["datetime"] = occurrence_iso
             existing_reservation = await db.reservations.find_one(dup_query, {"_id": 0, "id": 1})
@@ -19946,7 +19980,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
                 user_email_safe = re.escape(user_email)
                 old_dup_query = {
                     "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
-                    "courseId": course_id,
+                    **_v667_filtre_cours,     # V667 : toutes les fiches du groupe
                     "$or": [{"member_slug": {"$exists": False}}, {"member_slug": ""}, {"member_slug": None}],
                 }
                 if occurrence_iso:
@@ -19966,7 +20000,7 @@ async def reserve_course_from_space(access_code: str, course_id: str, request: R
             user_email_safe = re.escape(user_email)
             dup_query = {
                 "userEmail": {"$regex": f"^{user_email_safe}$", "$options": "i"},
-                "courseId": course_id,
+                **_v667_filtre_cours,         # V667 : toutes les fiches du groupe
             }
             if occurrence_iso:
                 dup_query["datetime"] = occurrence_iso

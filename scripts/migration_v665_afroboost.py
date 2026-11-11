@@ -1,55 +1,51 @@
 # -*- coding: utf-8 -*-
-"""V665 — « Afroboost » : un seul créneau, le bon nom, aucune réservation perdue.
+"""V665 — Renommer le cours récurrent en « Afroboost ». RIEN D'AUTRE.
 
-ÉTAT MESURÉ (11/11/2026). Le mercredi 18:45 et le dimanche 18:30 existent
-CHACUN en deux fiches, au même lieu, avec le même coach — et les DEUX reçoivent
-encore des réservations :
+════════════════════════════════════════════════════════════════════════════
+CE SCRIPT A ÉTÉ RÉÉCRIT. SES DEUX VERSIONS PRÉCÉDENTES AURAIENT CASSÉ LE SITE.
+════════════════════════════════════════════════════════════════════════════
 
-  mercredi 18:45  « Afroboost Silent – Session Cardio »  71 résa  ARCHIVÉE
-                  « Cours à l'unité »                    13 résa  active
-  dimanche 18:30  « Afroboost Silent – Sunday Vibes »    55 résa  ARCHIVÉE
-                  « Cours à l'unité »                    12 résa  active
+CE QUE JE CROYAIS (et qui était faux). Les quatre fiches — deux nommées
+« Afroboost Silent … », deux nommées « Cours à l'unité » — formaient deux
+doublons à neutraliser. Je prévoyais d'archiver, puis de masquer, les deux
+fiches « Cours à l'unité ».
 
-La fiche ARCHIVÉE est la principale : 71 réservations, dont une créée le
-11/11/2026 — plus récente que la dernière de la fiche active (10/11). Elle est
-archivée mais toujours utilisée.
+CE QUE J'AI TROUVÉ EN VÉRIFIANT. Il n'y a PAS de doublon. Depuis V647, une
+séance physique est VOLONTAIREMENT portée par DEUX fiches :
+  - la fiche « forfait » (`agenda_abonne: true`) — celle des abonnés ;
+  - la fiche « publiée » — celle du paiement à l'unité.
+`v647_groupes_seance_physique` (api/routes/shared.py) les réunit, et cela
+FONCTIONNE sur les données réelles : vérifié, les 4 fiches forment 2 groupes.
+Le calendrier affiche donc UNE carte par séance, et les inscrits sont DÉJÀ
+sommés sur les deux fiches (`SessionsModal`, `ids: [principale, publiée]`).
 
-CE QUE FAIT CETTE MIGRATION
-  1. les deux fiches principales -> nom « Afroboost » + description sans casque,
-     et DÉSARCHIVÉES pour redevenir le créneau servi ;
-  2. les deux doublons -> rendus INVISIBLES (`visible: false`), PAS archivés ;
+CE QUE MES VERSIONS PRÉCÉDENTES AURAIENT FAIT :
+  - archiver la fiche publiée -> `_publiees` exige `archived is not True`
+    -> GROUPE DÉTRUIT, et ses 13 réservations à un clic de la purge ;
+  - la masquer (`visible: false`) -> `_publiees` exige `visible is not False`
+    -> GROUPE DÉTRUIT, séance amputée de ses offres et de son adresse.
+Dans les deux cas, la séance « Afroboost » aurait perdu sa moitié publique.
+Le banc `tests/test_v667_doublon_groupe.py` fige ces deux refus.
 
-POURQUOI PAS « ARCHIVÉS », ET C'EST LE POINT LE PLUS IMPORTANT DE CE SCRIPT.
-`DELETE /courses/archived/purge` (api/server.py ~2742) supprime les cours
-archivés ET LEURS RÉSERVATIONS :
+CE QUE FAIT CE SCRIPT, DÉSORMAIS. Il renomme les DEUX fiches forfait — ce sont
+elles qui donnent leur nom à la carte (`{...principale}`) — et leur pose la
+description. Rien d'autre :
+  - pas de changement d'archivage ni de visibilité ;
+  - aucune réservation déplacée (les 151 restent où elles sont) ;
+  - aucun identifiant, aucune offre, aucune capacité touchés ;
+  - les deux séries récurrentes restent distinctes (mercredi / dimanche).
 
-    deleted_reservations = await db.reservations.delete_many(
-        {"courseId": {"$in": archived_ids}})
+« Cours à l'unité » reste le nom de la fiche PUBLIÉE. Ce nom ne s'affiche pas
+sur la carte : la carte prend celui de la fiche forfait. Le renommer serait
+cosmétique et sans effet visible — je ne le fais donc pas sans ton avis.
 
-Archiver les doublons mettrait donc leurs 25 réservations à UN CLIC d'une
-suppression définitive. `visible: false` produit le même résultat à l'écran —
-l'agenda abonné filtre `visible != False` AUTANT que `archived != True`
-(api/server.py ~2915) — sans les exposer à cette purge.
-
-EFFET DE BORD HEUREUX : les deux fiches principales sont aujourd'hui ARCHIVÉES
-alors qu'elles portent 126 réservations, donc actuellement supprimables en un
-clic. Les désarchiver les met à l'abri. Après migration : 0 réservation
-exposée, contre 126 maintenant.
-  3. rien d'autre. Aucun identifiant changé, aucune réservation déplacée,
-     aucune capacité ni offre touchée.
-
-CE QU'ELLE NE TOUCHE SURTOUT PAS : les événements réellement organisés AVEC
-casques (« SILENT Afroboost », « SILENT AFROBOOST », « Laff Festival-Afroboost
-silent », « Silent Dance & Fitness », « AFROBOOST SILENT — ÉDITION SPÉCIALE »).
-Ils sont nommés un par un en liste NOIRE de sécurité : si l'un d'eux apparaît
-parmi les cibles, la migration s'arrête.
-
-Usage :  python migration_v665_afroboost.py            (simulation)
-         python migration_v665_afroboost.py --appliquer (écrit, après sauvegarde)
-         python migration_v665_afroboost.py --rollback <fichier.json>
+Usage :  python scripts/migration_v665_afroboost.py            (simulation)
+         python scripts/migration_v665_afroboost.py --appliquer
+         python scripts/migration_v665_afroboost.py --rollback <fichier.json>
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -59,32 +55,27 @@ NOUVEAU_NOM = "Afroboost"
 DESCRIPTION = ("Cours collectif de cardio-danse afrobeat, sans casque audio, "
                "accessible à tous les niveaux.")
 
-# Les fiches PRINCIPALES : on les renomme et on les remet en service.
-PRINCIPALES = {
+# Les fiches FORFAIT : ce sont elles qui nomment la carte du calendrier.
+A_RENOMMER = {
     "64b4c975-f507-447b-a44d-4623349fd24b": "mercredi 18:45 (71 réservations)",
     "23534f7c-938f-41ff-872b-d62a5314a5d6": "dimanche 18:30 (55 réservations)",
 }
-# Les DOUBLONS : on les rend INVISIBLES. On ne les archive PAS — voir ci-dessous.
-DOUBLONS = {
+# Les fiches PUBLIÉES : on NE LES TOUCHE PAS. Listées pour le contrôle.
+A_PRESERVER = {
     "62fcac27-75ad-4429-bfb1-aee613858bdc": "mercredi 18:45 (13 réservations)",
     "01f3b303-1f64-48de-81f0-7c71dbbcb3b6": "dimanche 18:30 (12 réservations)",
 }
 
-# GARDE-FOU : aucun de ces noms ne doit se trouver parmi les cibles.
+# GARDE-FOU : aucun événement AVEC casques ne doit se trouver parmi les cibles.
 INTERDITS = ("silent afroboost", "laff festival", "silent dance",
              "edition speciale", "édition spéciale")
 
 REP = os.path.dirname(os.path.abspath(__file__))
-
-
-_VOIES = {"chem": "chemin", "av": "avenue", "bd": "boulevard", "blvd": "boulevard",
-          "rte": "route", "pl": "place", "r": "rue", "imp": "impasse",
-          "sq": "square", "all": "allee", "qu": "quai", "fbg": "faubourg"}
+_VOIES = {"chem": "chemin", "av": "avenue", "bd": "boulevard", "rte": "route",
+          "pl": "place", "r": "rue"}
 
 
 def norm(v):
-    """Même normalisation que la garde serveur V664b. « Chem. » = « Chemin »."""
-    import re
     t = re.sub(r"[^a-z0-9]+", " ",
                str(v or "").lower().translate(
                    str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc"))).strip()
@@ -95,7 +86,7 @@ def main():
     appliquer = "--appliquer" in sys.argv
     db = MongoClient(os.environ["MONGO_URL"], serverSelectionTimeoutMS=8000)[os.environ["DB_NAME"]]
 
-    cibles = list(PRINCIPALES) + list(DOUBLONS)
+    cibles = list(A_RENOMMER) + list(A_PRESERVER)
     docs = {d["id"]: d for d in db.courses.find({"id": {"$in": cibles}}, {"_id": 0})}
 
     print("=" * 74)
@@ -104,50 +95,53 @@ def main():
 
     if len(docs) != len(cibles):
         print("ARRÊT : %d fiches attendues, %d trouvées." % (len(cibles), len(docs)))
-        print("  manquantes :", [i for i in cibles if i not in docs])
         return 1
 
-    # GARDE-FOU 1 : aucun événement à casques parmi les cibles.
     for i, d in docs.items():
-        n = norm(d.get("name"))
         for mot in INTERDITS:
-            if mot in n:
+            if mot in norm(d.get("name")):
                 print("ARRÊT : « %s » ressemble à un événement AVEC casques." % d.get("name"))
                 return 1
 
-    # GARDE-FOU 2 : les quatre fiches doivent bien être deux paires au même
-    # créneau, même lieu, même coach. Sinon on ne touche à rien.
+    # GARDE-FOU 2 : chaque fiche à renommer DOIT être une fiche forfait, et sa
+    # jumelle publiée doit exister au même créneau. Sinon on ne touche à rien.
     def cle(d):
         return (norm(d.get("coach_id")), str(d.get("time") or ""),
                 norm(d.get("locationName") or d.get("location")), str(d.get("weekday")))
-    for p, dd in ((list(PRINCIPALES)[0], list(DOUBLONS)[0]),
-                  (list(PRINCIPALES)[1], list(DOUBLONS)[1])):
-        if cle(docs[p]) != cle(docs[dd]):
-            print("ARRÊT : ces deux fiches ne décrivent PAS la même séance physique.")
-            print("   %s -> %s" % (docs[p].get("name"), cle(docs[p])))
-            print("   %s -> %s" % (docs[dd].get("name"), cle(docs[dd])))
+
+    for a, b in zip(list(A_RENOMMER), list(A_PRESERVER)):
+        if docs[a].get("agenda_abonne") is not True:
+            print("ARRÊT : « %s » n'est pas une fiche forfait (`agenda_abonne`)."
+                  % docs[a].get("name"))
             return 1
-    print("Les deux paires décrivent bien la même séance physique (coach, heure, lieu, jour).")
+        if cle(docs[a]) != cle(docs[b]):
+            print("ARRÊT : « %s » et « %s » ne sont pas au même créneau."
+                  % (docs[a].get("name"), docs[b].get("name")))
+            return 1
+    print("Chaque fiche à renommer est bien la fiche FORFAIT d'une séance,")
+    print("et sa jumelle publiée existe au même créneau. Le groupe V647 tient.")
     print()
 
-    for i, quoi in PRINCIPALES.items():
+    for i, quoi in A_RENOMMER.items():
         d = docs[i]
-        nres = db.reservations.count_documents({"courseId": i})
-        print("PRINCIPALE  %s" % quoi)
-        print("   nom        « %s »  ->  « %s »" % (d.get("name"), NOUVEAU_NOM))
-        print("   archivée   %s  ->  False" % d.get("archived"))
-        print("   réservations %d (inchangées)  |  offres liées %d (inchangées)"
-              % (nres, db.offers.count_documents({"linked_course_ids": i})))
+        print("RENOMMÉE    %s" % quoi)
+        print("   nom          « %s »" % d.get("name"))
+        print("                ->  « %s »" % NOUVEAU_NOM)
+        print("   description  -> « %s »" % DESCRIPTION)
+        print("   archivée     %s  (INCHANGÉE)   visible %s  (INCHANGÉE)"
+              % (d.get("archived"), d.get("visible")))
+        print("   réservations %d (inchangées)   offres liées %d (inchangées)"
+              % (db.reservations.count_documents({"courseId": i}),
+                 db.offers.count_documents({"linked_course_ids": i})))
     print()
-    for i, quoi in DOUBLONS.items():
+    for i, quoi in A_PRESERVER.items():
         d = docs[i]
-        nres = db.reservations.count_documents({"courseId": i})
-        print("DOUBLON     %s" % quoi)
-        print("   nom        « %s »  (inchangé : c'est une trace)" % d.get("name"))
-        print("   visible    %s  ->  False   (retiré de l'agenda)" % d.get("visible"))
-        print("   archivée   %s  ->  False   (NON archivé : la purge ne peut "
-              "pas le supprimer)" % d.get("archived"))
-        print("   réservations %d CONSERVÉES, aucune suppression" % nres)
+        print("INTACTE     %s  — « %s »" % (quoi, d.get("name")))
+        print("   rien n'est modifié : la masquer ou l'archiver détruirait le")
+        print("   groupe V647 et amputerait la séance de sa moitié publique.")
+    print()
+    _tot = sum(db.reservations.count_documents({"courseId": i}) for i in cibles)
+    print("Réservations concernées au total : %d — AUCUNE n'est touchée." % _tot)
     print()
 
     if not appliquer:
@@ -158,38 +152,25 @@ def main():
     horo = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     sauve = os.path.join(REP, "sauvegarde-v665-%s.json" % horo)
     with open(sauve, "w", encoding="utf-8") as f:
-        json.dump(list(docs.values()), f, ensure_ascii=False, indent=2, default=str)
+        json.dump([docs[i] for i in A_RENOMMER], f, ensure_ascii=False, indent=2, default=str)
     print("Sauvegarde écrite : %s" % sauve)
 
-    for i in PRINCIPALES:
+    for i in A_RENOMMER:
         db.courses.update_one({"id": i}, {"$set": {
             "name": NOUVEAU_NOM, "description": DESCRIPTION,
-            "archived": False, "visible": True,
             "v665_renomme_le": datetime.now(timezone.utc).isoformat()}})
-    for i in DOUBLONS:
-        # `visible: false` et NON `archived` : voir l'en-tête du script.
-        # Les réservations restent lisibles dans l'espace membre (requêtes par
-        # e-mail), scannables (le cours est cherché par son id, sans filtre
-        # d'archivage) et hors d'atteinte de la purge.
-        db.courses.update_one({"id": i}, {"$set": {
-            "visible": False,
-            "archived": False,
-            "v665_masque_le": datetime.now(timezone.utc).isoformat(),
-            "v665_motif": ("doublon de la seance physique : masque, NON archive, "
-                           "pour que la purge des archives ne puisse pas "
-                           "supprimer ses reservations")}})
 
     print()
     print("=== VÉRIFICATION APRÈS ÉCRITURE ===")
-    for i in list(PRINCIPALES) + list(DOUBLONS):
-        d = db.courses.find_one({"id": i}, {"_id": 0, "name": 1, "archived": 1, "time": 1,
-                                            "weekday": 1, "description": 1})
-        nres = db.reservations.count_documents({"courseId": i})
-        print("  %-30s arch=%-5s %s jour=%s  résa=%d"
-              % (str(d.get("name"))[:30], d.get("archived"), d.get("time"),
-                 d.get("weekday"), nres))
+    for i in cibles:
+        d = db.courses.find_one({"id": i}, {"_id": 0, "name": 1, "archived": 1, "visible": 1,
+                                            "time": 1, "weekday": 1, "agenda_abonne": 1})
+        print("  %-30s jour=%s %s  arch=%s vis=%s forfait=%s  résa=%d"
+              % (str(d.get("name"))[:30], d.get("weekday"), d.get("time"),
+                 d.get("archived"), d.get("visible"), d.get("agenda_abonne"),
+                 db.reservations.count_documents({"courseId": i})))
     print()
-    print("Rollback :  python %s --rollback %s" % (os.path.basename(__file__), sauve))
+    print("Rollback :  python scripts/migration_v665_afroboost.py --rollback %s" % sauve)
     return 0
 
 
@@ -203,11 +184,11 @@ def rollback(chemin):
         if not i:
             continue
         maj = {k: v for k, v in d.items() if k != "id"}
-        db.courses.update_one({"id": i}, {"$set": maj,
-                                         "$unset": {"v665_renomme_le": "", "v665_archive_le": "",
-                                                    "v665_masque_le": "",
-                                                    "v665_motif": ""}})
-        print("  restauré : « %s »  arch=%s" % (d.get("name"), d.get("archived")))
+        _unset = {"v665_renomme_le": ""}
+        if "description" not in d:
+            _unset["description"] = ""        # elle n'existait pas avant
+        db.courses.update_one({"id": i}, {"$set": maj, "$unset": _unset})
+        print("  restauré : « %s »" % d.get("name"))
     return 0
 
 
