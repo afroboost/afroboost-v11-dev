@@ -46408,6 +46408,100 @@ async def get_vapid_public_key():
     """Retourne la clé publique VAPID pour l'inscription côté client"""
     return {"publicKey": VAPID_PUBLIC_KEY}
 
+# =========================================================================
+# V662 — A QUI APPARTIENT CET APPAREIL ? (identite VERIFIEE cote serveur)
+# =========================================================================
+#
+# LE TROU. `POST /push/subscribe` lisait `email` DANS LE CORPS de la requete,
+# sans aucune authentification. N'importe qui pouvait donc enregistrer SON
+# appareil sous l'adresse d'un tiers et recevoir ses notifications.
+#
+# CE QU'ON NE FAIT PAS, ET POURQUOI. On n'EXIGE pas un jeton pour s'abonner.
+# La regle V310c l'interdit sans prouver d'abord que le chemin legitime garde
+# l'acces — et ici DEUX chemins legitimes n'ont AUCUN jeton a presenter :
+#   1. le Service Worker, quand FCM fait tourner l'endpoint
+#      (`pushsubscriptionchange`) : il s'execute sans page, donc sans session ;
+#   2. le tableau de bord coach, qui peut s'authentifier par le repli
+#      `X-User-Email` sans jamais passer par `/auth/login` — c'est
+#      exactement ce qui avait vide le tableau de bord en V310.
+# Exiger un jeton tuerait la rotation d'endpoint EN SILENCE : les appareils
+# cesseraient de sonner sans que personne ne le voie.
+#
+# CE QU'ON FAIT A LA PLACE. L'abonnement est toujours accepte, mais il ne
+# PORTE une adresse que si elle est PROUVEE. Sans preuve, pas de liaison :
+# l'appareil existe, il n'appartient a personne. Et un abonnement sans
+# appartenance ne recoit aucune donnee privee (cf. `_v662_charge_sure`).
+#
+# TROIS PREUVES ACCEPTEES, toutes deja en service ailleurs — aucune invention :
+#   a) JWT coach/admin signe (meme verification que les routes coach) ;
+#   b) jeton d'espace B3-S1 (`type: subscriber_space`), obtenu par un code a
+#      6 chiffres envoye a l'adresse ENREGISTREE, et REVOCABLE en base ;
+#   c) jeton abonne V296 (`type: subscriber`), qui prouve la possession du
+#      code d'acces — c'est deja ce qui ouvre l'espace.
+# Le piege a eviter : `subscriber_from_request` n'accepte QUE `"subscriber"`.
+# L'espace, lui, emet `"subscriber_space"`. S'en tenir au premier aurait
+# refuse TOUS les membres reels.
+async def _v662_identite_push(request: Request):
+    """(email, source) d'une identite VERIFIEE, ou ('', '') si rien ne la prouve."""
+    try:
+        _jwt = _v311_coach_email_from_jwt(request)
+        if _jwt and await _v309_is_coach_or_admin(_jwt):
+            return _jwt.lower().strip(), "coach_jwt"
+    except Exception:  # noqa: BLE001
+        pass
+    # b) jeton d'espace : signature ET session vivante. Une signature valide ne
+    #    prouve pas qu'une session est encore ouverte — c'est le sens meme de
+    #    « revocable cote serveur ».
+    try:
+        from api.routes.shared import (lotb3s1_lire_token, lotb3s1_session_utilisable)
+        _tok = (request.headers.get("X-Subscriber-Token", "") or "").strip()
+        if not _tok:
+            _auth = request.headers.get("Authorization", "") or ""
+            if _auth.lower().startswith("bearer "):
+                _tok = _auth.split(" ", 1)[1].strip()
+        _charge = lotb3s1_lire_token(_tok) if _tok else None
+        if _charge:
+            _sess = await db[_B3S1_COLL_SESSIONS].find_one({"jti": _charge.get("jti")})
+            _ok, _motif = lotb3s1_session_utilisable(_sess, _charge)
+            if _ok and _charge.get("email"):
+                return str(_charge["email"]).lower().strip(), "espace_b3s1"
+            logger.info("[V662] jeton d'espace refuse (%s)", _motif)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[V662] jeton d'espace illisible: %s", type(_e).__name__)
+    # c) jeton V296 : prouve la possession du code d'acces.
+    try:
+        from api.routes.shared import subscriber_from_request as _v662_v296
+        _sub = _v662_v296(request)
+        if _sub and _sub.get("email"):
+            return str(_sub["email"]).lower().strip(), "abonne_v296"
+    except Exception:  # noqa: BLE001
+        pass
+    return "", ""
+
+
+async def _v662_pids_autorises(email: str) -> set:
+    """Les `participant_id` que cette adresse PROUVEE a le droit de revendiquer.
+
+    Exactement les memes que ceux que `send_push_by_email` irait chercher pour
+    elle : si un identifiant n'est pas joignable par cette adresse, il n'y a
+    aucune raison de la laisser s'y attacher.
+    """
+    el = (email or "").lower().strip()
+    if not el:
+        return set()
+    pids = {"coach_%s" % el}
+    try:
+        async for _p in db.chat_participants.find({"email": el}, {"_id": 0, "id": 1}):
+            if _p.get("id"):
+                pids.add(_p["id"])
+        async for _u in db.users.find({"email": el}, {"_id": 0, "id": 1}):
+            if _u.get("id"):
+                pids.add(_u["id"])
+    except Exception:  # noqa: BLE001
+        pass
+    return pids
+
+
 @api_router.post("/push/subscribe")
 async def subscribe_push(request: Request):
     """Enregistre une souscription push. Si endpoint existe deja pour autre user, le reassigner."""
@@ -46454,15 +46548,91 @@ async def subscribe_push(request: Request):
     _extra = {"device_hint": _famille}
     if _role:
         _extra["role"] = _role
-    if _email:
-        _extra["email"] = _email
+    # =====================================================================
+    # V662 — L'ADRESSE N'EST ENREGISTREE QUE SI ELLE EST PROUVEE
+    # =====================================================================
+    #
+    # Avant : `email` venait du corps et etait stocke tel quel. Desormais,
+    # trois cas, et un seul fait confiance a quoi que ce soit :
+    #
+    #   1. IDENTITE PROUVEE, identifiant coherent -> on lie. L'abonnement
+    #      porte `push_verifie: True` et l'adresse VERIFIEE (jamais celle du
+    #      corps), avec la preuve utilisee et sa date.
+    #   2. IDENTITE PROUVEE, identifiant d'UN AUTRE compte -> 403. C'est le
+    #      seul refus de cette route : quelqu'un d'authentifie qui tente de
+    #      s'attacher au compte d'un tiers. Aucun parcours legitime ne fait
+    #      cela.
+    #   3. AUCUNE PREUVE -> l'abonnement est accepte (la rotation d'endpoint
+    #      du Service Worker n'a pas de jeton a presenter, cf. V310c) mais il
+    #      NE PORTE AUCUNE ADRESSE. Il existe, il n'appartient a personne, et
+    #      `_v662_charge_sure` ne lui enverra aucune donnee privee.
+    #
+    # LA ROTATION NE DEGRADE PAS UN APPAREIL DEJA VERIFIE. Un appareil qui
+    # change d'endpoint presente l'ANCIEN (`previous_endpoint`) : detenir cet
+    # endpoint prouve qu'il s'agit du MEME appareil. On reporte alors sa
+    # verification. Sans cela, chaque rotation ferait retomber un telephone
+    # legitime en « inconnu » et le priverait de ses rappels en silence.
+    _ident, _preuve = await _v662_identite_push(request)
+    _verifie = False
+    if _ident:
+        _autorises = await _v662_pids_autorises(_ident)
+        if participant_id in _autorises:
+            _verifie = True
+            _extra["email"] = _ident[:120]
+            _extra["push_verifie"] = True
+            _extra["push_preuve"] = _preuve
+            _extra["push_verifie_le"] = datetime.now(timezone.utc).isoformat()
+        else:
+            logger.warning("[V662] refus: identite %s... demande l'identifiant d'un tiers",
+                           _ident[:3])
+            raise HTTPException(
+                status_code=403,
+                detail="Cet appareil ne peut pas s'abonner aux notifications d'un autre compte.")
+    if not _verifie:
+        # Report de verification par POSSESSION DE L'ENDPOINT (meme appareil).
+        _anc = str(body.get("previous_endpoint") or "").strip()
+        _herite = None
+        for _cle in (endpoint, _anc):
+            if not _cle or _herite:
+                continue
+            try:
+                _d = await db.push_subscriptions.find_one(
+                    {"subscription.endpoint": _cle, "push_verifie": True},
+                    {"_id": 0, "email": 1, "push_preuve": 1, "push_verifie_le": 1})
+            except Exception:  # noqa: BLE001
+                _d = None
+            if _d and _d.get("email"):
+                _herite = _d
+        if _herite:
+            _verifie = True
+            _extra["email"] = str(_herite.get("email"))[:120]
+            _extra["push_verifie"] = True
+            _extra["push_preuve"] = "rotation:%s" % (_herite.get("push_preuve") or "?")
+            _extra["push_verifie_le"] = _herite.get("push_verifie_le")
+            logger.info("[V662] rotation: verification reportee sur le nouvel endpoint")
+        else:
+            # Aucune preuve, aucun heritage : on ne stocke PAS l'adresse du
+            # corps. `$unset` est indispensable — un abonnement deja en base
+            # pourrait en porter une, posee sans preuve avant ce correctif.
+            _extra["push_verifie"] = False
     # Securite: si endpoint existe pour AUTRE user, le reassigner au nouveau
+    # V662 — RETIRER une adresse posee sans preuve AVANT ce correctif.
+    # Un `$set` ne supprime rien : sans ce `$unset`, les liaisons non prouvees
+    # deja en base survivraient a chaque reenregistrement, et le correctif ne
+    # protegerait que les nouveaux abonnements.
+    _ops = {"$set": None}
+    if not _verifie:
+        _ops["$unset"] = {"email": "", "push_preuve": "", "push_verifie_le": ""}
     if endpoint:
         _maj = {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}
         _maj.update(_extra)
-        await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, {"$set": _maj}, upsert=True)
+        _ops["$set"] = _maj
+        await db.push_subscriptions.update_one({"subscription.endpoint": endpoint}, _ops, upsert=True)
     else:
-        await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"subscription": subscription, "active": True}}, upsert=True)
+        _maj2 = {"subscription": subscription, "active": True}
+        _maj2.update(_extra)
+        _ops["$set"] = _maj2
+        await db.push_subscriptions.update_one({"participant_id": participant_id}, _ops, upsert=True)
     # ===================================================================
     # P1-c — L'ENDPOINT REMPLACE EST MIS AU REBUT
     # ===================================================================
@@ -46518,10 +46688,61 @@ async def subscribe_push(request: Request):
     return {"success": True}
 
 @api_router.delete("/push/subscribe/{participant_id}")
-async def unsubscribe_push(participant_id: str):
-    """Desactive la souscription push d'un participant"""
+async def unsubscribe_push(participant_id: str, request: Request):
+    """Desactive la souscription push — pour CET appareil quand il se designe.
+
+    =====================================================================
+    V662 — LA DESINSCRIPTION NE DOIT PAS POUVOIR FAIRE TAIRE UN TIERS
+    =====================================================================
+
+    LE DEFAUT. La route n'avait aucune authentification et desactivait TOUS les
+    abonnements de l'identifiant demande. Il suffisait de connaitre un
+    `participant_id` pour couper les notifications de quelqu'un d'autre.
+
+    POURQUOI ON N'EXIGE PAS DE JETON (regle V310c). `unsubscribeFromPush` est
+    appelee depuis ChatWidget, donc AUSSI par des VISITEURS, qui n'ont aucun
+    jeton a presenter. Exiger une identite empecherait quelqu'un de couper SES
+    PROPRES notifications — on remplacerait une nuisance par une autre.
+
+    CE QU'ON FAIT. On reduit la PORTEE au lieu de refuser l'appel :
+
+      1. l'appelant fournit `endpoint` (son propre abonnement, que le
+         navigateur connait) -> on ne desactive QUE celui-la. Detenir
+         l'endpoint prouve qu'on est cet appareil. C'est le chemin des
+         nouveaux bundles, et il est exact.
+      2. pas d'endpoint (ancien bundle) -> ancien comportement, conserve pour
+         ne rien casser, mais JOURNALISE.
+      3. identite PROUVEE qui ne possede pas cet identifiant -> 403. Meme
+         regle que /push/subscribe : un compte authentifie ne touche pas a un
+         autre.
+
+    ⚠️ RESIDU ASSUME : un appel SANS identite et SANS endpoint peut encore
+    desactiver les abonnements d'un identifiant connu. Le fermer exige que tous
+    les clients envoient l'endpoint ; tant que d'anciens bundles tournent,
+    refuser casserait leur desinscription.
+    """
+    _ep = ""
+    try:
+        _ep = str((request.query_params.get("endpoint") or "")).strip()
+    except Exception:  # noqa: BLE001
+        _ep = ""
+    _ident, _preuve = await _v662_identite_push(request)
+    if _ident:
+        _autorises = await _v662_pids_autorises(_ident)
+        if participant_id not in _autorises:
+            logger.warning("[V662] refus desinscription: identite %s... visait un tiers", _ident[:3])
+            raise HTTPException(
+                status_code=403,
+                detail="Cet appareil ne peut pas modifier les notifications d'un autre compte.")
+    if _ep:
+        _r = await db.push_subscriptions.update_one(
+            {"participant_id": participant_id, "subscription.endpoint": _ep},
+            {"$set": {"active": False}})
+        logger.info("[V662] desinscription ciblee (1 appareil, modifie=%d)", _r.modified_count)
+        return {"success": True, "portee": "appareil"}
+    logger.info("[V662] desinscription SANS endpoint (ancien client) : portee large")
     await db.push_subscriptions.update_one({"participant_id": participant_id}, {"$set": {"active": False}})
-    return {"success": True}
+    return {"success": True, "portee": "identifiant"}
 
 async def send_push_notification(participant_id: str, title: str, body: str, data: dict = None, session_id: str = None):
     """Envoie une notification push a un participant (sauf si socket actif)."""
@@ -46618,6 +46839,34 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
         if _val_ui is not None:
             _corps_payload[_cle_ui] = _val_ui
     payload = json.dumps(_corps_payload)
+    # =====================================================================
+    # V662 — RIEN DE PRIVE VERS UN APPAREIL QUI N'APPARTIENT A PERSONNE
+    # =====================================================================
+    #
+    # `POST /push/subscribe` acceptait n'importe quelle adresse sans preuve
+    # (corrige en amont, mais 262 abonnements l'ont precede). Un appareil
+    # enregistre sous l'adresse d'un tiers recevrait donc SES rappels : le nom
+    # du cours, l'heure, le lieu.
+    #
+    # ON NE LES SUPPRIME PAS, ON NE LES FAIT PAS TAIRE. Les effacer couperait
+    # les notifications de gens parfaitement legitimes — la quasi-totalite de
+    # ces 262. A la place, un abonnement dont l'appartenance n'est pas prouvee
+    # recoit une notification NEUTRE : il sonne, il n'apprend rien.
+    #
+    # LA REVALIDATION EST AUTOMATIQUE. Chaque passage dans l'espace (membre) ou
+    # dans le tableau de bord (coach) reenregistre l'appareil, cette fois avec
+    # son jeton : il devient `push_verifie` et retrouve le texte complet, sans
+    # qu'on demande quoi que ce soit a personne.
+    _neutre = json.dumps({
+        "title": "Afroboost",
+        "body": "Vous avez une notification. Ouvrez l'application pour la voir.",
+        "icon": "/logo192.png", "badge": "/notification-badge-96.png",
+        "url": "/", "session_id": None,
+        # `data` reduit a l'os : surtout pas `reservation_id`, qui designerait
+        # une reservation precise a un appareil non prouve.
+        "data": {"type": "neutre"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
     any_sent = False
     # === V439-DIAG : statut HTTP REEL retourne par FCH pour CHAQUE endpoint ===
     #
@@ -46699,7 +46948,17 @@ async def send_push_notification(participant_id: str, title: str, body: str, dat
             # en `high` ; seule la campagne push (`type: broadcast`) reste en
             # `normal`. Le discriminant est le `type` deja present dans le payload.
             _urgence = "normal" if (data or {}).get("type") == "broadcast" else "high"
-            _rep439 = webpush(subscription_info=subscription_info, data=payload, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600, headers={"Urgency": _urgence})
+            # V662 — LE TEXTE COMPLET N'EST SERVI QU'A UN APPAREIL PROUVE.
+            # `push_verifie` est pose par /push/subscribe quand une identite
+            # signee a ete presentee. Absent (les 262 abonnements anterieurs)
+            # ou faux -> charge NEUTRE : l'appareil sonne, il n'apprend rien.
+            # Il redeviendra complet tout seul au prochain enregistrement avec
+            # jeton, sans rien demander a personne.
+            _charge_sure = payload if sub.get("push_verifie") is True else _neutre
+            if _charge_sure is _neutre:
+                logger.info("[V662] charge neutre (appartenance non prouvee) rang=%d emp=%s",
+                            _rang, _emp)
+            _rep439 = webpush(subscription_info=subscription_info, data=_charge_sure, vapid_private_key=VAPID_PRIVATE_KEY, vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}, ttl=3600, headers={"Urgency": _urgence})
             _st_ok = getattr(_rep439, "status_code", "?")
             logger.info("[PUSH-FCM] push_success rang=%d emp=%s statut=%s", _rang, _emp, _st_ok)
             await _obs_verdict(_endpoint, _st_ok, _rang)

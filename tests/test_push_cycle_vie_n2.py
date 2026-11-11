@@ -152,6 +152,19 @@ def charger_subscribe(base):
     esp = {"db": base, "HTTPException": HTTPException, "Request": object,
            "datetime": datetime.datetime, "timezone": datetime.timezone,
            "logger": logging.getLogger("t")}
+    # V662 — `subscribe_push` depend desormais de deux fonctions d'identite.
+    # On charge les VRAIES (pas des imitations), avec des substituts pour
+    # leurs seules dependances d'authentification. `Req.headers` est vide :
+    # ce banc exerce donc exactement le chemin SANS JETON — celui de la
+    # rotation du Service Worker et des anciens clients, qui doit continuer
+    # a fonctionner sans jamais lier une adresse non prouvee.
+    async def _faux_coach(_e):
+        return False
+    esp["_v311_coach_email_from_jwt"] = lambda _r: ""
+    esp["_v309_is_coach_or_admin"] = _faux_coach
+    esp["_B3S1_COLL_SESSIONS"] = "subscriber_sessions"
+    for _fn in ("_v662_identite_push", "_v662_pids_autorises"):
+        exec(compile(extraire(SERVEUR, _fn), "<s>", "exec"), esp)
     exec(compile(extraire(SERVEUR, "subscribe_push"), "<s>", "exec"), esp)
     return esp["subscribe_push"]
 

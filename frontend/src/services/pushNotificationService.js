@@ -296,13 +296,22 @@ export const unsubscribeFromPush = async (participantId) => {
   try {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
-    
+    // V662 : retenu AVANT la desinscription locale, qui le detruit.
+    const endpointAvant = (subscription && subscription.endpoint) || '';
+
     if (subscription) {
       await subscription.unsubscribe();
     }
     
     if (participantId) {
-      await axios.delete(`${API}/push/subscribe/${participantId}`);
+      // V662 — ON DESIGNE L'APPAREIL QU'ON EST. Sans cela, le serveur
+      // desactivait TOUS les abonnements de cet identifiant : couper ses
+      // notifications sur un telephone les coupait sur tous les autres, et
+      // n'importe qui connaissant l'identifiant pouvait faire taire
+      // quelqu'un. L'endpoint est lu AVANT `subscription.unsubscribe()`
+      // ci-dessus — apres, il n'existe plus.
+      const q = endpointAvant ? `?endpoint=${encodeURIComponent(endpointAvant)}` : '';
+      await axios.delete(`${API}/push/subscribe/${participantId}${q}`);
     }
     
     localStorage.removeItem(PUSH_SUBSCRIPTION_KEY);
