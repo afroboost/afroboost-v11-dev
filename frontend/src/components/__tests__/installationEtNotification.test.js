@@ -61,22 +61,25 @@ describe('V659 — parcours d’installation', () => {
     expect(el('installation-guide-ios')).toBeTruthy();
   });
 
-  test('3. déjà installée : rien ne s’affiche', async () => {
+  test('3. déjà installée : RIEN, pas même le lien discret', async () => {
     simuler({ ua: UA.android, standalone: true });
     await monter(<InstallationAfroboost estAbonne prompt={{ prompt() {} }} />);
     expect(el('installation-afroboost')).toBeNull();
+    expect(el('installation-lien-discret')).toBeNull();
   });
 
   test('3 bis. iPhone déjà ajouté à l’écran d’accueil : rien non plus', async () => {
     simuler({ ua: UA.iphone, iosStandalone: true });
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
     expect(el('installation-afroboost')).toBeNull();
+    expect(el('installation-lien-discret')).toBeNull();
   });
 
   test('un visiteur non abonné n’est jamais sollicité', async () => {
     simuler({ ua: UA.android });
     await monter(<InstallationAfroboost estAbonne={false} prompt={{ prompt() {} }} />);
     expect(el('installation-afroboost')).toBeNull();
+    expect(el('installation-lien-discret')).toBeNull();   // visiteur : rien du tout
   });
 
   test('V660 — « Plus tard » reporte, et la fenêtre revient après une semaine', async () => {
@@ -91,6 +94,7 @@ describe('V659 — parcours d’installation', () => {
     act(() => racine.unmount()); conteneur.remove();
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
     expect(el('installation-afroboost')).toBeNull();
+    expect(el('installation-lien-discret')).toBeTruthy();  // la porte reste ouverte
     // Une semaine plus tard : elle revient.
     act(() => racine.unmount()); conteneur.remove();
     localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 8 * 86400000, fois: 1 }));
@@ -103,6 +107,18 @@ describe('V659 — parcours d’installation', () => {
     localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 400 * 86400000, fois: 3 }));
     await monter(<InstallationAfroboost estAbonne prompt={null} />);
     expect(el('installation-afroboost')).toBeNull();
+  });
+
+  test('V661 — après les trois rappels, un lien discret reste accessible', async () => {
+    simuler({ ua: UA.iphone });
+    localStorage.setItem(CLE_REPORT, JSON.stringify({ le: Date.now() - 400 * 86400000, fois: 3 }));
+    await monter(<InstallationAfroboost estAbonne prompt={null} />);
+    const lien = el('installation-lien-discret');
+    expect(lien).toBeTruthy();
+    expect(lien.textContent).toMatch(/Installer Afroboost/);
+    // Et il rouvre le guide quand on le touche : rien n'est perdu.
+    await clic('installation-lien-discret');
+    expect(el('installation-guide-ios')).toBeTruthy();
   });
 
   test('navigateur incompatible : on explique, on ne bloque rien', async () => {

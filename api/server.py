@@ -49857,6 +49857,17 @@ async def cron_reservation_reminders():
                         # par cours evite qu'un rappel de 07:00 et un de 09:30
                         # s'empilent — le second REMPLACE le premier.
                         {"type": "course_reminder", "reservation_id": _rid,
+                         # V661 — LE CLIC OUVRAIT LE CHAT, PAS LE COURS.
+                         # `send_push_notification` retombe sur
+                         # « /?openChat=true » quand la charge ne porte pas
+                         # d'`url` : un rappel de cours ouvrait donc une
+                         # conversation. L'adresse juste est deja calculee
+                         # quelques lignes plus haut pour l'e-mail
+                         # (`_e2_espace`, validee par `rv2_lien_espace` :
+                         # chaine vide si le code est douteux). On la pose ici
+                         # AUSSI. Vide, le repli d'origine s'applique — on ne
+                         # fabrique jamais une destination.
+                         **({"url": _e2_espace} if _e2_espace else {}),
                          "tag": push_ui_tag_cours(r.get("courseId")),
                          "vibrate": PUSH_UI_VIBRATION,
                          "actions": PUSH_UI_ACTIONS_MON_COURS,

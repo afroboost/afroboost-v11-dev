@@ -28,6 +28,8 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
   const [mode, setMode] = useState(null);
   const [ferme, setFerme] = useState(false);
   const [occupe, setOccupe] = useState(false);
+  // V661 — la personne a demandé elle-même à revoir la fenêtre.
+  const [forcee, setForcee] = useState(false);
 
   useEffect(() => {
     try {
@@ -75,7 +77,32 @@ export default function InstallationAfroboost({ estAbonne, prompt, onInstallee, 
     jamaisPlus = localStorage.getItem(CLE_VUE) === '1';
     report = lireReport(localStorage.getItem(CLE_REPORT));
   } catch (e) { /* mode privé : on propose, c'est le cas le moins pénalisant */ }
-  if (ferme || !mode || !faudraitMontrer({ mode, estAbonne, report, jamaisPlus })) return null;
+  const spontanee = faudraitMontrer({ mode, estAbonne, report, jamaisPlus });
+  if (!mode || !estAbonne || mode === 'deja-installee') return null;
+
+  // V661 — APRÈS LES TROIS RAPPELS, UNE PORTE RESTE OUVERTE.
+  // La fenêtre ne s'impose plus, mais l'installation reste la condition des
+  // notifications sur iPhone : la faire disparaître pour toujours, c'est
+  // condamner quelqu'un qui changerait d'avis. Un lien discret prend donc le
+  // relais — visible, jamais imposé — jusqu'à l'installation effective.
+  if ((ferme || !spontanee) && !forcee) {
+    return (
+      <button type="button" onClick={() => { setForcee(true); setFerme(false); }}
+        data-testid="installation-lien-discret"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
+                 background: 'rgba(var(--primary-rgb, 217, 28, 210), .12)',
+                 border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), .3)',
+                 color: 'var(--primary-color, #D91CD2)', borderRadius: 999,
+                 padding: '9px 16px', fontSize: 14, fontWeight: 700,
+                 cursor: 'pointer', minHeight: 40 }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+        </svg>
+        Installer Afroboost
+      </button>
+    );
+  }
 
   const C = 'var(--primary-color, #D91CD2)';
   const etapes = mode === 'guide-ios' ? ETAPES_IOS
