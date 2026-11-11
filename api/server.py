@@ -46479,6 +46479,21 @@ async def _v662_identite_push(request: Request):
     return "", ""
 
 
+def _v662c_empreinte(jeton: str) -> str:
+    """L'empreinte d'un jeton de rotation. On ne stocke JAMAIS le jeton lui-meme :
+    une fuite de la base ne doit pas livrer de quoi usurper un appareil."""
+    import hashlib as _h
+    return _h.sha256(("v662c:" + str(jeton or "")).encode()).hexdigest()
+
+
+def _v662c_nouveau_jeton() -> tuple:
+    """(jeton en clair, empreinte). Le clair ne sort qu'une fois, dans la
+    reponse HTTP a l'appareil qui vient de PROUVER son identite."""
+    import secrets as _s
+    _j = _s.token_urlsafe(32)
+    return _j, _v662c_empreinte(_j)
+
+
 async def _v662_pids_autorises(email: str) -> set:
     """Les `participant_id` que cette adresse PROUVEE a le droit de revendiquer.
 
@@ -46591,6 +46606,34 @@ async def subscribe_push(request: Request):
     if not _verifie:
         # Report de verification par POSSESSION DE L'ENDPOINT (meme appareil).
         # =================================================================
+        # V662c — LE REPORT EXIGE UNE PREUVE DE POSSESSION, PAS DEUX SECRETS
+        # =================================================================
+        #
+        # CE QUI N'ALLAIT TOUJOURS PAS. V662 reportait la verification sur la
+        # SEULE connaissance d'un endpoint ; V662b y a ajoute le
+        # `participant_id`. Mais ces deux valeurs arrivent DANS LE CORPS de la
+        # requete : les detenir n'est pas etre l'appareil, c'est connaitre deux
+        # chaines. Un attaquant qui se les procure heritait encore de
+        # l'identite de la victime et recevait ses rappels en clair.
+        #
+        # CE QU'ON EXIGE MAINTENANT. Un JETON DE ROTATION, tire au hasard par
+        # le SERVEUR et remis UNE SEULE FOIS, dans la reponse HTTP, a l'appareil
+        # qui vient de prouver son identite par un jeton signe. Seul cet
+        # appareil l'a recu. En base on ne garde que son EMPREINTE : une fuite
+        # de la base ne livre pas de quoi usurper un appareil. Il est REMPLACE
+        # a chaque rotation reussie — un jeton capture ne sert qu'une fois.
+        #
+        # ET SI L'APPAREIL NE L'A PAS ? Il n'est pas verifie, donc il recoit
+        # des notifications NEUTRES — et il le redevient complet tout seul a la
+        # prochaine ouverture de l'espace ou du tableau de bord, qui
+        # reenregistre avec un jeton signe. Perdre la verification sur une
+        # rotation n'est PAS une panne : c'est temporaire et auto-reparant.
+        # C'est pour cela qu'on peut se permettre d'etre strict ici.
+        #
+        # NOTE SUR LE RESIDU ACCEPTE. Les appareils deja en service n'ont aucun
+        # jeton de rotation : leurs rotations ne reporteront rien jusqu'a leur
+        # prochaine visite. C'est exactement le comportement voulu.
+        # ---------------------------------------------------------------- (suite)
         # V662b — LE REPORT N'EST PAS UN HERITAGE OUVERT
         # =================================================================
         #
@@ -46616,45 +46659,73 @@ async def subscribe_push(request: Request):
         # seul son endpoint change. C'est exactement ce que ce filtre autorise.
         _anc = str(body.get("previous_endpoint") or "").strip()
         _herite = None
-        for _cle in (endpoint, _anc):
-            if not _cle or _herite:
-                continue
+        _jeton_presente = str(body.get("rotation_jeton") or "").strip()
+        if _jeton_presente:
             try:
                 _d = await db.push_subscriptions.find_one(
-                    {"subscription.endpoint": _cle, "push_verifie": True,
-                     "participant_id": participant_id},
-                    {"_id": 0, "email": 1, "push_preuve": 1, "push_verifie_le": 1})
+                    {"rotation_empreinte": _v662c_empreinte(_jeton_presente),
+                     "push_verifie": True, "participant_id": participant_id},
+                    {"_id": 0, "email": 1, "push_preuve": 1, "push_verifie_le": 1,
+                     "subscription.endpoint": 1})
             except Exception:  # noqa: BLE001
                 _d = None
             if _d and _d.get("email"):
-                # Double verrou : l'identifiant doit etre joignable depuis
-                # l'adresse heritee. Si la base porte un appariement douteux,
-                # le report s'arrete ici au lieu de le propager.
+                # Double verrou conserve : l'identifiant doit rester joignable
+                # depuis l'adresse heritee. Un appariement douteux en base
+                # arrete le report au lieu de le propager.
                 if participant_id in await _v662_pids_autorises(str(_d.get("email"))):
                     _herite = _d
+                    # =====================================================
+                    # V662c — LE JETON EST CONSOMME, DONC A USAGE UNIQUE
+                    # =====================================================
+                    # Sans cette etape, l'ancien abonnement gardait son
+                    # empreinte : un jeton capture restait valide
+                    # indefiniment et pouvait etre rejoue autant de fois
+                    # qu'on voulait. Mesure du banc (6 ter) : il verifiait
+                    # encore. On l'efface donc A LA SOURCE, des qu'il a
+                    # servi. L'appareil legitime, lui, a deja recu son
+                    # remplacant dans la reponse.
+                    try:
+                        _src = ((_d.get("subscription") or {}).get("endpoint") or "")
+                        if _src:
+                            await db.push_subscriptions.update_one(
+                                {"subscription.endpoint": _src},
+                                {"$unset": {"rotation_empreinte": ""}})
+                    except Exception:  # noqa: BLE001
+                        logger.warning("[V662c] jeton non consomme : il restera valide")
                 else:
-                    logger.warning("[V662b] report refuse : identifiant non joignable "
+                    logger.warning("[V662c] report refuse : identifiant non joignable "
                                    "depuis l'adresse heritee")
+            else:
+                logger.info("[V662c] jeton de rotation inconnu ou perime")
         if _herite:
             _verifie = True
             _extra["email"] = str(_herite.get("email"))[:120]
             _extra["push_verifie"] = True
             _extra["push_preuve"] = "rotation:%s" % (_herite.get("push_preuve") or "?")
             _extra["push_verifie_le"] = _herite.get("push_verifie_le")
-            logger.info("[V662] rotation: verification reportee sur le nouvel endpoint")
+            logger.info("[V662c] rotation prouvee : verification reportee")
         else:
             # Aucune preuve, aucun heritage : on ne stocke PAS l'adresse du
             # corps. `$unset` est indispensable — un abonnement deja en base
             # pourrait en porter une, posee sans preuve avant ce correctif.
             _extra["push_verifie"] = False
     # Securite: si endpoint existe pour AUTRE user, le reassigner au nouveau
+    # V662c — UN JETON NEUF A CHAQUE VERIFICATION, ET UN SEUL USAGE.
+    # Il remplace le precedent : un jeton capture ne vaut que jusqu'a la
+    # prochaine rotation legitime. Le clair ne quitte le serveur QU'ICI.
+    _jeton_clair = ""
+    if _verifie:
+        _jeton_clair, _emp = _v662c_nouveau_jeton()
+        _extra["rotation_empreinte"] = _emp
     # V662 — RETIRER une adresse posee sans preuve AVANT ce correctif.
     # Un `$set` ne supprime rien : sans ce `$unset`, les liaisons non prouvees
     # deja en base survivraient a chaque reenregistrement, et le correctif ne
     # protegerait que les nouveaux abonnements.
     _ops = {"$set": None}
     if not _verifie:
-        _ops["$unset"] = {"email": "", "push_preuve": "", "push_verifie_le": ""}
+        _ops["$unset"] = {"email": "", "push_preuve": "", "push_verifie_le": "",
+                          "rotation_empreinte": ""}
     if endpoint:
         _maj = {"participant_id": participant_id, "subscription": subscription, "active": True, "updated_at": datetime.now(timezone.utc).isoformat()}
         _maj.update(_extra)
@@ -46701,6 +46772,32 @@ async def subscribe_push(request: Request):
     #
     # LES AUTRES APPAREILS NE SONT PAS TOUCHES : un seul endpoint, nomme.
     _prec = str(body.get("previous_endpoint") or "").strip()
+    # =====================================================================
+    # V662c — POURQUOI LA MISE AU REBUT N'EXIGE PAS DE PREUVE
+    # =====================================================================
+    #
+    # J'ai essaye de la conditionner a une preuve (identite signee ou jeton de
+    # rotation), pour empecher qu'on eteigne l'appareil d'un autre en declarant
+    # son endpoint. LE BANC L'A REFUSE, et il avait raison : 4 controles de
+    # `test_push_cycle_vie_n2` sont tombes, dont celui-ci, explicite —
+    #     « 8 rotations -> UN SEUL endpoint actif (fin de l'accumulation) ».
+    #
+    # CE QUE CELA AURAIT ROUVERT. P1-c existe parce qu'un compte avait accumule
+    # 184 endpoints pour un ou deux appareils reels, et que V437 n'essaie que
+    # les 3 PLUS RECENTS : le telephone n'etait jamais sollicite. Soit une
+    # panne totale de notifications, mesuree, pas theorique.
+    #
+    # LA COMPARAISON QUI TRANCHE :
+    #   - sans rebut -> accumulation, puis plus AUCUNE notification. Permanent.
+    #   - rebut non prouve -> quelqu'un qui connait (identifiant, ancien
+    #     endpoint) marque un endpoint inactif. L'appareil revient des sa
+    #     prochaine ouverture de l'application, qui le reenregistre. Temporaire
+    #     et auto-reparant.
+    # Le premier est plus grave. On garde donc le rebut.
+    #
+    # LA PROTECTION QUI RESTE : le filtre exige le MEME `participant_id`, donc
+    # il faut DEUX chaines, pas une. Et cela n'expose aucune donnee — seul un
+    # deni temporaire est possible. ⚠️ Residu assume, anterieur a ce lot.
     if _prec and endpoint and _prec != endpoint:
         try:
             _r = await db.push_subscriptions.update_one(
@@ -46717,7 +46814,14 @@ async def subscribe_push(request: Request):
             logger.warning("[PUSH] mise au rebut impossible: %s", type(_e).__name__)
 
     logger.debug(f"[PUSH] Subscribe OK: {participant_id[:8]}...")
-    return {"success": True}
+    # V662c — LE JETON DE ROTATION NE SORT QU'ICI, ET QU'UNE FOIS.
+    # L'appareil le garde pour prouver, a sa prochaine rotation, qu'il est bien
+    # LUI. Absent de la reponse = l'identite n'a pas ete prouvee cette fois,
+    # et le client n'a rien a retenir.
+    _rep = {"success": True, "push_verifie": bool(_verifie)}
+    if _jeton_clair:
+        _rep["rotation_jeton"] = _jeton_clair
+    return _rep
 
 @api_router.delete("/push/subscribe/{participant_id}")
 async def unsubscribe_push(participant_id: str, request: Request):

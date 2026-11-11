@@ -97,9 +97,34 @@ const enTableauOctets = (b64) => {
  * il garde le dernier endpoint qu'il a fait enregistrer. C'est ce qui arrête
  * l'accumulation (184 endpoints pour un ou deux appareils réels).
  */
+// V662c — LE JETON DE ROTATION. Le serveur le remet UNE FOIS a un appareil
+// qui vient de prouver son identite ; l'appareil le represente a sa prochaine
+// rotation d'endpoint, quand il n'a plus de session a montrer. C'est la seule
+// chose qui distingue « c'est le meme telephone » de « quelqu'un connait deux
+// chaines ». Il vit dans le CACHE (pas localStorage) parce que le Service
+// Worker doit pouvoir le lire : lui n'a acces ni au localStorage ni a la page.
+const CACHE_PUSH = 'afroboost-push-owner';
+
+async function v662cRetenir(jeton) {
+  if (!jeton) return;
+  try {
+    const c = await caches.open(CACHE_PUSH);
+    await c.put('rotation', new Response(jeton));
+  } catch (err) { /* sans cache, la rotation ne reportera rien : degradation sure */ }
+}
+
+async function v662cRelire() {
+  try {
+    const c = await caches.open(CACHE_PUSH);
+    const r = await c.match('rotation');
+    return r ? (await r.text()) : '';
+  } catch (err) { return ''; }
+}
+
 export const enregistrerAbonnement = async (sub, { participantId, role, email }) => {
   if (!sub || !participantId) return null;
   const endpoint = sub.endpoint;
+  const jetonRotation = await v662cRelire();
   let precedent = null;
   try { precedent = localStorage.getItem(CLE_DERNIER_ENDPOINT) || null; } catch (e) { /* navigation privée */ }
   const reponse = await axios.post(`${API}/push/subscribe`, {
@@ -110,8 +135,12 @@ export const enregistrerAbonnement = async (sub, { participantId, role, email })
     // Jamais l'endpoint courant : le serveur refuse déjà ce cas, mais on ne lui
     // demande pas de nous protéger de nous-mêmes.
     previous_endpoint: precedent && precedent !== endpoint ? precedent : null,
+    // V662c : la preuve que cet appareil est bien celui deja verifie.
+    rotation_jeton: jetonRotation || undefined,
   });
   if (!reponse || !reponse.data || reponse.data.success !== true) return null;
+  // Un jeton neuf remplace le precedent : capture, l'ancien ne vaut plus rien.
+  await v662cRetenir(reponse.data.rotation_jeton);
   try { localStorage.setItem(CLE_DERNIER_ENDPOINT, endpoint); } catch (e) { /* ignore */ }
   try { localStorage.setItem(PUSH_SUBSCRIPTION_KEY, 'true'); } catch (e) { /* ignore */ }
   // Relais pour le Service Worker : sans session, c'est son seul moyen de savoir

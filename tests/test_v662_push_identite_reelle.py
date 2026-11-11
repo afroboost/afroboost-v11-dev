@@ -122,6 +122,12 @@ try:
         "email": MEMBRE, "role": "subscriber",
     }, {"X-Subscriber-Token": JETON_MEMBRE})
     v("accepte (200)", st == 200, (st, rep))
+    # V662c : le serveur remet un jeton de rotation a l'appareil PROUVE, et
+    # a lui seul. C'est ce que l'appareil presentera quand il n'aura plus de
+    # session a montrer.
+    JETON_ROT = [str(rep.get("rotation_jeton") or "")]
+    v("un jeton de rotation est remis", bool(JETON_ROT[0]) and len(JETON_ROT[0]) > 20, rep)
+    v("la reponse dit que l'appareil est verifie", rep.get("push_verifie") is True, rep)
     d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-1"})
     v("l'appareil est VERIFIE", bool(d) and d.get("push_verifie") is True, d)
     v("l'adresse enregistree est celle du JETON", bool(d) and d.get("email") == MEMBRE, d and d.get("email"))
@@ -138,6 +144,14 @@ try:
     d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/coach-1"})
     v("l'appareil du coach est VERIFIE", bool(d) and d.get("push_verifie") is True, d)
     v("par son JWT", bool(d) and d.get("push_preuve") == "coach_jwt", d and d.get("push_preuve"))
+
+    print()
+    print("== 2 bis. AUCUN JETON N'EST REMIS A UN APPAREIL NON PROUVE ==")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_TIERS, "subscription": abonnement("https://fcm.test/anonyme-1"),
+    })
+    v("aucun jeton de rotation dans la reponse", not rep.get("rotation_jeton"), rep)
+    v("et la reponse l'annonce non verifie", rep.get("push_verifie") is False, rep)
 
     print()
     print("== 3. UN APPAREIL SANS IDENTITE, SOUS L'ADRESSE D'UN TIERS ==")
@@ -176,18 +190,57 @@ try:
     v("l'adresse non prouvee a ete RETIREE", bool(d) and not d.get("email"), d and d.get("email"))
 
     print()
-    print("== 6. LA ROTATION D'ENDPOINT NE DEGRADE PAS UN APPAREIL VERIFIE ==")
-    # Le Service Worker n'a AUCUN jeton : il presente l'ancien endpoint.
+    print("== 6. ROTATION SANS PREUVE : ACCEPTEE, MAIS PAS VERIFIEE ==")
+    # V662c — connaitre l'identifiant ET l'ancien endpoint ne suffit PLUS.
+    # Ce sont deux chaines du corps de la requete, pas une preuve de possession.
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-sans"),
+        "previous_endpoint": "https://fcm.test/membre-1",
+    })
+    v("l'abonnement est accepte (rien n'est casse)", st == 200, (st, rep))
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-sans"})
+    v("mais il N'EST PAS verifie", bool(d) and d.get("push_verifie") is not True, d)
+    v("et n'a herite aucune adresse", bool(d) and not d.get("email"), d and d.get("email"))
+    # ARBITRAGE ASSUME, ET VERIFIE ICI. L'ancien endpoint EST mis au rebut,
+    # meme sans preuve. J'avais tente d'exiger une preuve : 4 controles de
+    # `test_push_cycle_vie_n2` sont tombes, dont « 8 rotations -> UN SEUL
+    # endpoint actif ». P1-c existe parce qu'un compte avait accumule 184
+    # endpoints et que V437 n'essaie que les 3 plus recents : plus AUCUNE
+    # notification. Une accumulation permanente est plus grave qu'un deni
+    # temporaire, qui se repare a la prochaine ouverture de l'application.
+    # Ce controle FIGE ce choix : s'il change un jour, ce sera volontaire.
+    dv = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-1"})
+    v("l'ancien endpoint est mis au rebut (anti-accumulation P1-c preserve)",
+      bool(dv) and dv.get("active") is False, dv)
+    v("aucune donnee n'a fuite au passage : il reste sans adresse heritee",
+      bool(d) and not d.get("email"), d and d.get("email"))
+
+    print()
+    print("== 6 bis. ROTATION AVEC LE JETON : LA VERIFICATION EST REPORTEE ==")
     st, rep = appel("POST", "/api/push/subscribe", {
         "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-2"),
         "previous_endpoint": "https://fcm.test/membre-1",
+        "rotation_jeton": JETON_ROT[0],
     })
-    v("accepte sans jeton (200)", st == 200, (st, rep))
+    v("accepte sans aucune session (200)", st == 200, (st, rep))
     d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-2"})
-    v("le nouvel endpoint reste VERIFIE", bool(d) and d.get("push_verifie") is True, d)
-    v("et garde l'adresse prouvee", bool(d) and d.get("email") == MEMBRE, d and d.get("email"))
+    v("le nouvel endpoint est VERIFIE", bool(d) and d.get("push_verifie") is True, d)
+    v("il garde l'adresse prouvee", bool(d) and d.get("email") == MEMBRE, d and d.get("email"))
     v("la preuve dit que c'est un report", bool(d) and str(d.get("push_preuve", "")).startswith("rotation:"),
       d and d.get("push_preuve"))
+    _neuf = str(rep.get("rotation_jeton") or "")
+    v("un jeton NEUF est remis", bool(_neuf) and _neuf != JETON_ROT[0], (rep, JETON_ROT[0][:8]))
+
+    print()
+    print("== 6 ter. UN JETON DEJA UTILISE NE VAUT PLUS RIEN ==")
+    st, rep = appel("POST", "/api/push/subscribe", {
+        "participant_id": PID_MEMBRE, "subscription": abonnement("https://fcm.test/membre-rejoue"),
+        "previous_endpoint": "https://fcm.test/membre-2",
+        "rotation_jeton": JETON_ROT[0],          # l'ANCIEN, deja consomme
+    })
+    d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-rejoue"})
+    v("rejouer l'ancien jeton ne verifie rien", bool(d) and d.get("push_verifie") is not True, d)
+    JETON_ROT[0] = _neuf
 
     print()
     print("== 7. LA DESINSCRIPTION NE TOUCHE QUE L'APPAREIL DESIGNE ==")
@@ -208,6 +261,7 @@ try:
         "participant_id": PID_TIERS,                       # un AUTRE compte
         "subscription": abonnement("https://fcm.test/pirate-rotation"),
         "previous_endpoint": "https://fcm.test/membre-2",   # endpoint VERIFIE du membre
+        "rotation_jeton": JETON_ROT[0],                    # et meme SON jeton vole
     })
     v("l'appel n'est pas refuse (rotation legitime preservee)", st == 200, (st, rep))
     d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/pirate-rotation"})
@@ -219,15 +273,19 @@ try:
       bool(dv) and dv.get("push_verifie") is True and dv.get("email") == MEMBRE, dv)
 
     print()
-    print("== 10. LA ROTATION DU MEME APPAREIL MARCHE TOUJOURS ==")
+    print("== 10. LA ROTATION LEGITIME DU MEME APPAREIL MARCHE TOUJOURS ==")
     st, rep = appel("POST", "/api/push/subscribe", {
         "participant_id": PID_MEMBRE,                      # LE MEME compte
         "subscription": abonnement("https://fcm.test/membre-3"),
         "previous_endpoint": "https://fcm.test/membre-2",
+        "rotation_jeton": JETON_ROT[0],                    # SON jeton, non consomme
     })
     d = db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-3"})
-    v("le meme participant garde sa verification",
+    v("le meme appareil garde sa verification",
       st == 200 and bool(d) and d.get("push_verifie") is True, (st, d))
+    v("et l'ancien endpoint est bien mis au rebut (rotation PROUVEE)",
+      (db.push_subscriptions.find_one({"subscription.endpoint": "https://fcm.test/membre-2"})
+       or {}).get("active") is False)
 
     print()
     print("== 8. UN TIERS AUTHENTIFIE NE PEUT PAS FAIRE TAIRE QUELQU'UN ==")

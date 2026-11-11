@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v665'; // V659-V661 : installation PWA, notifications abonne, destination du push
+var CACHE_NAME = 'afroboost-v666'; // V662c : le SW presente un jeton de rotation
                                    // -> sans ce bump, un appareil deja installe garderait l'ancien
                                    // bundle et continuerait d'envoyer l'instant du clic comme date.
 var SW_VERSION = 272;
@@ -363,14 +363,35 @@ self.addEventListener('pushsubscriptionchange', function(event) {
           return c.match('owner').then(function (r) {
             return (r ? r.text() : Promise.resolve('')).then(function (pid) {
               if (!pid) return;
-              return fetch('/api/push/subscribe', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  participant_id: pid,
-                  subscription: nouveau.toJSON(),
-                  previous_endpoint: ancien
-                })
+              // V662c — LA PREUVE QUE C'EST LE MEME TELEPHONE.
+              // Le Service Worker n'a aucune session a presenter. Le jeton de
+              // rotation, remis par le serveur au dernier enregistrement
+              // PROUVE, est la seule chose qui distingue cet appareil de
+              // quelqu'un qui connaitrait son identifiant et son endpoint.
+              // Absent : l'abonnement reste enregistre, simplement non
+              // verifie — il recevra des notifications neutres jusqu'a la
+              // prochaine ouverture de l'application. ES5 strict.
+              return c.match('rotation').then(function (rj) {
+                return (rj ? rj.text() : Promise.resolve('')).then(function (jeton) {
+                  return fetch('/api/push/subscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      participant_id: pid,
+                      subscription: nouveau.toJSON(),
+                      previous_endpoint: ancien,
+                      rotation_jeton: jeton || undefined
+                    })
+                  }).then(function (rep) {
+                    // Un jeton neuf remplace l'ancien : usage unique.
+                    if (!rep || !rep.ok) return;
+                    return rep.json().then(function (d) {
+                      if (d && d.rotation_jeton) {
+                        return c.put('rotation', new Response(d.rotation_jeton));
+                      }
+                    }).catch(function () { /* reponse illisible : on garde l'ancien */ });
+                  });
+                });
               });
             });
           });

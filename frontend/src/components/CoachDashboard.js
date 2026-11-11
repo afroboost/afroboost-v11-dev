@@ -1194,11 +1194,21 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     let precedent = null;
     try { precedent = localStorage.getItem(P1_CLE_ENDPOINT) || null; } catch (e) { /* mode prive */ }
     const endpoint = sub && sub.endpoint;
-    await axios.post(`${API}/push/subscribe`, {
+    // V662c — le coach presente aussi son jeton de rotation : son tableau de
+    // bord peut s'authentifier par le repli `X-User-Email`, sans JWT, et dans
+    // ce cas c'est le jeton qui porte la preuve de continuite de l'appareil.
+    let jetonRotation = '';
+    try {
+      const c = await caches.open('afroboost-push-owner');
+      const r = await c.match('rotation');
+      if (r) jetonRotation = await r.text();
+    } catch (e) { /* sans cache, la rotation ne reportera rien */ }
+    const reponseAbo = await axios.post(`${API}/push/subscribe`, {
       participant_id: pid,
       subscription: sub.toJSON(),
       role: 'coach',
       email,
+      rotation_jeton: jetonRotation || undefined,
       // Jamais l'endpoint courant : le serveur refuse deja ce cas, mais on ne
       // lui demande pas de nous proteger de nous-memes.
       previous_endpoint: precedent && precedent !== endpoint ? precedent : null
@@ -1207,6 +1217,8 @@ const CoachDashboard = ({ t, lang, onBack, onLogout, coachUser }) => {
     try {
       const c = await caches.open('afroboost-push-owner');
       await c.put('owner', new Response(pid));
+      const jNeuf = reponseAbo && reponseAbo.data && reponseAbo.data.rotation_jeton;
+      if (jNeuf) await c.put('rotation', new Response(jNeuf));
     } catch (e) { /* le cache n'est qu'un relais pour le SW */ }
     return endpoint;
   }, []);
