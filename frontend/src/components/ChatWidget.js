@@ -57,6 +57,7 @@ import faqAfroboost, { faqCategories, faqText, faqUiText } from '../data/faqAfro
 import Cropper from 'react-easy-crop'; // V279: recadrage circulaire de la photo de profil
 import { courseOccurrenceDate } from '../utils/zurichTime'; // V295: date d'occurrence fiable (Europe/Zurich)
 import { TRANSLATE_LANGS } from '../config/translateLangs'; // V297: 9 langues du site + it/es/pt
+import { viderStockagesSaufLangue } from '../utils/langue'; // V670
 
 const API = (process.env.REACT_APP_BACKEND_URL || '') + '/api';
 const SOCKET_URL = process.env.REACT_APP_BACKEND_URL || ''; // URL Socket.IO (même que backend)
@@ -3042,8 +3043,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       }
       
       // 3. Nettoyer le stockage
-      localStorage.clear();
-      sessionStorage.clear();
+      viderStockagesSaufLangue(); // V670 : la langue survit à la déconnexion
       
       // 4. Reinitialiser les etats
       setSessionData(null);
@@ -3055,8 +3055,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
       clearTimeout(forceRedirect);
     } catch (err) {
       console.error('[LOGOUT] Erreur:', err);
-      localStorage.clear();
-      sessionStorage.clear();
+      viderStockagesSaufLangue(); // V670 : la langue survit à la déconnexion
     }
     window.location.replace('/');
   };
@@ -9808,8 +9807,7 @@ export const ChatWidget = ({ vitrineCoachEmail = null, vitrineCoachName = null, 
                           <button
                             onClick={() => {
                               setShowCoachMenu(false);
-                              localStorage.clear();
-                              sessionStorage.clear();
+                              viderStockagesSaufLangue(); // V670 : la langue survit à la déconnexion
                               
                               setIsCoachMode(false);
                               setStep('form');

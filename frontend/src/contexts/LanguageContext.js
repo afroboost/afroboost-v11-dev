@@ -6,7 +6,7 @@
 // quel composant descendant peut lire la langue via `useLanguage()` sans qu'on
 // ait à faire descendre `lang` en prop partout.
 import { createContext, useContext } from 'react';
-import { translations } from '../utils/i18n';
+import { translations, interpoler } from '../utils/i18n';
 
 export const LanguageContext = createContext(null);
 
@@ -15,7 +15,7 @@ export const LanguageContext = createContext(null);
 const _fallback = {
   language: 'fr',
   setLanguage: () => {},
-  t: (key) => (translations.fr && translations.fr[key]) || key,
+  t: (key, vars) => interpoler((translations.fr && translations.fr[key]) || key, vars),
 };
 
 export function useLanguage() {

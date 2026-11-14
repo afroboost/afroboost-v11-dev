@@ -5871,6 +5871,110 @@ def _v302_french_leftovers(target_code: str, translation: str):
     return sorted(words & _V302_FR_MARKERS)
 
 
+# ============================================================================
+# V670 — /api/translate : CACHE des contenus PUBLICS, DÉBIT, BUDGET.
+# ============================================================================
+# Avant : chaque appel repassait par OpenAI, même pour un texte déjà traduit mille fois
+# (le nom d'une offre, vu par chaque visiteur) ; et la route étant ouverte, rien ne
+# bornait ce qu'un visiteur (ou un script) pouvait dépenser.
+#
+# 1. CACHE — uniquement quand l'appelant déclare `cache: true`, c'est-à-dire un contenu
+#    PUBLIC (nom/description d'offre, publication). Les messages du chat ne sont JAMAIS
+#    mis en cache : ils sont privés. La clé est un SHA-256 du texte exact (sans
+#    normalisation agressive : « 5 € offerts » et « 5 offerts » ne doivent pas se
+#    confondre) ; le texte SOURCE n'est pas stocké, seulement son empreinte.
+# 2. DÉBIT — seulement sur les appels IA (le lexique vérifié et le cache sont gratuits).
+#    Par IP : 20/minute et 200/jour. Même forme que _lot3b_debit_ok : en mémoire du
+#    processus, pas de slowapi dans le dépôt.
+# 3. BUDGET — plafond quotidien global d'appels IA (TRANSLATE_AI_DAILY_BUDGET, 1500 par
+#    défaut). Au-delà : 429 propre, le site affiche le texte d'origine.
+# Aucun de ces trois contrôles ne touche un parcours existant : sans `cache`, la route se
+# comporte comme avant, hors la limite de débit IA.
+_V670_TRAD_COLLECTION = "translation_cache"
+_V670_TRAD_IP = {}
+def _v670_entier_env(nom: str, defaut: int) -> int:
+    # Limites réglables SANS redéploiement de code ; une valeur invalide retombe sur le défaut.
+    try:
+        return max(1, int(os.environ.get(nom, str(defaut))))
+    except Exception:
+        return defaut
+
+
+_V670_TRAD_IP_MINUTE = _v670_entier_env("TRANSLATE_AI_IP_PER_MINUTE", 20)
+_V670_TRAD_IP_JOUR = _v670_entier_env("TRANSLATE_AI_IP_PER_DAY", 200)
+_V670_TRAD_BUDGET = {"jour": None, "n": 0}
+
+
+def _v670_budget_jour() -> int:
+    try:
+        return max(0, int(os.environ.get("TRANSLATE_AI_DAILY_BUDGET", "1500")))
+    except Exception:
+        return 1500
+
+
+def _v670_cle_cache(code: str, text: str) -> str:
+    import hashlib
+    import unicodedata
+    # NFC + espaces compactés SEULEMENT : on ne casse ni la casse, ni la ponctuation, ni les chiffres.
+    t = " ".join(unicodedata.normalize("NFC", text or "").split())
+    return hashlib.sha256(f"v1|{code}|{t}".encode("utf-8")).hexdigest()
+
+
+def _v670_ip(request) -> str:
+    return (request.headers.get("CF-Connecting-IP")
+            or (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+            or (request.client.host if getattr(request, "client", None) else "")).strip()
+
+
+def _v670_debit_ia_ok(ip: str):
+    """(autorisé, raison) pour UN appel IA. Compte aussi le budget global."""
+    import time as _t
+    _now = _t.monotonic()
+    from datetime import datetime as _dt, timezone as _tz
+    _jour = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    if _V670_TRAD_BUDGET["jour"] != _jour:
+        _V670_TRAD_BUDGET["jour"] = _jour
+        _V670_TRAD_BUDGET["n"] = 0
+    if _V670_TRAD_BUDGET["n"] >= _v670_budget_jour():
+        return False, "budget"
+    cle = ip or "?"
+    hist = [h for h in _V670_TRAD_IP.get(cle, []) if _now - h < 86400.0]
+    if sum(1 for h in hist if _now - h < 60.0) >= _V670_TRAD_IP_MINUTE or len(hist) >= _V670_TRAD_IP_JOUR:
+        _V670_TRAD_IP[cle] = hist
+        return False, "debit"
+    hist.append(_now)
+    _V670_TRAD_IP[cle] = hist
+    _V670_TRAD_BUDGET["n"] += 1
+    if len(_V670_TRAD_IP) > 5000:      # borne mémoire, jamais une fuite
+        for _k in list(_V670_TRAD_IP.keys())[:1000]:
+            _V670_TRAD_IP.pop(_k, None)
+    return True, ""
+
+
+async def _v670_cache_lire(code: str, text: str):
+    """Traduction déjà enregistrée, ou None. Une panne de base ne casse JAMAIS la traduction."""
+    try:
+        doc = await db[_V670_TRAD_COLLECTION].find_one({"_id": _v670_cle_cache(code, text)})
+        if doc and isinstance(doc.get("translation"), str) and doc["translation"].strip():
+            return doc
+    except Exception as e:
+        logger.warning(f"[V670] cache de traduction illisible ({type(e).__name__}) — on traduit sans lui")
+    return None
+
+
+async def _v670_cache_ecrire(code: str, text: str, translation: str, approximate: bool, model: str):
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        await db[_V670_TRAD_COLLECTION].update_one(
+            {"_id": _v670_cle_cache(code, text)},
+            {"$set": {"lang": code, "translation": translation, "approximate": bool(approximate),
+                      "model": model, "created_at": _dt.now(_tz.utc).isoformat()}},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"[V670] cache de traduction non écrit ({type(e).__name__}) — sans conséquence")
+
+
 @api_router.post("/translate")
 async def translate_text(request: Request):
     """V292/V299 : traduit un texte dans la langue cible.
@@ -5904,6 +6008,25 @@ async def translate_text(request: Request):
     if _lex is not None:
         logger.info(f"[V302] Traduction lexique lang={target}")
         return {"translation": _lex, "target_lang": target, "approximate": False, "source": "lexique"}
+
+    # V670 : contenu PUBLIC déjà traduit -> on le rend, gratuitement, sans appel IA.
+    # `cache: true` est posé par l'appelant pour un contenu public ; les messages du chat
+    # (privés) ne le posent pas et ne sont donc ni lus ni écrits dans le cache.
+    _v670_public = body.get("cache") is True
+    if _v670_public:
+        _hit = await _v670_cache_lire(code, text)
+        if _hit:
+            return {"translation": _hit["translation"], "target_lang": target,
+                    "approximate": bool(_hit.get("approximate")), "source": "cache", "cached": True}
+
+    # V670 : seul l'appel IA coûte — lui seul est limité (par IP, puis budget global).
+    _ok, _raison = _v670_debit_ia_ok(_v670_ip(request))
+    if not _ok:
+        logger.warning(f"[V670] traduction IA refusée ({_raison}) lang={target}")
+        raise HTTPException(
+            status_code=429,
+            detail="Traduction momentanément limitée. Le texte d'origine reste affiché.",
+        )
 
     openai_key = os.environ.get("OPENAI_API_KEY")
     if not openai_key:
@@ -5982,7 +6105,9 @@ async def translate_text(request: Request):
 
         _dur = round(_time.monotonic() - _t0, 2)
         logger.info(f"[V302] Traduction OK lang={target} modèle={used_model} approx={approximate} durée={_dur}s")
-        return {"translation": translation, "target_lang": target, "approximate": approximate, "source": "ia"}
+        if _v670_public and (translation or "").strip():
+            await _v670_cache_ecrire(code, text, translation, approximate, used_model)
+        return {"translation": translation, "target_lang": target, "approximate": approximate, "source": "ia", "cached": False}
     except asyncio.TimeoutError:
         _dur = round(_time.monotonic() - _t0, 2)
         logger.error(f"[V302] Traduction TIMEOUT lang={target} durée={_dur}s")

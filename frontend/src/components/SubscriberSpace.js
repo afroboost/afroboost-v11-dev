@@ -57,6 +57,7 @@ import MonImpactAfroboost from "./MonImpactAfroboost"; // V610o : Boosts + palie
 // elle, une date naive serait lue dans le fuseau du navigateur et l'ecran
 // pourrait offrir « Annuler » alors que le serveur refuse.
 import { instantReelCours, estAujourdhuiZurich } from "../utils/heureCours";
+import { useLanguage } from '../contexts/LanguageContext'; // V670
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -151,6 +152,7 @@ const b3s1OublierJeton = oublierSession;
 
 
 export default function SubscriberSpace({ accessCode: propCode }) {
+  const { t } = useLanguage();
   // V594 : arrivée depuis le parcours Partenaire -> on montre où on en est (3e étape).
   // Lu UNE fois dans l'URL ; aucun effet, aucune requête.
   const [v594Parcours] = useState(() => {
@@ -361,7 +363,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
   const loadSpace = useCallback(async () => {
     if (!accessCode) {
-      setError("Code d'accès manquant dans l'URL");
+      setError(t('v_mem_code_d_acces_manquant_dans_l_url'));
       setLoading(false);
       return;
     }
@@ -523,7 +525,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const b3s1DemanderCode = useCallback(async () => {
     const mail = (identEmail || "").trim();
     if (!mail || mail.indexOf("@") < 1) {
-      setIdentErreur("Indique une adresse e-mail valide.");
+      setIdentErreur(t('v_mem2_indique_une_adresse_e_mail_valide'));
       return;
     }
     setIdentOccupe(true); setIdentErreur(""); setIdentInfo("");
@@ -541,9 +543,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       setMaintenantSec(Date.now());
     } catch (err) {
       if (err?.response?.status === 429) {
-        setIdentErreur("Trop de demandes. Réessaie dans quelques minutes.");
+        setIdentErreur(t('v_mem2_trop_de_demandes_reessaie_dans_quelq'));
       } else {
-        setIdentErreur("L'envoi n'a pas pu aboutir. Vérifie ta connexion et réessaie.");
+        setIdentErreur(t('v_mem2_l_envoi_n_a_pas_pu_aboutir_verifie_t'));
       }
     } finally {
       setIdentOccupe(false);
@@ -554,7 +556,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   const b3s1ValiderCode = useCallback(async () => {
     const saisi = (identOtp || "").replace(/\D/g, "");
     if (saisi.length !== 6) {
-      setIdentErreur("Le code comporte 6 chiffres.");
+      setIdentErreur(t('v_mem2_le_code_comporte_6_chiffres'));
       return;
     }
     setIdentOccupe(true); setIdentErreur("");
@@ -579,11 +581,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       // il renvoie un seul 400. On ne peut donc pas etre plus precis sans
       // inventer — et inventer serait exactement l'oracle qu'on evite.
       if (err?.response?.status === 429) {
-        setIdentErreur("Trop de tentatives. Réessaie dans quelques minutes.");
+        setIdentErreur(t('v_mem2_trop_de_tentatives_reessaie_dans_que'));
       } else if (err?.response?.status === 503) {
-        setIdentErreur("Vérification momentanément indisponible. Réessaie dans un instant.");
+        setIdentErreur(t('v_mem2_verification_momentanement_indisponi'));
       } else {
-        setIdentErreur("Code invalide ou expiré. Demande un nouveau code.");
+        setIdentErreur(t('v_mem2_code_invalide_ou_expire_demande_un_n'));
       }
     } finally {
       setIdentOccupe(false);
@@ -610,9 +612,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
   // V202: Rejoindre un code multi-membre
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!joinForm.name.trim()) { setJoinError("Prénom requis"); return; }
+    if (!joinForm.name.trim()) { setJoinError(t('v_mem2_prenom_requis')); return; }
     if (!joinForm.email.trim() && !joinForm.whatsapp.trim()) {
-      setJoinError("Email ou WhatsApp requis"); return;
+      setJoinError(t('v_mem2_email_ou_whatsapp_requis')); return;
     }
     setJoinLoading(true);
     setJoinError("");
@@ -697,7 +699,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       if (res.data?.url) {
         window.location.href = res.data.url;
       } else {
-        setActionError("Le paiement est momentanément indisponible. Réessaye.");
+        setActionError(t('v_mem2_le_paiement_est_momentanement_indisp'));
         setRechargeLoading(false);
       }
     } catch (err) {
@@ -876,19 +878,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
              style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
              data-testid="espace-identification">
           {v594Etapes}
-          <h1 className="text-xl font-semibold mb-2">Accède à ton espace</h1>
+          <h1 className="text-xl font-semibold mb-2">{t('v_mem_accede_a_ton_espace')}</h1>
           {lienEtat === "ouverture" ? (
-            <p className="text-white/80 text-sm mb-5" role="status" data-testid="espace-lien-ouverture">Ouverture de ton espace…</p>
+            <p className="text-white/80 text-sm mb-5" role="status" data-testid="espace-lien-ouverture">{t('v_mem_ouverture_de_ton_espace')}</p>
           ) : null}
           {lienEtat === "expire" ? (
             <p className="text-sm mb-3" role="status" data-testid="espace-lien-expire" style={{ color: "rgba(255,210,170,0.95)" }}>
-              Ce lien n’est plus valable. Confirme ton adresse e-mail pour recevoir un code.
+              {t('v_mem_ce_lien_n_est_plus_valable_confirme_')}
             </p>
           ) : null}
           <p className="text-white/60 text-sm mb-5">
             {enOtp
-              ? "Saisis le code à 6 chiffres reçu par e-mail."
-              : "Confirme ton adresse e-mail pour recevoir un code de vérification."}
+              ? t('v_mem_saisis_le_code_a_6_chiffres_recu_par')
+              : t('v_mem_confirme_ton_adresse_e_mail_pour_rec')}
           </p>
 
           {!enOtp && (
@@ -896,7 +898,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               type="email" inputMode="email" autoComplete="email"
               value={identEmail}
               onChange={(e) => setIdentEmail(e.target.value)}
-              placeholder="ton adresse e-mail"
+              placeholder={t('v_mem_ton_adresse_e_mail')}
               data-testid="espace-email"
               className="w-full px-3 py-3 rounded-xl mb-3 text-sm"
               style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.border}`, color: "white" }}
@@ -929,7 +931,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             data-testid="espace-valider"
             className="w-full py-3 rounded-xl text-sm font-semibold disabled:opacity-50"
             style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
-            {identOccupe ? "…" : enOtp ? "Valider" : "Recevoir mon code"}
+            {identOccupe ? "…" : enOtp ? t('v_mem_valider') : t('v_mem_recevoir_mon_code')}
           </button>
 
           {enOtp && (
@@ -940,20 +942,19 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 onClick={b3s1DemanderCode}
                 className="text-xs underline disabled:opacity-40 disabled:no-underline"
                 style={{ color: "rgba(255,255,255,0.7)" }}>
-                {b3s1Secondes > 0 ? `Renvoyer dans ${b3s1Secondes}s` : "Renvoyer le code"}
+                {b3s1Secondes > 0 ? `Renvoyer dans ${b3s1Secondes}s` : t('v_mem_renvoyer_le_code')}
               </button>
               <button
                 type="button" data-testid="espace-corriger"
                 onClick={() => { setIdentEtape("email"); setIdentOtp(""); setIdentErreur(""); setIdentInfo(""); }}
                 className="text-xs underline" style={{ color: "rgba(255,255,255,0.7)" }}>
-                Corriger mon e-mail
+                {t('v_mem_corriger_mon_e_mail')}
               </button>
             </div>
           )}
 
           <p className="text-white/40 text-xs mt-5">
-            Tu n'as pas reçu de code ou tu n'as plus accès à cette adresse ?
-            Contacte ton coach, il peut t'aider.
+            {t('v_mem_tu_n_as_pas_recu_de_code_ou_tu_n_as_')}
           </p>
         </div>
       </div>
@@ -968,7 +969,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             className="w-12 h-12 rounded-full border-2 border-t-transparent animate-spin"
             style={{ borderColor: COLORS.primary, borderTopColor: "transparent" }}
           />
-          <p className="text-white/70 text-sm">Chargement de ton espace…</p>
+          <p className="text-white/70 text-sm">{t('v_mem_chargement_de_ton_espace')}</p>
         </div>
       </div>
     );
@@ -982,9 +983,9 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
         >
           <div className="text-4xl mb-3"><SvgIcon name="lock" size={36} /></div>
-          <h1 className="text-xl font-semibold mb-2">Accès indisponible</h1>
+          <h1 className="text-xl font-semibold mb-2">{t('v_mem_acces_indisponible')}</h1>
           <p className="text-white/70 text-sm">{error}</p>
-          <p className="text-white/40 text-xs mt-4">Vérifie le lien avec ton coach.</p>
+          <p className="text-white/40 text-xs mt-4">{t('v_mem_verifie_le_lien_avec_ton_coach')}</p>
         </div>
       </div>
     );
@@ -1013,14 +1014,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               </div>
             )}
             <div className="flex-1 min-w-0">
-              <h1 className="text-xl font-semibold leading-tight">Bienvenue !</h1>
+              <h1 className="text-xl font-semibold leading-tight">{t('v_mem_bienvenue')}</h1>
               <p className="text-white/50 text-xs truncate">{mmCoach?.name || "Afroboost"} · {mm.code}</p>
             </div>
           </header>
 
           {/* V203: Infos code — affichage clair restantes vs utilisées */}
           <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
-            <p className="text-white/60 text-xs uppercase tracking-wider mb-1">Séances restantes</p>
+            <p className="text-white/60 text-xs uppercase tracking-wider mb-1">{t('v_mem_seances_restantes')}</p>
             <p className="text-lg font-semibold">
               <span style={{ color: COLORS.primary }}>{mmSub.remaining_sessions || 0}</span>
               <span className="text-white/40 text-sm"> / {mmSub.total_sessions || 0}</span>
@@ -1032,8 +1033,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
           {/* Formulaire d'inscription */}
           <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
-            <h2 className="text-base font-semibold mb-1">Rejoindre cet abonnement</h2>
-            <p className="text-white/50 text-xs mb-4">Entre tes infos pour obtenir ton lien personnel</p>
+            <h2 className="text-base font-semibold mb-1">{t('v_mem_rejoindre_cet_abonnement')}</h2>
+            <p className="text-white/50 text-xs mb-4">{t('v_mem_entre_tes_infos_pour_obtenir_ton_lie')}</p>
 
             {joinError && (
               <p className="text-xs mb-3 px-3 py-2 rounded-lg"
@@ -1042,16 +1043,16 @@ export default function SubscriberSpace({ accessCode: propCode }) {
 
             <form onSubmit={handleJoin} className="space-y-3" autoComplete="off">
               <div>
-                <label className="text-xs text-white/50 block mb-1">Prénom *</label>
+                <label className="text-xs text-white/50 block mb-1">{t('v_mem_prenom')}</label>
                 <input type="text" value={joinForm.name}
                   onChange={(e) => setJoinForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="Ton prénom" maxLength={50} required
+                  placeholder={t('v_mem_ton_prenom')} maxLength={50} required
                   autoComplete="off" name="join-name-field"
                   className="w-full px-3 py-2 rounded-lg text-sm"
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
               </div>
               <div>
-                <label className="text-xs text-white/50 block mb-1">Email</label>
+                <label className="text-xs text-white/50 block mb-1">{t('v_mem_email')}</label>
                 <input type="email" value={joinForm.email}
                   onChange={(e) => setJoinForm(f => ({ ...f, email: e.target.value }))}
                   placeholder="ton@email.com" maxLength={100}
@@ -1060,7 +1061,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
               </div>
               <div>
-                <label className="text-xs text-white/50 block mb-1">WhatsApp</label>
+                <label className="text-xs text-white/50 block mb-1">{t('v_mem_whatsapp')}</label>
                 <input type="tel" value={joinForm.whatsapp}
                   onChange={(e) => setJoinForm(f => ({ ...f, whatsapp: e.target.value }))}
                   placeholder="+41 7X XXX XX XX" maxLength={20}
@@ -1071,7 +1072,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               <button type="submit" disabled={joinLoading}
                 className="w-full py-3 rounded-xl text-sm font-semibold transition-transform active:scale-95 disabled:opacity-50"
                 style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})`, color: "white" }}>
-                {joinLoading ? "Inscription..." : "Obtenir mon lien personnel"}
+                {joinLoading ? t('v_mem_inscription') : t('v_mem_obtenir_mon_lien_personnel')}
               </button>
             </form>
           </section>
@@ -1081,7 +1082,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           {/* V203d: Membres déjà inscrits — accès rapide + copier lien */}
           {mmMembers.length > 0 && (
             <section className="rounded-2xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}>
-              <p className="text-white/60 text-xs uppercase tracking-wider mb-3">Déjà inscrit ? Choisis ton profil</p>
+              <p className="text-white/60 text-xs uppercase tracking-wider mb-3">{t('v_mem_deja_inscrit_choisis_ton_profil')}</p>
               <div className="space-y-2">
                 {mmMembers.map((mem) => {
                   const memLink = `${window.location.origin}/espace/${mm.code}?m=${mem.slug}`;
@@ -1097,7 +1098,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         <span className="inline-flex items-center gap-1.5"><SvgIcon name="user" size={14} /> {mem.name}</span>
                         <span className="text-white/30"><SvgIcon name="arrowRight" size={14} /></span>
                       </button>
-                      <button type="button" title="Copier le lien personnel"
+                      <button type="button" title={t('v_mem_copier_le_lien_personnel')}
                         onClick={async (e) => {
                           e.stopPropagation();
                           const r = await copyToClipboard(memLink);
@@ -1324,7 +1325,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             className="text-xs text-white/50 hover:text-white transition-colors self-start"
             style={{ order: essaiPrioritaire ? -3 : 0 }}
           >
-            <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> Retour à la page du groupe</span>
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> {t('v_mem_retour_a_la_page_du_groupe')}</span>
           </button>
         )}
 
@@ -1358,8 +1359,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           <button
             type="button"
             onClick={() => setV261ShowPublish(true)}
-            title="Publier une photo ou une vidéo"
-            aria-label="Publier une photo ou une vidéo"
+            title={t('v_mem_publier_une_photo_ou_une_video')}
+            aria-label={t('v_mem_publier_une_photo_ou_une_video')}
             style={{
               height: 40, borderRadius: 20, padding: '0 16px', flexShrink: 0,
               background: COLORS.primary, color: '#fff', border: 'none', cursor: 'pointer',
@@ -1369,7 +1370,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             }}
             data-testid="subscriber-publish-button"
           >
-            Publier
+            {t('v_mem_publier')}
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0 }}>
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
@@ -1487,7 +1488,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             }}
           >
             <p className="text-lg font-bold" style={{ color: '#86efac' }}>
-              ✅ Ta réservation est confirmée !
+              {t('v_mem_ta_reservation_est_confirmee')}
             </p>
             <p className="text-base font-semibold mt-2">
               {formatOccurrence(
@@ -1510,7 +1511,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               </p>
             )}
             <p className="text-sm mt-3 opacity-75">
-              Nous avons bien enregistré ta place. À bientôt chez Afroboost 🎧🔥
+              {t('v_mem_nous_avons_bien_enregistre_ta_place_')}
             </p>
             {/* V534 — une ligne discrète, jamais un bouton plein (« aucune vente
                 derrière ») : seulement si le programme est ouvert ET que ce
@@ -1539,14 +1540,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           >
             {/* V607f : un ÉVÉNEMENT gratuit n'est pas un « cours d'essai » (texte de l'essai inchangé). */}
             <p className="text-lg font-bold" data-testid="essai7-titre">
-              {essai && essai.nature === "evenement" ? "🎉 Ton inscription est confirmée !" : "🎁 Ton cours d'essai est activé !"}
+              {essai && essai.nature === "evenement" ? t('v_mem_ton_inscription_est_confirmee') : t('v_mem_ton_cours_d_essai_est_active')}
             </p>
             {courses.length > 0 ? (
               <>
                 <p className="text-white/60 text-xs uppercase tracking-wider mt-3">
-                  Prochaine étape
+                  {t('v_mem_prochaine_etape')}
                 </p>
-                <p className="text-sm mt-1">Choisis maintenant ta séance.</p>
+                <p className="text-sm mt-1">{t('v_mem_choisis_maintenant_ta_seance')}</p>
                 <button
                   type="button"
                   onClick={scrollToReservation}
@@ -1554,7 +1555,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   className="mt-4 w-full py-3 rounded-xl font-bold transition-transform active:scale-95"
                   style={{ background: COLORS.primary, color: "white", border: "none" }}
                 >
-                  Choisir ma séance
+                  {t('v_mem_choisir_ma_seance')}
                 </button>
               </>
             ) : (
@@ -1564,8 +1565,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                  serait une promesse que personne ne tient. L'espace, lui,
                  reste entierement accessible. */
               <p className="text-sm mt-3 text-white/70" data-testid="essai7-aucun-creneau">
-                Aucun nouveau créneau n'est disponible pour le moment.
-                Reviens bientôt pour choisir ta séance.
+                {t('v_mem_aucun_nouveau_creneau_n_est_disponib')}
               </p>
             )}
           </section>
@@ -1589,7 +1589,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             {/* V594 : en confirmation focalisée, la carte verte dit déjà tout — on ne garde
                 que le bouton « Voir mon QR » EXISTANT de cette carte. */}
             {!v594Focus && (<>
-            <p className="text-lg font-bold">🔥 Ta séance est réservée !</p>
+            <p className="text-lg font-bold">{t('v_mem_ta_seance_est_reservee')}</p>
             {prochaineSeance && (
               <p className="text-sm mt-2 font-semibold" style={{ color: COLORS.primary }}>
                 {prochaineSeance.courseName ? `${prochaineSeance.courseName} · ` : ""}
@@ -1610,13 +1610,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     className="ml-2 underline"
                     style={{ color: COLORS.primary }}
                   >
-                    Itinéraire
+                    {t('v_mem_itineraire')}
                   </a>
                 ) : null}
               </p>
             ) : null}
             <p className="text-sm mt-3 text-white/70">
-              Ton QR est prêt. Présente-le au coach à ton arrivée.
+              {t('v_mem_ton_qr_est_pret_presente_le_au_coach')}
             </p>
             </>)}
             <button
@@ -1627,7 +1627,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               style={{ background: COLORS.primary, color: "white", border: "none" }}
             >
               <span className="inline-flex items-center justify-center gap-1.5">
-                <SvgIcon name="ticket" size={16} /> Voir mon QR
+                <SvgIcon name="ticket" size={16} /> {t('v_mem_voir_mon_qr')}
               </span>
             </button>
           </section>
@@ -1643,7 +1643,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             className="w-full py-3 rounded-xl font-bold transition-transform active:scale-95"
             style={{ order: -1, background: "transparent", color: "white", border: `1px solid ${COLORS.primary}` }}
           >
-            Accéder à mon espace
+            {t('v_mem_acceder_a_mon_espace')}
           </button>
         )}
 
@@ -1707,7 +1707,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           data-testid="subscriber-space-reservation"
           data-mode="inline"
         >
-          <h2 className="text-base font-semibold mb-3" data-testid="reservation-titre">Réserver une séance</h2>
+          <h2 className="text-base font-semibold mb-3" data-testid="reservation-titre">{t('v_mem_reserver_une_seance')}</h2>
           {actionError && (
             <p
               className="text-xs mb-3 px-3 py-2 rounded-lg"
@@ -1727,10 +1727,10 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   bandeau annoncait « Plus de séances disponibles » a quelqu'un
                   qui venait de reserver la sienne. */}
               {estEssai && etatEssaiVu === "booked"
-                ? "Vous avez déjà réservé votre séance découverte. Annulez-la pour en choisir une autre."
+                ? t('v_mem_vous_avez_deja_reserve_votre_seance_')
                 : estEssai && etatEssaiVu === "done"
-                ? "Votre séance découverte a été utilisée."
-                : "Plus de séances disponibles"}
+                ? t('v_mem_votre_seance_decouverte_a_ete_utilis')
+                : t('v_mem_plus_de_seances_disponibles')}
             </p>
           )}
           {courses.length === 0 ? (
@@ -1754,7 +1754,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   || "Ton abonnement n'est plus utilisable. Contacte le coach pour le renouveler."}
               </p>
             ) : (
-              <p className="text-white/50 text-sm">Aucun cours disponible pour le moment.</p>
+              <p className="text-white/50 text-sm">{t('v_mem_aucun_cours_disponible_pour_le_momen')}</p>
             )
           ) : (() => {
             // INV-3 : meme fonction que la preselection — la seance invitee n'est jamais coupee.
@@ -1866,20 +1866,20 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                           className="text-xs px-3 py-1 rounded-full inline-flex items-center gap-1.5"
                           style={{ background: "rgba(34,197,94,0.15)", color: "#86efac" }}
                         >
-                          <SvgIcon name="check" size={14} /> Réservé
+                          <SvgIcon name="check" size={14} /> {t('v_mem_reserve')}
                         </span>
                         {matchingRes && (
                           <button type="button"
                             disabled={tooLate || isCancelling}
                             onClick={() => handleCancelReservation(matchingRes)}
                             className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
-                            title={tooLate ? "Annulation impossible moins de 2h avant" : "Annuler pour changer de séance"}
+                            title={tooLate ? t('v_mem_annulation_impossible_moins_de_2h_av') : t('v_mem_annuler_pour_changer_de_seance')}
                             style={{
                               background: tooLate ? "rgba(255,255,255,0.06)" : "rgba(239,68,68,0.18)",
                               color: tooLate ? "rgba(255,255,255,0.4)" : "#fca5a5",
                               cursor: tooLate ? "not-allowed" : "pointer",
                             }}>
-                            {isCancelling ? "…" : "Annuler"}
+                            {isCancelling ? "…" : t('v_mem_annuler')}
                           </button>
                         )}
                       </div>
@@ -1907,14 +1907,14 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2" data-testid={`qty-${occ.course_id}`}>
                           <button type="button" onClick={dec}
-                            disabled={qty <= 1 || isBusy || noSessions} aria-label="Diminuer"
+                            disabled={qty <= 1 || isBusy || noSessions} aria-label={t('v_mem_diminuer')}
                             className="w-11 h-11 rounded-full text-sm font-bold disabled:opacity-30"
                             style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
                             −
                           </button>
                           <span className="text-sm font-semibold w-6 text-center">{qty}</span>
                           <button type="button" onClick={inc}
-                            disabled={qty >= maxQty || isBusy || noSessions} aria-label="Augmenter"
+                            disabled={qty >= maxQty || isBusy || noSessions} aria-label={t('v_mem_augmenter')}
                             className="w-11 h-11 rounded-full text-sm font-bold disabled:opacity-30"
                             style={{ background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.12)" }}>
                             +
@@ -1932,8 +1932,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                               liste de dates, ne dit pas LAQUELLE. */}
                           {isBusy ? "…"
                             : qty > 1 ? `Réserver ${qty} places`
-                            : essaiAReserver ? "Réserver cette séance"
-                            : "Réserver"}
+                            : essaiAReserver ? t('v_mem_reserver_cette_seance')
+                            : t('v_mem_reserver')}
                         </button>
                       </div>
                       )}
@@ -1955,7 +1955,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         <ol className="mt-3 space-y-1 text-xs text-white/70">
                           <li className="flex items-center gap-2">
                             <span className="w-4 text-white/40">1.</span>
-                            <span className="flex-1">{firstName} <span className="text-white/40">(moi)</span></span>
+                            <span className="flex-1">{firstName} <span className="text-white/40">{t('v_mem_moi')}</span></span>
                           </li>
                           {Array.from({ length: qty - 1 }).map((_, i) => (
                             <li key={i} className="flex items-center gap-2">
@@ -1963,7 +1963,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                               <input type="text"
                                 value={(guestNames[key] || [])[i] || ""}
                                 onChange={(e) => setGuestName(key, i, e.target.value)}
-                                placeholder="Prénom" maxLength={50}
+                                placeholder={t('v_mem_prenom_2')} maxLength={50}
                                 data-testid={`guest-input-${occ.course_id}-${i}`}
                                 className="flex-1 px-2 py-1 rounded text-xs"
                                 style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "white" }} />
@@ -1991,21 +1991,21 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
             data-testid="subscriber-space-abonnement-mensuel"
           >
-            <p className="text-white text-sm font-semibold">Mon abonnement mensuel</p>
+            <p className="text-white text-sm font-semibold">{t('v_mem_mon_abonnement_mensuel')}</p>
             <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-              <dt className="text-white/50">Offre</dt>
+              <dt className="text-white/50">{t('v_mem_offre')}</dt>
               <dd className="text-white text-right">{subscription.offer_name}</dd>
-              <dt className="text-white/50">Prix mensuel</dt>
+              <dt className="text-white/50">{t('v_mem_prix_mensuel')}</dt>
               <dd className="text-white text-right">{(Number(subscription.renewal_price) || 0).toFixed(2)} CHF / mois</dd>
-              <dt className="text-white/50">Séances ce mois</dt>
+              <dt className="text-white/50">{t('v_mem_seances_ce_mois')}</dt>
               <dd className="text-white text-right">{remaining} restante{remaining > 1 ? "s" : ""} sur {subscription.renewal_sessions || 0}</dd>
-              <dt className="text-white/50">{subscription.etat_abonnement.etat === "actif" ? "Prochaine échéance" : "Fin d'accès"}</dt>
+              <dt className="text-white/50">{subscription.etat_abonnement.etat === "actif" ? t('v_mem_prochaine_echeance') : t('v_mem_fin_d_acces')}</dt>
               <dd className="text-white text-right">{subscription.etat_abonnement.acces_jusquau || "—"}</dd>
-              <dt className="text-white/50">État</dt>
+              <dt className="text-white/50">{t('v_mem_etat')}</dt>
               <dd className="text-right" data-testid="abonnement-etat"
                   style={{ color: subscription.etat_abonnement.etat === "actif" ? "#4ade80" : "#fbbf24" }}>
-                {subscription.etat_abonnement.etat === "actif" ? "Actif"
-                  : subscription.etat_abonnement.etat === "resiliation_programmee" ? "Résiliation programmée" : "Terminé"}
+                {subscription.etat_abonnement.etat === "actif" ? t('v_mem_actif')
+                  : subscription.etat_abonnement.etat === "resiliation_programmee" ? t('v_mem_resiliation_programmee') : t('v_mem_termine')}
               </dd>
             </dl>
             <p className="text-[11px] mt-2 text-white/60">
@@ -2040,7 +2040,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               >
                 <span className="inline-flex items-center justify-center gap-1.5">
                   <SvgIcon name={subscription.etat_abonnement.etat === "actif" ? "x" : "refresh"} size={14} />
-                  {subscription.etat_abonnement.etat === "actif" ? "Résilier mon abonnement" : "Continuer mon abonnement"}
+                  {subscription.etat_abonnement.etat === "actif" ? t('v_mem_resilier_mon_abonnement') : t('v_mem_continuer_mon_abonnement')}
                 </span>
               </button>
             )}
@@ -2058,11 +2058,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
           >
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-white text-sm font-semibold">Reconduction automatique</p>
+                <p className="text-white text-sm font-semibold">{t('v_mem_reconduction_automatique')}</p>
                 <p className="text-white/50 text-xs mt-1">
                   {subscription.auto_renew
                     ? `${(Number(subscription.renewal_price) || 0).toFixed(2)} CHF pour ${subscription.renewal_sessions || 0} séances`
-                    : "Désactivée"}
+                    : t('v_mem_desactivee')}
                 </p>
               </div>
               <button
@@ -2093,8 +2093,8 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   }
                 }}
                 title={subscription.has_payment_method
-                  ? (subscription.auto_renew ? "Désactiver la reconduction" : "Activer la reconduction")
-                  : "Aucune carte enregistrée — souscription manuelle uniquement"}
+                  ? (subscription.auto_renew ? t('v_mem_desactiver_la_reconduction') : t('v_mem_activer_la_reconduction'))
+                  : t('v_mem_aucune_carte_enregistree_souscriptio')}
                 className="flex-shrink-0 transition-all"
                 style={{
                   width: 52, height: 28, borderRadius: 999, padding: 2, border: "none",
@@ -2115,12 +2115,12 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             </div>
             {subscription.auto_renew && (
               <p className="text-[10px] mt-2" style={{ color: "#fbbf24" }}>
-                Le montant sera prélevé automatiquement à la fin de vos séances. Non remboursable.
+                {t('v_mem_le_montant_sera_preleve_automatiquem')}
               </p>
             )}
             {!subscription.has_payment_method && (
               <p className="text-[10px] mt-2 text-white/40">
-                Aucune carte enregistrée pour cet abonnement — renouvellement manuel uniquement.
+                {t('v_mem_aucune_carte_enregistree_pour_cet_ab')}
               </p>
             )}
           </section>
@@ -2136,7 +2136,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             }}
             data-testid="headphone-badge"
           >
-            <p className="text-xs text-white/70 mb-1">Casques en cours</p>
+            <p className="text-xs text-white/70 mb-1">{t('v_mem_casques_en_cours')}</p>
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
               {headphoneSummary.map((p, idx) => (
                 <span key={idx} className="inline-flex items-center gap-1">
@@ -2162,7 +2162,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             data-testid="subscriber-space-upcoming"
             id="mes-seances"
           >
-            <h2 className="text-base font-semibold mb-3">{upcomingReservations.length > 1 ? "Mes prochaines séances" : "Prochaine séance"}</h2>
+            <h2 className="text-base font-semibold mb-3">{upcomingReservations.length > 1 ? t('v_mem_mes_prochaines_seances') : t('v_mem_prochaine_seance')}</h2>
             <ul className="space-y-2">
               {/* V561 : 2 séances au plus par défaut — la liste complète sur demande. */}
               {(toutesSeances ? upcomingReservations : upcomingReservations.slice(0, 2)).map((r) => {
@@ -2206,7 +2206,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                             className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold"
                             style={{ background: COLORS.primary, color: "white" }}
                           >
-                            AUJOURD'HUI
+                            {t('v_mem_aujourd_hui')}
                           </span>
                         )}
                       </p>
@@ -2226,7 +2226,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                               style={{ color: COLORS.primary }}
                               data-testid="resa-itineraire"
                             >
-                              Itinéraire
+                              {t('v_mem_itineraire')}
                             </a>
                           ) : null}
                         </p>
@@ -2285,7 +2285,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         disabled={isBusy}
                         onClick={() => handleCancelReservation(r)}
                         className="text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-40"
-                        title="Annuler la séance"
+                        title={t('v_mem_annuler_la_seance')}
                         style={{
                           background: "rgba(239,68,68,0.18)",
                           color: "#fca5a5",
@@ -2293,7 +2293,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         }}
                         data-testid={`cancel-reservation-${r.id}`}
                       >
-                        {isBusy ? "…" : "Annuler"}
+                        {isBusy ? "…" : t('v_mem_annuler')}
                       </button>
                     )}
                   </li>
@@ -2303,7 +2303,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             {upcomingReservations.length > 2 ? (
               <button type="button" onClick={() => setToutesSeances((v) => !v)} data-testid="voir-toutes-seances"
                 className="mt-3 text-sm font-semibold underline" style={{ color: COLORS.primary, minHeight: 44 }}>
-                {toutesSeances ? "Afficher moins" : `Voir toutes mes séances (${upcomingReservations.length})`}
+                {toutesSeances ? t('v_mem_afficher_moins') : `Voir toutes mes séances (${upcomingReservations.length})`}
               </button>
             ) : null}
           </section>
@@ -2329,7 +2329,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
             data-testid="group-members-management"
           >
-            <h2 className="text-base font-semibold mb-3">Membres du groupe</h2>
+            <h2 className="text-base font-semibold mb-3">{t('v_mem_membres_du_groupe')}</h2>
             <div className="space-y-2">
               {data.group_members.map((member) => (
                 <div
@@ -2365,13 +2365,13 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       border: member.blocked ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(239,68,68,0.3)",
                     }}
                   >
-                    {member.blocked ? "Débloquer" : "Bloquer"}
+                    {member.blocked ? t('v_mem_debloquer') : t('v_mem_bloquer')}
                   </button>
                 </div>
               ))}
             </div>
             <p className="text-xs mt-3" style={{ color: "rgba(255,255,255,0.4)" }}>
-              Un membre bloqué ne pourra plus réserver de séances.
+              {t('v_mem_un_membre_bloque_ne_pourra_plus_rese')}
             </p>
           </section>
         )}
@@ -2386,7 +2386,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             style={{ color: "rgba(255,255,255,0.5)" }}
             data-testid="subscriber-space-terms-link"
           >
-            <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> Conditions d'utilisation</span>
+            <span className="inline-flex items-center gap-1.5"><SvgIcon name="clipboard" size={14} /> {t('v_mem_conditions_d_utilisation')}</span>
           </a>
         </div>
 
@@ -2403,7 +2403,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
             className="text-xs underline disabled:opacity-40"
             style={{ color: "rgba(255,255,255,0.5)" }}
           >
-            {deconnexionEnCours ? "Déconnexion…" : "Se déconnecter de cet appareil"}
+            {deconnexionEnCours ? t('v_mem_deconnexion') : t('v_mem_se_deconnecter_de_cet_appareil')}
           </button>
         </div>
       </div>
@@ -2419,7 +2419,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}` }}
               data-testid="subscriber-space-sessions"
             >
-              <p className="text-white/60 text-xs uppercase tracking-wider mb-2" data-testid="progression-titre">Ma progression</p>
+              <p className="text-white/60 text-xs uppercase tracking-wider mb-2" data-testid="progression-titre">{t('v_mem_ma_progression')}</p>
               <div className="flex items-baseline justify-between mb-2">
                 {/* ESSAI-5a-1D : un essai ne se compte pas, il a un ETAT. Afficher
                     « 0 / 1 » a quelqu'un qui vient de reserver lui fait croire que
@@ -2427,11 +2427,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                     consommera. Un forfait payant garde son compteur intact. */}
                 {estEssai ? (
                   <div data-testid="essai-etat">
-                    <p className="text-white/60 text-xs uppercase tracking-wider">Séance découverte</p>
+                    <p className="text-white/60 text-xs uppercase tracking-wider">{t('v_mem_seance_decouverte')}</p>
                     <p className="text-2xl font-bold mt-1" style={{ color: COLORS.primary }}>
-                      {etatEssai === "booked" ? "Essai réservé"
-                        : etatEssai === "done" ? "Essai effectué"
-                        : "Essai disponible"}
+                      {etatEssai === "booked" ? t('v_mem_essai_reserve')
+                        : etatEssai === "done" ? t('v_mem_essai_effectue')
+                        : t('v_mem_essai_disponible')}
                     </p>
                     {etatEssai === "booked" && essai.next_session && (
                       <p className="text-white/50 text-xs mt-1" data-testid="essai-seance">
@@ -2446,7 +2446,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   // affiche a droite et l'expiration plus bas : elles, ne sont pas
                   // ambigues, et les taire priverait l'abonne d'informations justes.
                   <div data-testid="droits-ambigus">
-                    <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
+                    <p className="text-white/60 text-xs uppercase tracking-wider">{t('v_mem_seances_restantes')}</p>
                     <p className="text-sm mt-1 leading-snug" style={{ color: COLORS.primary }}>
                       {subscription.droits_message
                         || "Plusieurs forfaits sont enregistrés à ton nom — le coach vérifie ton solde."}
@@ -2454,7 +2454,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   </div>
                 ) : (
                 <div>
-                  <p className="text-white/60 text-xs uppercase tracking-wider">Séances restantes</p>
+                  <p className="text-white/60 text-xs uppercase tracking-wider">{t('v_mem_seances_restantes')}</p>
                   <p className="text-3xl font-bold mt-1" style={{ color: COLORS.primary }}>
                     {remaining}
                     <span className="text-white/40 text-base font-normal"> / {total || "—"}</span>
@@ -2571,7 +2571,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                       boxShadow: "0 6px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.35)",
                     }}
                   >
-                    {rechargeLoading ? "Redirection..." : (
+                    {rechargeLoading ? t('v_mem_redirection') : (
                       <>
                         {/* Icône recharge — SVG inline, jamais un emoji */}
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -2597,7 +2597,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                 ) : (
                   remaining <= 0 && (
                     <p className="text-white/50 text-xs mt-3">
-                      Tu as utilisé toutes tes séances. Contacte ton coach pour renouveler.
+                      {t('v_mem_tu_as_utilise_toutes_tes_seances_con')}
                     </p>
                   )
                 )
@@ -2631,7 +2631,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                   className={`w-full flex items-center justify-center gap-3 font-semibold rounded-2xl transition-transform active:scale-95 ${isEmpty ? "py-4 text-base" : "py-3 text-sm"}`}
                   style={btnStyle}
                 >
-                  {stripeLoading ? "Redirection..." : (
+                  {stripeLoading ? t('v_mem_redirection') : (
                     <>
                       {/* Icône carte de crédit */}
                       <svg width="22" height="16" viewBox="0 0 22 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2639,7 +2639,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
                         <line x1="0" y1="5" x2="22" y2="5" stroke="currentColor" strokeWidth="1.5"/>
                         <rect x="2" y="9" width="5" height="2" rx="0.5" fill="currentColor" opacity="0.5"/>
                       </svg>
-                      Renouveler mon abonnement
+                      {t('v_mem_renouveler_mon_abonnement')}
                       {/* Icône TWINT */}
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <rect width="24" height="24" rx="6" fill="currentColor" opacity="0.15"/>
@@ -2666,11 +2666,11 @@ export default function SubscriberSpace({ accessCode: propCode }) {
       {/* ===== QR Fullscreen Dialog ===== */}
       <Dialog open={qrFullscreen} onOpenChange={setQrFullscreen}>
         <DialogContent className="max-w-sm bg-white">
-          <DialogTitle className="text-center text-black text-base font-semibold">QR Code abonné</DialogTitle>
+          <DialogTitle className="text-center text-black text-base font-semibold">{t('v_mem_qr_code_abonne')}</DialogTitle>
           <div className="flex flex-col items-center gap-3 py-4">
             <QRCodeSVG value={memberSlug ? `${subscriber.code || accessCode}::${memberSlug}` : (subscriber.code || accessCode)} size={280} level="H" includeMargin={false} />
             <p className="text-black font-mono text-sm" data-testid="qr-code-membre">{subscriber.code || accessCode}</p>
-            <p className="text-black/60 text-xs">Présente ce code au coach à l'entrée</p>
+            <p className="text-black/60 text-xs">{t('v_mem_presente_ce_code_au_coach_a_l_entree')}</p>
             {/* V561 : « Mon QR » (menu) ouvre cette fenêtre — le code se copie d'un geste. */}
             <button type="button" data-testid="qr-copier"
               onClick={() => {
@@ -2680,7 +2680,7 @@ export default function SubscriberSpace({ accessCode: propCode }) {
               }}
               className="px-4 py-2 rounded-full text-sm font-semibold"
               style={{ background: COLORS.primary, color: "white", minHeight: 44 }}>
-              <span className="inline-flex items-center gap-1.5"><SvgIcon name="copy" size={14} /> Copier le code</span>
+              <span className="inline-flex items-center gap-1.5"><SvgIcon name="copy" size={14} /> {t('v_mem_copier_le_code')}</span>
             </button>
             {qrCopie ? <p className="text-black/70 text-xs" role="status">{qrCopie}</p> : null}
           </div>
