@@ -5,7 +5,8 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import PaymentMethodSelector from "./PaymentMethodSelector";
-import PawaPayCountrySelect from "./PawaPayCountrySelect"; // V382
+import PawaPayCountrySelect from "./PawaPayCountrySelect";
+import { useLanguage } from '../contexts/LanguageContext'; // V670 // V382
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -25,6 +26,7 @@ const CrownIcon = () => (
 
 
 const BecomeCoachPage = ({ onClose, onSuccess }) => {
+  const { t } = useLanguage();
   const [packs, setPacks] = useState([]);
   const [selectedPack, setSelectedPack] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +70,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
         }
       } catch (err) {
         console.error('[COACH-PACKS] Erreur:', err);
-        setError('Impossible de charger les offres');
+        setError(t('v_dev_impossible_de_charger_les_offres'));
       } finally {
         setLoading(false);
       }
@@ -112,22 +114,22 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
     const name = formData.name;
 
     if (!name || !email || !selectedPack) {
-      setError('Veuillez remplir tous les champs obligatoires');
+      setError(t('v_dev_veuillez_remplir_tous_les_champs_obl'));
       return;
     }
 
     // v11.6: Validation CGU obligatoire
     if (!acceptedCGU) {
-      setError('Vous devez accepter les conditions générales d\'utilisation');
+      setError(t('v_dev_vous_devez_accepter_les_conditions_g'));
       return;
     }
 
     if (!formData.password) {
-      setError('Veuillez choisir un mot de passe');
+      setError(t('v_dev_veuillez_choisir_un_mot_de_passe'));
       return;
     }
     if (formData.password && formData.password.length < 6) {
-      setError('Le mot de passe doit contenir au moins 6 caractères');
+      setError(t('v_dev_le_mot_de_passe_doit_contenir_au_moi'));
       return;
     }
 
@@ -182,13 +184,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
             window.location.href = response.data.payment_url;
             return;
           } else {
-            setError("Erreur lors de la création du paiement Mobile Money");
+            setError(t('v_dev_erreur_lors_de_la_creation_du_paieme'));
           }
         } catch (mmErr) {
           console.error('[MOBILE_MONEY] Erreur:', mmErr);
           const errMsg = mmErr.response?.data?.detail || '';
           if (mmErr.response?.status === 503 || errMsg.includes('pas configuré') || errMsg.includes('pas disponible')) {
-            setError('Le paiement Mobile Money est temporairement indisponible. Veuillez utiliser la Carte Bancaire ou réessayer plus tard.');
+            setError(t('v_dev_le_paiement_mobile_money_est_tempora'));
           } else {
             setError(errMsg || 'Erreur Mobile Money. Vérifiez votre connexion et réessayez.');
           }
@@ -221,13 +223,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
             window.location.href = response.data.payment_url;
             return;
           } else {
-            setError("Erreur lors de la création du paiement PawaPay");
+            setError(t('v_dev_erreur_lors_de_la_creation_du_paieme_2'));
           }
         } catch (ppErr) {
           console.error('[PAWAPAY] Erreur:', ppErr);
           const errMsg = ppErr.response?.data?.detail || '';
           if (ppErr.response?.status === 404 || ppErr.response?.status === 503) {
-            setError('Le paiement PawaPay est temporairement indisponible. Veuillez utiliser une autre méthode.');
+            setError(t('v_dev_le_paiement_pawapay_est_temporaireme'));
           } else {
             setError(errMsg || 'Erreur PawaPay. Vérifiez votre connexion et réessayez.');
           }
@@ -239,7 +241,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
       // === CARTE BANCAIRE (Stripe) ===
       if (paymentMethod === 'card') {
         if (!selectedPack.stripe_price_id) {
-          setError('Ce pack n\'a pas de prix Stripe configuré. Contactez l\'administrateur.');
+          setError(t('v_dev_ce_pack_n_a_pas_de_prix_stripe_confi'));
           setSubmitting(false);
           return;
         }
@@ -263,13 +265,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           window.location.href = response.data.checkout_url;
           return;
         } else {
-          setError('Erreur: pas d\'URL de paiement reçue. Réessayez.');
+          setError(t('v_dev_erreur_pas_d_url_de_paiement_recue_r'));
         }
       }
 
       // Fallback
       if (paymentMethod !== 'card' && paymentMethod !== 'mobile_money' && paymentMethod !== 'pawapay') {
-        setError('Méthode de paiement non reconnue.');
+        setError(t('v_dev_methode_de_paiement_non_reconnue'));
       }
     } catch (err) {
       console.error('[REGISTER] Erreur:', err);
@@ -286,7 +288,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
   if (loading) {
     return (
       <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center">
-        <div className="text-white text-lg">Chargement...</div>
+        <div className="text-white text-lg">{t('v_dev_chargement')}</div>
       </div>
     );
   }
@@ -299,7 +301,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           <div className="flex justify-between items-center mb-8">
             <h1 className="text-2xl sm:text-3xl font-bold text-white flex items-center gap-3">
               <span style={{ color: 'var(--primary-color, #D91CD2)' }}><CrownIcon /></span>
-              Devenir Partenaire Afroboost
+              {t('v_dev_devenir_partenaire_afroboost')}
             </h1>
             <button 
               onClick={onClose}
@@ -323,75 +325,75 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
         position: 'relative'
       }}>
         <h3 style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '1.3rem', fontWeight: 700, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          🚀 Pourquoi devenir Partenaire ?
+          {t('v_dev_pourquoi_devenir_partenaire')}
         </h3>
         <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', marginBottom: '16px', lineHeight: '1.5' }}>
-          Rejoins la communauté Afroboost et lance ton activité de coaching avec tous les outils intégrés pour réussir.
+          {t('v_dev_rejoins_la_communaute_afroboost_et_l')}
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
           <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>💰</div>
-            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Gagne de l'argent</div>
-            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Vends tes séances, packs et produits directement sur ta vitrine.</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{t('v_dev_gagne_de_l_argent')}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>{t('v_dev_vends_tes_seances_packs_et_produits_')}</div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🎯</div>
-            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Ton espace perso</div>
-            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Dashboard complet : cours, offres, réservations, stats.</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{t('v_dev_ton_espace_perso')}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>{t('v_dev_dashboard_complet_cours_offres_reser')}</div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🤖</div>
-            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Assistant IA</div>
-            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Un chatbot IA pour engager tes prospects 24h/24.</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{t('v_dev_assistant_ia')}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>{t('v_dev_un_chatbot_ia_pour_engager_tes_prosp')}</div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>📧</div>
-            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Campagnes email</div>
-            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Envoie des campagnes ciblées pour fidéliser tes clients.</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{t('v_dev_campagnes_email')}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>{t('v_dev_envoie_des_campagnes_ciblees_pour_fi')}</div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🔒</div>
-            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Données isolées</div>
-            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Tes données sont privées. Personne d'autre n'y a accès.</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{t('v_dev_donnees_isolees')}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>{t('v_dev_tes_donnees_sont_privees_personne_d_')}</div>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: '12px', padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '1.4rem', marginBottom: '6px' }}>🌟</div>
-            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>Paiement Stripe</div>
-            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>Connecte Stripe et reçois tes paiements directement.</div>
+            <div style={{ color: 'white', fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{t('v_dev_paiement_stripe')}</div>
+            <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.8rem' }}>{t('v_dev_connecte_stripe_et_recois_tes_paieme')}</div>
           </div>
         </div>
       </div>
 
       {/* Avantages */}
           <div className="glass rounded-2xl p-6 mb-8" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
-            <h2 className="text-xl font-semibold text-white mb-4">Pourquoi devenir Partenaire Afroboost ?</h2>
+            <h2 className="text-xl font-semibold text-white mb-4">{t('v_dev_pourquoi_devenir_partenaire_afroboos')}</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="flex items-start gap-3">
                 <CheckIcon />
                 <div>
-                  <h3 className="text-white font-medium">CRM Automatisé</h3>
-                  <p className="text-white/60 text-sm">Tous vos contacts centralisés</p>
+                  <h3 className="text-white font-medium">{t('v_dev_crm_automatise')}</h3>
+                  <p className="text-white/60 text-sm">{t('v_dev_tous_vos_contacts_centralises')}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <CheckIcon />
                 <div>
-                  <h3 className="text-white font-medium">Chat IA Intégré</h3>
-                  <p className="text-white/60 text-sm">Assistant virtuel pour vos clients</p>
+                  <h3 className="text-white font-medium">{t('v_dev_chat_ia_integre')}</h3>
+                  <p className="text-white/60 text-sm">{t('v_dev_assistant_virtuel_pour_vos_clients')}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <CheckIcon />
                 <div>
-                  <h3 className="text-white font-medium">Page de Vente Perso</h3>
-                  <p className="text-white/60 text-sm">Votre vitrine professionnelle</p>
+                  <h3 className="text-white font-medium">{t('v_dev_page_de_vente_perso')}</h3>
+                  <p className="text-white/60 text-sm">{t('v_dev_votre_vitrine_professionnelle')}</p>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Packs */}
-          <h2 className="text-xl font-semibold text-white mb-4">Choisissez votre Pack</h2>
+          <h2 className="text-xl font-semibold text-white mb-4">{t('v_dev_choisissez_votre_pack')}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
             {packs.map(pack => (
               <div
@@ -434,7 +436,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
             
             {packs.length === 0 && (
               <div className="col-span-full text-center py-8">
-                <p className="text-white/60">Aucun pack disponible pour le moment</p>
+                <p className="text-white/60">{t('v_dev_aucun_pack_disponible_pour_le_moment')}</p>
               </div>
             )}
           </div>
@@ -443,13 +445,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
           {selectedPack && (
             <div className="glass rounded-2xl p-6" style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }}>
               <h2 className="text-xl font-semibold text-white mb-4">
-                {'Vos Informations'}
+                {t('v_dev_vos_informations')}
               </h2>
               
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-white/70 text-sm mb-1 block">Nom complet *</label>
+                    <label className="text-white/70 text-sm mb-1 block">{t('v_dev_nom_complet')}</label>
                     <input
                       type="text"
                       name="name"
@@ -462,7 +464,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     />
                   </div>
                   <div>
-                    <label className="text-white/70 text-sm mb-1 block">Email *</label>
+                    <label className="text-white/70 text-sm mb-1 block">{t('v_dev_email')}</label>
                     <input
                       type="email"
                       name="email"
@@ -475,7 +477,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     />
                   </div>
                   <div>
-                    <label className="text-white/70 text-sm mb-1 block">Téléphone</label>
+                    <label className="text-white/70 text-sm mb-1 block">{t('v_dev_telephone')}</label>
                     <input
                       type="tel"
                       name="phone"
@@ -487,13 +489,13 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                     />
                   </div>
                   <div>
-                    <label className="text-white/70 text-sm mb-1 block">Code Promo</label>
+                    <label className="text-white/70 text-sm mb-1 block">{t('v_dev_code_promo')}</label>
                     <input
                       type="text"
                       name="promoCode"
                       value={formData.promoCode}
                       onChange={handleInputChange}
-                      placeholder="Optionnel"
+                      placeholder={t('v_dev_optionnel')}
                       className="w-full px-4 py-3 rounded-lg"
                       style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff' }}
                       data-testid="coach-promo-input"
@@ -502,7 +504,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                 </div>
 
                   <div style={{ position: 'relative' }}>
-                    <label className="text-white/70 text-sm mb-1 block">Mot de passe *</label>
+                    <label className="text-white/70 text-sm mb-1 block">{t('v_dev_mot_de_passe')}</label>
                     <input
                       type={showPassword ? 'text' : 'password'}
                       name="password"
@@ -510,7 +512,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                       onChange={handleInputChange}
                       required
                       minLength={6}
-                      placeholder="Minimum 6 caractères"
+                      placeholder={t('v_dev_minimum_6_caracteres')}
                       className="w-full px-4 py-3 rounded-lg"
                       style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', paddingRight: '48px' }}
                       data-testid="coach-password-input"
@@ -586,15 +588,15 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                 {/* Récapitulatif */}
                 <div style={{ paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <span style={{ color: 'rgba(255,255,255,0.7)' }}>Pack sélectionné:</span>
+                    <span style={{ color: 'rgba(255,255,255,0.7)' }}>{t('v_dev_pack_selectionne')}</span>
                     <span style={{ color: '#fff', fontWeight: '600' }}>{selectedPack.name}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <span style={{ color: 'rgba(255,255,255,0.7)' }}>Crédits inclus:</span>
+                    <span style={{ color: 'rgba(255,255,255,0.7)' }}>{t('v_dev_credits_inclus')}</span>
                     <span style={{ color: '#fff', fontWeight: '600' }}>{selectedPack.credits}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: '#fff', fontSize: '18px' }}>Total:</span>
+                    <span style={{ color: '#fff', fontSize: '18px' }}>{t('v_dev_total')}</span>
                     <span style={{ fontSize: '24px', fontWeight: '700', color: 'var(--primary-color, #D91CD2)' }}>
                       {(paymentMethod === 'mobile_money' || paymentMethod === 'pawapay')
                         ? `${(selectedPack.price_xof || Math.round(selectedPack.price * 400)).toLocaleString('fr-FR')} FCFA`
@@ -628,14 +630,14 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
                   data-testid="submit-coach-registration"
                 >
                   {submitting
-                    ? 'Traitement...'
+                    ? t('v_dev_traitement')
                     : selectedPack.price > 0
                       ? paymentMethod === 'mobile_money'
                         ? `Payer via Mobile Money`
                         : paymentMethod === 'pawapay'
                           ? `Payer via Mobile Money (PawaPay)`
                           : `Payer ${selectedPack.price} CHF`
-                      : 'S\'inscrire gratuitement'
+                      : t('v_dev_s_inscrire_gratuitement')
                   }
                 </button>
               </form>
@@ -653,6 +655,7 @@ const BecomeCoachPage = ({ onClose, onSuccess }) => {
 
 // v102: FAQ Partenaire — chargement dynamique depuis le backend
 const PartnerFAQ = () => {
+  const { t } = useLanguage();
   const [faqs, setFaqs] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [sectionOpen, setSectionOpen] = useState(false);
@@ -694,7 +697,7 @@ const PartnerFAQ = () => {
         }}
       >
         <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', margin: 0 }}>
-          Questions fréquentes
+          {t('v_dev_questions_frequentes')}
         </h3>
         <span style={{
           color: 'var(--primary-color, #D91CD2)', fontSize: '20px', fontWeight: '300',

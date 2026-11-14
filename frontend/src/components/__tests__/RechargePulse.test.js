@@ -148,6 +148,10 @@ describe('Recharge PULSE — espace abonne', () => {
   test('le message historique reste pour un forfait sans offre de recharge', () => {
     // Un coach qui n a declare aucune offre de recharge ne doit pas perdre
     // l information « contacte ton coach » : c est le repli.
-    expect(ZONE_CTA).toMatch(/Contacte ton coach/);
+    // V670 : le texte vit désormais dans la table de traduction (clé `t(...)`), le français est inchangé.
+    const cle = (ZONE_CTA.match(/t\('(v_mem_tu_as_utilise_toutes_tes_seances_con)'/) || [])[1];
+    expect(cle).toBeTruthy();
+    const { VISITEUR } = require('../../utils/i18n-visiteur');
+    expect(VISITEUR[cle].fr).toMatch(/Contacte ton coach/);
   });
 });

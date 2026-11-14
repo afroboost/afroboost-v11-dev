@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { jetonCoachUtilisable } from '../utils/jwt'; // V567 — compteurs réservés au coach
-import InscritsSession, { BadgeInscrits, cleOccurrence } from './coach/InscritsSession'; // V567
+import InscritsSession, { BadgeInscrits, cleOccurrence } from './coach/InscritsSession';
+import { useLanguage } from '../contexts/LanguageContext'; // V670 // V567
 
 /**
  * SessionsModal — le calendrier des cours et evenements, en fenetre.
@@ -186,6 +187,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                         // le calendrier est STRICTEMENT celui d'avant (accueil « Sessions », invitations…).
                         titre = null, instruction = null, etiquetteCreneau = null,
                         selectionDirecte = false, libelleContinuer = 'Continuer ma réservation' }) => {
+  const { t } = useLanguage();
   const [mois, setMois] = useState(() => {
     const n = new Date();
     return new Date(n.getFullYear(), n.getMonth(), 1);
@@ -365,7 +367,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="Calendrier des sessions"
+        aria-label={t('v_ses_calendrier_des_sessions')}
         onClick={(e) => e.stopPropagation()}
         className="glass neon-border"
         data-testid="sessions-modal-boite"
@@ -392,12 +394,12 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0 }}>
-              {detail ? 'Détail de la session' : (titre || 'Sessions')}
+              {detail ? t('v_ses_detail_de_la_session') : (titre || 'Sessions')}
             </h2>
             <button
               type="button"
               onClick={fermer}
-              aria-label="Fermer"
+              aria-label={t('v_ses_fermer')}
               data-testid="sessions-fermer"
               style={{
                 width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
@@ -433,12 +435,12 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
           ) : chargement ? (
             <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
                data-testid="sessions-chargement">
-              Chargement du calendrier&hellip;
+              {t('v_ses_chargement_du_calendrier')}
             </p>
           ) : occurrences.length === 0 ? (
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}
                data-testid="sessions-vide">
-              Aucune session programmée pour le moment.
+              {t('v_ses_aucune_session_programmee_pour_le_mo')}
             </p>
           ) : (
             <>
@@ -519,7 +521,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                 <div data-testid="sessions-selection-directe">
                   {duJour.length === 0 ? (
                     <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
-                      Choisis un jour marqué d&rsquo;un point.
+                      {t('v_ses_choisis_un_jour_marque_d_un_point')}
                     </p>
                   ) : (
                     <>
@@ -527,7 +529,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
                         {(() => { const d = duJour[0].quand; return `${JOURS_LONGS[d.getDay()].charAt(0).toUpperCase()}${JOURS_LONGS[d.getDay()].slice(1)} ${d.getDate()} ${MOIS[d.getMonth()]}`; })()}
                         {duJour.length > 1 ? ' — choisis un horaire' : ''}
                       </p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} role="radiogroup" aria-label="Horaires">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} role="radiogroup" aria-label={t('v_ses_horaires')}>
                         {duJour.map((o, i) => {
                           const actif = !!creneau && creneau.id === o.id && creneau.quand.getTime() === o.quand.getTime();
                           return (
@@ -602,7 +604,7 @@ const SessionsModal = ({ open, onClose, courses = [], onReserve, occurrencesFour
               {/* Sessions du jour choisi */}
               {duJour.length === 0 ? (
                 <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
-                  Choisis un jour marqué d&rsquo;un point.
+                  {t('v_ses_choisis_un_jour_marque_d_un_point')}
                 </p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -675,6 +677,7 @@ const BoutonMois = ({ sens, onClick }) => (
 const DetailSession = ({ occ, onRetour, onReserve, complementCoach = null,
                         libelleAction = 'Réserver',
                         noteAction = 'Tu choisiras tes dates après la réservation, dans ton espace.' }) => {
+  const { t } = useLanguage();
   const d = occ.quand;
   const lieu = occ.lieu || '';
   return (
@@ -691,7 +694,7 @@ const DetailSession = ({ occ, onRetour, onReserve, complementCoach = null,
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="15 18 9 12 15 6" />
         </svg>
-        Retour au calendrier
+        {t('v_ses_retour_au_calendrier')}
       </button>
 
       <h3 style={{ color: '#fff', fontSize: 18, fontWeight: 700, margin: '0 0 10px' }}>
@@ -708,7 +711,7 @@ const DetailSession = ({ occ, onRetour, onReserve, complementCoach = null,
         </Ligne>
         {lieu && <Ligne libelle="Où">{lieu}</Ligne>}
         <Ligne libelle="Type">
-          {occ.ponctuel ? 'Événement — date unique' : `Chaque ${JOURS_LONGS[d.getDay()]}`}
+          {occ.ponctuel ? t('v_ses_evenement_date_unique') : `Chaque ${JOURS_LONGS[d.getDay()]}`}
         </Ligne>
       </div>
 

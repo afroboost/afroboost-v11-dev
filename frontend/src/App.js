@@ -6,8 +6,11 @@ import { surErreurImage, IMAGE_SECOURS_LOCAL } from "./utils/imageSecours"; // I
 import "@/App.css";
 import axios from "axios";
 // V277 : langues supplementaires (africaines + creole) + contexte de langue.
-import { translations as _extraLangs } from "./utils/i18n";
-import { LanguageContext } from "./contexts/LanguageContext";
+import { translations as _extraLangs, fusionnerDictionnaire, interpoler } from "./utils/i18n";
+import { lireLangue, ecrireLangue, appliquerLangueDocument, formaterDate, nomsJoursSemaine } from "./utils/langue"; // V670
+import TexteRiche from "./components/TexteRiche"; // V670
+import TexteDynamique from "./components/TexteDynamique"; // V670
+import { LanguageContext, useLanguage } from "./contexts/LanguageContext";
 // V345 : lecture de l'expiration du jeton (sans vérification de signature — le
 // serveur reste seul juge ; ici on distingue « refusé » de « session morte »).
 import { jetonExpire } from "./utils/jwt";
@@ -476,7 +479,9 @@ const INITIAL_REDIRECT_INTENT = detectStripeSuccess();
 const INITIAL_QR_CODE = detectQRSubscriber();
 
 // Translations
-const translations = {
+// V670 : ce dictionnaire local est FUSIONNÉ dans le dictionnaire unique de utils/i18n.js
+// (cf. `fusionnerDictionnaire` plus bas) — il n'y a plus deux moteurs qui divergent.
+const _traductionsApp = {
   fr: {
     appTitle: "Afroboost",
     conceptDefault: "Le concept Afroboost : cardio + danse afrobeat + casques audio immersifs. Un entraînement fun, énergétique et accessible à tous.",
@@ -953,9 +958,11 @@ const translations = {
 // clés communes (all, sessions, offersFilter, shopFilter, searchPlaceholder,
 // bookNow, price, email, login, cancel, loading, delete...) sont traduites ;
 // toute clé absente retombe sur le français (cf. définition de t() plus bas).
-['ln', 'wo', 'sw', 'bm', 'bas', 'ht'].forEach((_l) => {
-  if (_extraLangs[_l]) translations[_l] = _extraLangs[_l];
-});
+// V670 : au lieu de COPIER les six langues dans un second objet, on fusionne le
+// dictionnaire local (fr/en/de, qui l'emporte : c'est ce qui s'affichait) DANS le
+// dictionnaire unique. `translations` est donc le MÊME objet que celui de
+// utils/i18n.js, vu par PartnersCarousel, LanguageContext et ChatWidget.
+const translations = fusionnerDictionnaire(_extraLangs, _traductionsApp);
 
 const WEEKDAYS_MAP = {
   fr: ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"],
@@ -985,7 +992,9 @@ function getNextOccurrences(weekday, count = 4, annulees = null) {
 }
 
 function formatDate(d, time, lang) {
-  const formatted = d.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+  // V670 : formaterDate = mêmes locales qu'avant pour fr/en/de, et noms de jours CLDR
+  // pour sw/ht quand le navigateur les connaît ; langues partielles : français.
+  const formatted = formaterDate(d, lang, {
     weekday: "short", day: "2-digit", month: "2-digit"
   });
   return `${formatted} • ${time}`;
@@ -1017,14 +1026,21 @@ function v255CourseDateTime(course) {
 // seances a des dates differentes — mercredi 05.08 et dimanche 09.08 —
 // affichaient donc le MEME libelle. La date fait foi quand elle existe ;
 // `weekday` ne sert plus que de repli aux cours recurrents.
-function v255CourseDayLabel(course) {
+// V670 : `lang` optionnel. Absent ou « fr » : EXACTEMENT les anciens libellés (Dim, Lun…).
+// Pour les langues dont l'interface est traduite ET que le navigateur connaît (CLDR),
+// le jour suit la langue ; sinon on garde le français plutôt que d'inventer un mot.
+function v670JoursCourts(lang) {
+  return (lang && lang !== 'fr' && nomsJoursSemaine(lang, 'short')) || V255_SHORT_DAYS;
+}
+function v255CourseDayLabel(course, lang) {
   if (!course) return undefined;
+  const jours = v670JoursCourts(lang);
   if (typeof course.date === 'string' && course.date) {
     // Midi local : evite qu'un fuseau/DST ne fasse basculer la date d'un jour.
     const d = new Date(course.date + 'T12:00:00');
-    if (!isNaN(d.getTime())) return V255_SHORT_DAYS[d.getDay()];
+    if (!isNaN(d.getTime())) return jours[d.getDay()];
   }
-  return V255_SHORT_DAYS[course.weekday];
+  return jours[course.weekday];
 }
 
 // V255 FIX 1: horaires d'une offre, dedupliques pour ne pas afficher deux fois
@@ -1041,12 +1057,12 @@ function v255CourseDayLabel(course) {
 // ajoutant la date courte (« Mer 05.08 ») aux SEULES lignes concernees — les
 // cartes a un seul horaire par jour, cas de toutes les offres actuelles,
 // gardent exactement le rendu « Mer · 18:30 » attendu.
-function v255UniqueSchedules(offer) {
+function v255UniqueSchedules(offer, lang) {
   const seen = new Set();
   const out = [];
   (offer && Array.isArray(offer.linkedCourses) ? offer.linkedCourses : []).forEach(course => {
     if (!course) return;
-    const dayLabel = v255CourseDayLabel(course);
+    const dayLabel = v255CourseDayLabel(course, lang);
     if (!dayLabel && !course.time) return;
     const date = (typeof course.date === 'string' && course.date) ? course.date.slice(0, 10) : '';
     const key = (dayLabel || '') + '|' + (course.time || '') + '|' + date;
@@ -1083,14 +1099,6 @@ function v255UniqueSchedules(offer) {
 const parseMediaUrl = analyserMediaUrl;
 
 // Globe Icon - Clean, no background
-const GlobeIcon = () => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10"/>
-    <line x1="2" y1="12" x2="22" y2="12"/>
-    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-  </svg>
-);
-
 // Location Icon
 const LocationIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1144,41 +1152,15 @@ const SplashScreen = ({ logoUrl }) => {
   );
 };
 
-// Language Selector - Clean without background
-const LanguageSelector = ({ lang, setLang }) => {
-  const [open, setOpen] = useState(false);
-  // V275: ajout des 5 langues africaines (interface visiteur uniquement)
-  const languages = [
-    { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
-    { code: 'ln', label: 'LN' }, { code: 'wo', label: 'WO' }, { code: 'sw', label: 'SW' },
-    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }, { code: 'ht', label: 'CR' }
-  ];
-
-  return (
-    <div className="lang-selector" onClick={() => setOpen(!open)} data-testid="lang-selector">
-      <GlobeIcon />
-      <span style={{ color: '#FFFFFF', fontWeight: '500', fontSize: '14px' }}>{lang.toUpperCase()}</span>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', right: 0, marginTop: '8px',
-          background: 'rgba(0, 0, 0, 0.95)', border: '1px solid rgba(139, 92, 246, 0.4)',
-          borderRadius: '8px', overflow: 'hidden', minWidth: '70px'
-        }}>
-          {languages.map(l => (
-            <div key={l.code} onClick={(e) => { e.stopPropagation(); setLang(l.code); setOpen(false); }}
-              style={{ padding: '10px 16px', color: '#FFFFFF', cursor: 'pointer', fontSize: '14px',
-                background: lang === l.code ? 'rgba(139, 92, 246, 0.3)' : 'transparent' }}
-              data-testid={`lang-${l.code}`}>{l.label}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
+// V670 : l'ancien `LanguageSelector` d'App.js est SUPPRIMÉ. Masqué par CSS depuis v9.6.8 (le
+// sélecteur visible vit dans PartnersCarousel), il recopiait sa propre liste de langues. Le
+// laisser rendre le composant partagé aurait dupliqué `data-testid="lang-selector-btn"` dans
+// la page — un doublon invisible qu'aucun utilisateur ne voyait, et que les tests ont trouvé.
 
 // Media Display Component (YouTube, Vimeo, Image, Video) - Clean display without dark overlays
 // Media Display Component with Discreet Sound Control
 const MediaDisplay = ({ url, className }) => {
+  const { t } = useLanguage();
   const [hasError, setHasError] = useState(false);
   const [isMuted, setIsMuted] = useState(true); // Muted par défaut pour garantir l'autoplay et la boucle
   const videoRef = useRef(null);
@@ -1284,7 +1266,7 @@ const MediaDisplay = ({ url, className }) => {
           fontSize: '12px',
           color: 'rgba(255,255,255,0.8)'
         }}>
-          ⚠️ Média non disponible
+          {t('v_media_non_disponible')}
         </div>
       </div>
     );
@@ -1320,7 +1302,7 @@ const MediaDisplay = ({ url, className }) => {
           style={smallMuteStyle}
           data-testid="mute-btn"
         >
-          {isMuted ? '🔇 Son' : '🔊'}
+          {isMuted ? t('v_app2_son') : '🔊'}
         </button>
       </div>
     );
@@ -1353,7 +1335,7 @@ const MediaDisplay = ({ url, className }) => {
           style={smallMuteStyle}
           data-testid="mute-btn"
         >
-          {isMuted ? '🔇 Son' : '🔊'}
+          {isMuted ? t('v_app2_son') : '🔊'}
         </button>
       </div>
     );
@@ -1377,7 +1359,7 @@ const MediaDisplay = ({ url, className }) => {
           style={smallMuteStyle}
           data-testid="mute-btn"
         >
-          {isMuted ? '🔇 Son' : '🔊'}
+          {isMuted ? t('v_app2_son') : '🔊'}
         </button>
       </div>
     );
@@ -1495,6 +1477,7 @@ function StickyCountdownBar(props) {
 })();
 
 function OfferCountdown(props) {
+  const { t } = useLanguage();
   var offer = props.offer;
   var remaining = useCountdownRemaining(offer);
 
@@ -1502,7 +1485,7 @@ function OfferCountdown(props) {
   if (remaining <= 0) {
     return (
       <div style={{ marginTop: '8px', padding: '8px 16px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '13px', color: '#f87171', textAlign: 'center', fontWeight: 700 }}>
-        Offre expirée
+        {t('v_offre_expiree')}
       </div>
     );
   }
@@ -1523,6 +1506,7 @@ function OfferCountdown(props) {
 
 // Offer Card - Clean Design with Full Image + Info icon + Discrete dots navigation
 const OfferCard = ({ offer, selected, onClick }) => {
+  const { t } = useLanguage();
   const [showDescription, setShowDescription] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   // IMG-1 : secours LOCAL (plus jamais picsum, qui bouclait une fois bloque).
@@ -1588,7 +1572,7 @@ const OfferCard = ({ offer, selected, onClick }) => {
                 boxShadow: '0 0 8px rgba(var(--primary-rgb, 217, 28, 210), 0.2)',
                 border: 'none'
               }}
-              title="Photo"
+              title={t('v_photo')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -1602,12 +1586,12 @@ const OfferCard = ({ offer, selected, onClick }) => {
             className="offer-description-panel"
             data-testid={`offer-description-panel-${offer.id}`}
           >
-            <p className="offer-description-text">{offer.description}</p>
+            <TexteDynamique as="p" className="offer-description-text" texte={offer.description} />
             <button
               className="offer-close-btn"
               onClick={toggleDescription}
               data-testid={`offer-close-${offer.id}`}
-              title="Fermer"
+              title={t('v_fermer')}
             >
               <CloseIcon />
             </button>
@@ -1615,15 +1599,15 @@ const OfferCard = ({ offer, selected, onClick }) => {
         )}
       </div>
       <div className="offer-card-content">
-        <h3 className="font-semibold text-white text-sm">{offer.name}</h3>
+        <TexteDynamique as="h3" className="font-semibold text-white text-sm" texte={offer.name} />
         {offer.description && (
           <p className="text-xs text-white/60 mt-1" style={{
             overflow: 'hidden', textOverflow: 'ellipsis',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
             whiteSpace: 'pre-wrap'
           }}>
-            {offer.description}{' '}
-            <span onClick={toggleDescription} className="cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
+            <TexteDynamique texte={offer.description} />{' '}
+            <span onClick={toggleDescription} className="cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{t('v_lire_plus')}</span>
           </p>
         )}
         <span className="font-bold" style={{ color: 'var(--primary-color, #D91CD2)', fontSize: '18px' }}>CHF {offer.price}.-</span>
@@ -1701,6 +1685,7 @@ const V223_TIERS = {
 // la declaration de checkoutBusy dans App. `loading` reste relaye tel quel pour
 // ne rien retirer a l'API du composant.
 const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false, inlineDetail = false, onOuvrirProduit = null }) => {
+  const { t } = useLanguage();
   const [showDescription, setShowDescription] = useState(false);
   const [showZoom, setShowZoom] = useState(false);
   // V645.3 — fiche produit « façon Adidas » (galerie + infos + variantes),
@@ -1976,9 +1961,9 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   // des tableaux potentiellement vides ou absents : on ne retient que les
   // dimensions non vides, pour ne jamais exiger un choix qui n'est pas offert.
   const v226VariantDims = [
-    { key: 'size',   list: offer.variants?.sizes,   label: 'Taille',  prompt: 'une taille' },
-    { key: 'color',  list: offer.variants?.colors,  label: 'Couleur', prompt: 'une couleur' },
-    { key: 'weight', list: offer.variants?.weights, label: 'Poids',   prompt: 'un poids' }
+    { key: 'size',   list: offer.variants?.sizes,   label: t('v_taille'),  prompt: t('vm_prompt_size') },
+    { key: 'color',  list: offer.variants?.colors,  label: t('v_couleur'), prompt: t('vm_prompt_color') },
+    { key: 'weight', list: offer.variants?.weights, label: t('v_poids'),   prompt: t('vm_prompt_weight') }
   ].filter(d => Array.isArray(d.list) && d.list.length > 0);
 
   // V226: dimensions proposees mais pas encore choisies. Tant qu'il en reste
@@ -2204,7 +2189,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
       try {
         const nd = new Date(offer.next_date);
         if (!isNaN(nd.getTime())) {
-          const dstr = nd.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+          const dstr = formaterDate(nd, lang, {
             weekday: 'short', day: '2-digit', month: '2-digit'
           });
           const hh = nd.getHours(), mm = nd.getMinutes();
@@ -2260,7 +2245,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
     // V224: formatDate concatene " • <heure>" ; sans heure renseignee on evite
     // le separateur orphelin en formatant la date seule.
     if (!nextCourse.time) {
-      return nextDate.toLocaleDateString(lang === 'de' ? 'de-CH' : lang === 'en' ? 'en-GB' : 'fr-CH', {
+      return formaterDate(nextDate, lang, {
         weekday: 'short', day: '2-digit', month: '2-digit'
       });
     }
@@ -2268,7 +2253,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
   })();
 
   // V255 FIX 1 + 4: horaires dedupliques, et au plus 2 affiches par defaut.
-  const v255Schedules = v255UniqueSchedules(offer);
+  const v255Schedules = v255UniqueSchedules(offer, lang);
   const v255VisibleSchedules = v255ShowAllSchedules ? v255Schedules : v255Schedules.slice(0, 2);
   const v255HiddenSchedules = v255Schedules.length - v255VisibleSchedules.length;
 
@@ -2344,7 +2329,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             >
               ×
             </button>
-            <p className="text-center text-white mt-4 text-lg font-semibold">{offer.name}</p>
+            <TexteDynamique as="p" className="text-center text-white mt-4 text-lg font-semibold" texte={offer.name} />
             
             {hasMultipleImages && (
               <p className="text-center text-pink-400 text-sm mt-2">{currentImageIndex + 1} / {images.length}</p>
@@ -2375,7 +2360,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                           <img src={im} alt={i === 0 ? offer.name : ''} className="af-fiche-cell-media" />
                         )}
                         {i === 0 && (
-                          <button type="button" aria-label="Zoom" className="af-fiche-zoom-btn" onClick={e => { e.stopPropagation(); setCurrentImageIndex(0); setShowZoom(true); }}>
+                          <button type="button" aria-label={t('v_zoom')} className="af-fiche-zoom-btn" onClick={e => { e.stopPropagation(); setCurrentImageIndex(0); setShowZoom(true); }}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
                           </button>
                         )}
@@ -2392,14 +2377,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 {/* Badge catégorie */}
                 <span className="af-fiche-badge">AFROBOOST COLLECTION</span>
                 {/* Titre grand bold */}
-                <h2 className="af-fiche-titre-premium">{offer.name}</h2>
+                <TexteDynamique as="h2" className="af-fiche-titre-premium" texte={offer.name} />
                 {/* Prix violet grand */}
                 <div className="af-fiche-prix-premium">
                   CHF {v225FormatAmount(v223UnitPrice(offer))}
                 </div>
                 {/* Description */}
                 {offer.description && (
-                  <p className="af-fiche-desc-premium">{offer.description}</p>
+                  <TexteDynamique as="p" className="af-fiche-desc-premium" texte={offer.description} />
                 )}
                 {/* Variantes RÉELLES — sélecteurs améliorés */}
                 {v226VariantDims.map(dim => (
@@ -2428,11 +2413,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 {/* Quantité compacte */}
                 {v225IsDirectCheckout(offer) && (
                   <div className="af-fiche-qty-bloc">
-                    <span className="af-fiche-variante-label">Quantité</span>
+                    <span className="af-fiche-variante-label">{t('v_quantite')}</span>
                     <div className="af-fiche-qty-ctrl">
-                      <button type="button" onClick={() => setV225Qty(q => Math.max(1, q - 1))} aria-label="Moins" className="af-fiche-qty-btn">−</button>
+                      <button type="button" onClick={() => setV225Qty(q => Math.max(1, q - 1))} aria-label={t('v_moins')} className="af-fiche-qty-btn">−</button>
                       <span data-testid={`detail-qty-${offer.id}`} className="af-fiche-qty-val">{v225Qty}</span>
-                      <button type="button" onClick={() => setV225Qty(q => q + 1)} aria-label="Plus" className="af-fiche-qty-btn">+</button>
+                      <button type="button" onClick={() => setV225Qty(q => q + 1)} aria-label={t('v_plus')} className="af-fiche-qty-btn">+</button>
                     </div>
                   </div>
                 )}
@@ -2450,12 +2435,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                   {checkoutBusy
-                    ? 'Un instant…'
+                    ? t('v_app2_un_instant')
                     : v226BlockedByVariant
-                      ? `Choisissez ${v226MissingDims.map(d => d.prompt).join(' et ')}`
+                      ? t('vm_choisissez', { choix: v226MissingDims.map(d => d.prompt).join(t('vm_et')) })
                       : (v225IsDirectCheckout(offer) && v225Qty > 1
-                        ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}×)`
-                        : 'Réserver')}
+                        ? t('vm_reserver_montant', { montant: v225FormatAmount(v223UnitPrice(offer) * v225Qty), n: v225Qty })
+                        : t('bookBtn'))}
                 </button>
                 {/* Informations produit — dépliable */}
                 <button
@@ -2464,14 +2449,14 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   className="af-fiche-infos-toggle"
                   data-testid={`detail-infos-toggle-${offer.id}`}
                 >
-                  <span>Informations produit</span>
+                  <span>{t('v_informations_produit')}</span>
                   <span>{detailInfos ? '−' : '+'}</span>
                 </button>
                 {detailInfos && (
                   <div className="af-fiche-infos-body">
-                    {offer.isProduct && offer.shippingCost > 0 && <p>Frais de port : CHF {offer.shippingCost}</p>}
-                    {offer.tva > 0 && <p>TVA {offer.tva}%</p>}
-                    <p>Paiement sécurisé (Stripe / TWINT).</p>
+                    {offer.isProduct && offer.shippingCost > 0 && <p>{t('vm_frais_de_port', { montant: offer.shippingCost })}</p>}
+                    {offer.tva > 0 && <p>{t('vm_tva', { taux: offer.tva })}</p>}
+                    <p>{t('v_paiement_securise_stripe_twint')}</p>
                   </div>
                 )}
               </div>
@@ -2512,7 +2497,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
             <button
               type="button"
               onClick={() => setShowDetail(false)}
-              aria-label="Fermer"
+              aria-label={t('v_fermer')}
               className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 text-white text-xl flex items-center justify-center hover:bg-black/80"
             >
               ×
@@ -2676,7 +2661,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     border: '2px solid rgba(255, 255, 255, 0.3)'
                   }}
                   onClick={toggleZoom}
-                  title="Voir la photo"
+                  title={t('v_voir_la_photo')}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -2691,8 +2676,8 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 <button
                   type="button"
                   onClick={shareOffer}
-                  title={shareCopied ? 'Lien copié !' : 'Partager cette offre'}
-                  aria-label="Partager cette offre"
+                  title={shareCopied ? t('v_app2_lien_copie') : t('v_app2_partager_cette_offre')}
+                  aria-label={t('v_partager_cette_offre')}
                   className="absolute top-3 right-3 flex items-center justify-center cursor-pointer transition-all hover:scale-110"
                   style={{
                     width: 32, height: 32, borderRadius: '50%',
@@ -2723,7 +2708,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                       boxShadow: '0 0 15px rgba(var(--primary-rgb, 217, 28, 210), 0.28)'
                     }}
                   >
-                    <span>✓</span> Sélectionné
+                    <span>✓</span> {t('vm_selectionne')}
                   </div>
                 )}
               </>
@@ -2733,11 +2718,11 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 className="w-full h-full flex flex-col justify-start p-5 pt-10 overflow-y-auto"
                 style={{ background: 'linear-gradient(180deg, rgba(139, 92, 246, 0.95) 0%, rgba(var(--primary-rgb, 217, 28, 210), 0.9) 100%)' }}
               >
-                <p className="text-white text-sm leading-relaxed" style={{ whiteSpace: 'pre-wrap' }}>{offer.description}</p>
+                <TexteDynamique as="p" className="text-white text-sm leading-relaxed" style={{ whiteSpace: 'pre-wrap' }} texte={offer.description} />
                 <button
                   className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center bg-white/20 hover:bg-white/30 transition-all text-white"
                   onClick={toggleDescription}
-                  title="Fermer"
+                  title={t('v_fermer')}
                 >
                   ×
                 </button>
@@ -2747,7 +2732,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
 
           {/* Content Section — V119.1: plus d'espace, extrait de description */}
           <div className="p-4 pb-5">
-            <p className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }}>{offer.name}</p>
+            <TexteDynamique as="p" className="font-semibold text-white mb-1" style={{ fontSize: '17px', lineHeight: '1.3' }} texte={offer.name} />
 
             {/* V255 FIX 3: le prix remonte ICI, juste sous le nom.
                 Il etait rendu APRES la description, le lieu et la liste des
@@ -2791,18 +2776,18 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 </span>
               )}
               {offer.tva > 0 && (
-                <span className="text-xs text-white opacity-50">TVA {offer.tva}%</span>
+                <span className="text-xs text-white opacity-50">{t('vm_tva', { taux: offer.tva })}</span>
               )}
             </div>
             {offer.isProduct && offer.shippingCost > 0 && (
-              <p className="text-xs text-white opacity-50 mb-1">+ CHF {offer.shippingCost} frais de port</p>
+              <p className="text-xs text-white opacity-50 mb-1">{t('vm_plus_frais_de_port', { montant: offer.shippingCost })}</p>
             )}
             {/* V610 / V618M : un avantage membre existe (réglé par le coach, offre par offre) — le détail
                  n'est connu qu'une fois la personne identifiée dans son espace. */}
             {offer.gratuit_membres && (
               <p className="text-xs mb-1" data-testid={`v610-gratuit-membres-${offer.id}`}
                  style={{ color: 'var(--primary-color, #D91CD2)', fontWeight: 600 }}>
-                Avantage pour les membres Afroboost
+                {t('v_avantage_pour_les_membres_afroboost')}
               </p>
             )}
 
@@ -2810,10 +2795,10 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
               <div className="mb-2">
                 {offer.description && (
                   <p className="text-xs" style={{ color: 'rgba(255,255,255,0.5)', lineHeight: '1.4' /* V526: contraste 4.41 -> 4.7 */, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
-                    {offer.description}
+                    <TexteDynamique texte={offer.description} />
                   </p>
                 )}
-                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
+                <span onClick={(e) => { e.stopPropagation(); setShowDescription(true); }} className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{t('v_lire_plus')}</span>
               </div>
             )}
 
@@ -2884,7 +2869,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   color: 'var(--primary-color, #D91CD2)', fontSize: '12px', fontWeight: 600, cursor: 'pointer'
                 }}
               >
-                {v255ShowAllSchedules ? 'Voir moins d\'horaires' : `+${v255HiddenSchedules} autre${v255HiddenSchedules > 1 ? 's' : ''} horaire${v255HiddenSchedules > 1 ? 's' : ''}`}
+                {v255ShowAllSchedules ? t('v_app2_voir_moins_d_horaires') : `+${v255HiddenSchedules} autre${v255HiddenSchedules > 1 ? 's' : ''} horaire${v255HiddenSchedules > 1 ? 's' : ''}`}
               </button>
             )}
 
@@ -2940,7 +2925,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   <circle cx="12" cy="12" r="10" />
                   <polyline points="12 6 12 12 16 14" />
                 </svg>
-                {offer.duration_minutes} min
+                {t('vm_minutes', { n: offer.duration_minutes })}
               </p>
             ) : null}
             {/* V225 (revue): plus de lieu affiche deux fois. Une offre portant a
@@ -2979,13 +2964,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
                   <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                 </svg>
-                {offer.max_participants} places
+                {t('vm_places', { n: offer.max_participants })}
               </p>
             ) : null}
             {/* V224: prochaine seance, derivee des cours lies */}
             {nextSessionLabel ? (
               <p className="text-xs mt-2" style={{ color: '#ccc' }}>
-                Prochaine séance :<br />
+                {t('vm_prochaine_seance')}<br />
                 <span style={{ color: '#fff' }}>{nextSessionLabel}</span>
               </p>
             ) : null}
@@ -3039,13 +3024,13 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                    bascules independantes sans lien entre elles. role="group"
                    + aria-label restaurent ce contexte de choix unique. */
                 role="group"
-                aria-label="Quantité"
+                aria-label={t('v_quantite')}
               >
                 {/* V230.1: bascule commune (voir `v230RenderToggle`). La
                     quantite vaut toujours au moins 1, donc la valeur repliee est
                     toujours affichee — contrairement aux variantes, qui peuvent
                     n'avoir aucun choix. */}
-                {v230RenderToggle('qty', 'Quantité', String(v225Qty), `offer-qty-toggle-${offer.id}`)}
+                {v230RenderToggle('qty', t('v_quantite'), String(v225Qty), `offer-qty-toggle-${offer.id}`)}
                 <div
                   id={`v230-chips-qty-${offer.id}`}
                   style={{ display: v230IsOpen('qty') ? 'flex' : 'none', flexWrap: 'wrap', gap: '6px' }}
@@ -3190,7 +3175,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                 className="w-full rounded-full font-semibold mt-3"
                 style={{ padding: '11px 16px', border: '1px solid var(--primary-color, #D91CD2)', color: 'var(--primary-color, #D91CD2)', background: 'transparent', cursor: 'pointer' }}
               >
-                Voir le produit
+                {t('v_voir_le_produit')}
               </button>
             )}
 
@@ -3299,12 +3284,12 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
                     Le libelle passe avant le total : il porte l'action a faire
                     maintenant. checkoutBusy reste en tete de ternaire. */}
                 {checkoutBusy
-                  ? 'Un instant…'
+                  ? t('v_app2_un_instant')
                   : v226BlockedByVariant
-                    ? `Choisissez ${v226MissingDims.map(d => d.prompt).join(' et ')}`
+                    ? t('vm_choisissez', { choix: v226MissingDims.map(d => d.prompt).join(t('vm_et')) })
                     : v225IsDirectCheckout(offer) && v225Qty > 1
-                      ? `Réserver — ${v225FormatAmount(v223UnitPrice(offer) * v225Qty)} CHF (${v225Qty}x)`
-                      : 'Réserver'}
+                      ? t('vm_reserver_montant_x', { montant: v225FormatAmount(v223UnitPrice(offer) * v225Qty), n: v225Qty })
+                      : t('bookBtn')}
               </button>
               {/* V382 : bouton STRICTEMENT ADDITIF. Il ne rend rien tant que
                   PawaPay est desactive, et ne touche a aucun etat du parcours
@@ -3334,6 +3319,7 @@ const OfferCardSlider = ({ offer, selected, onClick, pending, courses = [], lang
 // V224: `courses`, `lang`, `startProgressiveCheckout`, `loading` et `checkoutBusy`
 // ne sont que relayes vers OfferCardSlider — ce composant ne s'en sert pas lui-meme.
 const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOffer, courses = [], lang = 'fr', startProgressiveCheckout, loading = false, checkoutBusy = false, lot3bChoixDateRequis = () => false }) => {
+  const { t } = useLanguage();
   const sliderRef = useRef(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -3619,7 +3605,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
   };
   
   if (!offers || offers.length === 0) {
-    return <p className="text-white/60 text-center py-4">Aucune offre disponible</p>;
+    return <p className="text-white/60 text-center py-4">{t('v_aucune_offre_disponible')}</p>;
   }
   
   return (
@@ -3682,7 +3668,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               }
               setTimeout(() => setIsPaused(false), 5000);
             }}
-            aria-label="Offre précédente"
+            aria-label={t('v_offre_precedente')}
             className="absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center z-20"
             style={{
               left: '4px',
@@ -3713,7 +3699,7 @@ const OffersSliderAutoPlay = ({ offers, selectedOffer, onSelectOffer, pendingOff
               }
               setTimeout(() => setIsPaused(false), 5000);
             }}
-            aria-label="Offre suivante"
+            aria-label={t('v_offre_suivante')}
             className="absolute top-1/2 -translate-y-1/2 rounded-full flex items-center justify-center z-20"
             style={{
               right: '4px',
@@ -4171,7 +4157,10 @@ function v260HasSocialProof(offer) {
 }
 
 // Choix « essai gratuit contre preuve sociale » ou « payer le prix alternatif ».
-const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) => (
+const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) => {
+  // V670 : composant à corps-expression -> corps-bloc pour porter useLanguage().
+  const { t } = useLanguage();
+  return (
   <div
     onClick={onClose}
     style={{
@@ -4187,13 +4176,13 @@ const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) =
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: 0 }}>Comment souhaitez-vous réserver ?</h3>
+          <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: 0 }}>{t('v_comment_souhaitez_vous_reserver')}</h3>
           {/* Le modele Offer nomme ce champ `name` — pas `title`. */}
-          <p style={{ color: '#999', fontSize: '0.85rem', margin: '4px 0 0' }}>{offer.name}</p>
+          <p style={{ color: '#999', fontSize: '0.85rem', margin: '4px 0 0' }}><TexteDynamique texte={offer.name} /></p>
         </div>
         <button
           onClick={onClose}
-          aria-label="Fermer"
+          aria-label={t('v_fermer')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -4221,9 +4210,9 @@ const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) =
             <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
           </svg>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '1rem' }}>Essai GRATUIT</div>
+            <div style={{ fontWeight: 700, fontSize: '1rem' }}>{t('v_essai_gratuit')}</div>
             <div style={{ fontSize: '0.75rem', color: '#999', marginTop: 2 }}>
-              Partagez sur vos réseaux sociaux et recevez un accès gratuit
+              {t('v_partagez_sur_vos_reseaux_sociaux_et_')}
             </div>
           </div>
         </div>
@@ -4246,10 +4235,10 @@ const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) =
           </svg>
           <div>
             <div style={{ fontWeight: 700, fontSize: '1rem' }}>
-              Payer {v225FormatAmount(offer.social_proof_price)} CHF
+              {t('vm_payer_montant', { montant: v225FormatAmount(offer.social_proof_price) })}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#999', marginTop: 2 }}>
-              Réserver directement, sans les étapes sociales
+              {t('v_reserver_directement_sans_les_etapes')}
             </div>
           </div>
         </div>
@@ -4257,9 +4246,11 @@ const SocialProofChoiceModal = ({ offer, onClose, onChooseFree, onChoosePay }) =
     </div>
   </div>
 );
+};
 
 // Formulaire de preuve sociale.
 const SocialProofFormModal = ({ offer, onClose }) => {
+  const { t } = useLanguage();
   const [formData, setFormData] = useState({
     client_name: '', client_email: '', client_phone: '',
     video_link: '', instagram_username: '', motivation: ''
@@ -4281,7 +4272,7 @@ const SocialProofFormModal = ({ offer, onClose }) => {
   const handleSubmit = async () => {
     const required = ['client_name', 'client_email', 'video_link', 'instagram_username', 'motivation'];
     if (required.some(k => !String(formData[k] || '').trim())) {
-      setError('Merci de remplir tous les champs marqués d\'une étoile.');
+      setError(t('v_merci_de_remplir_tous_les_champs_mar'));
       return;
     }
     setLoading(true);
@@ -4321,10 +4312,9 @@ const SocialProofFormModal = ({ offer, onClose }) => {
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
             <polyline points="22 4 12 14.01 9 11.01" />
           </svg>
-          <h3 style={{ color: '#fff', marginBottom: 8 }}>Demande envoyée !</h3>
+          <h3 style={{ color: '#fff', marginBottom: 8 }}>{t('v_demande_envoyee')}</h3>
           <p style={{ color: '#999', fontSize: '0.85rem' }}>
-            Votre demande d'essai gratuit est en cours de vérification.
-            Vous recevrez un email dès qu'elle sera validée.
+            {t('v_votre_demande_d_essai_gratuit_est_en')}
           </p>
           <button
             onClick={onClose}
@@ -4334,7 +4324,7 @@ const SocialProofFormModal = ({ offer, onClose }) => {
               border: 'none', cursor: 'pointer', fontWeight: 600
             }}
           >
-            Fermer
+            {t('v_fermer')}
           </button>
         </div>
       </div>
@@ -4355,10 +4345,10 @@ const SocialProofFormModal = ({ offer, onClose }) => {
         data-testid="social-proof-form"
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>Essai gratuit — preuve sociale</h3>
+          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>{t('v_essai_gratuit_preuve_sociale')}</h3>
           <button
             onClick={onClose}
-            aria-label="Fermer"
+            aria-label={t('v_fermer')}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -4369,22 +4359,22 @@ const SocialProofFormModal = ({ offer, onClose }) => {
 
         <div style={{ background: '#0a0a1a', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: '0.8rem', color: '#ccc' }}>
           <p style={{ margin: '0 0 6px', fontWeight: 600, color: 'var(--primary-color, #D91CD2)' }}>
-            Pour bénéficier de l'essai gratuit :
+            {t('v_pour_beneficier_de_l_essai_gratuit')}
           </p>
-          <p style={{ margin: '0 0 4px' }}>1. Partagez la vidéo du cours sur vos réseaux sociaux</p>
-          <p style={{ margin: '0 0 4px' }}>2. Collez le lien de votre publication ci-dessous</p>
-          <p style={{ margin: '0 0 4px' }}>3. Abonnez-vous, likez et commentez sur notre Instagram</p>
-          <p style={{ margin: 0 }}>4. Expliquez pourquoi ce cours vous intéresse</p>
+          <p style={{ margin: '0 0 4px' }}>{t('v_1_partagez_la_video_du_cours_sur_vos')}</p>
+          <p style={{ margin: '0 0 4px' }}>{t('v_2_collez_le_lien_de_votre_publicatio')}</p>
+          <p style={{ margin: '0 0 4px' }}>{t('v_3_abonnez_vous_likez_et_commentez_su')}</p>
+          <p style={{ margin: 0 }}>{t('v_4_expliquez_pourquoi_ce_cours_vous_i')}</p>
         </div>
 
-        <input type="text" placeholder="Votre nom *" value={formData.client_name}
+        <input type="text" placeholder={t('v_votre_nom')} value={formData.client_name}
           onChange={(e) => setFormData({ ...formData, client_name: e.target.value })} style={inputStyle} />
-        <input type="email" placeholder="Votre email *" value={formData.client_email}
+        <input type="email" placeholder={t('v_votre_email')} value={formData.client_email}
           onChange={(e) => setFormData({ ...formData, client_email: e.target.value })} style={inputStyle} />
-        <input type="tel" placeholder="Votre téléphone (optionnel)" value={formData.client_phone}
+        <input type="tel" placeholder={t('v_votre_telephone_optionnel')} value={formData.client_phone}
           onChange={(e) => setFormData({ ...formData, client_phone: e.target.value })} style={inputStyle} />
 
-        <label style={{ fontSize: '0.8rem', color: '#999', marginBottom: 4, display: 'block' }}>Lien de votre publication *</label>
+        <label style={{ fontSize: '0.8rem', color: '#999', marginBottom: 4, display: 'block' }}>{t('v_lien_de_votre_publication')}</label>
         <input type="url" placeholder="https://instagram.com/p/..." value={formData.video_link}
           onChange={(e) => setFormData({ ...formData, video_link: e.target.value })} style={inputStyle} />
 
@@ -4393,9 +4383,9 @@ const SocialProofFormModal = ({ offer, onClose }) => {
           onChange={(e) => setFormData({ ...formData, instagram_username: e.target.value.replace('@', '') })} style={inputStyle} />
 
         <label style={{ fontSize: '0.8rem', color: '#999', marginBottom: 4, display: 'block' }}>
-          Pourquoi ce cours vous intéresse ? D'où venez-vous ? *
+          {t('v_pourquoi_ce_cours_vous_interesse_d_o')}
         </label>
-        <textarea placeholder="Expliquez en quelques lignes..." value={formData.motivation}
+        <textarea placeholder={t('v_expliquez_en_quelques_lignes')} value={formData.motivation}
           onChange={(e) => setFormData({ ...formData, motivation: e.target.value })}
           style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} />
 
@@ -4435,7 +4425,7 @@ const SocialProofFormModal = ({ offer, onClose }) => {
           }}
           data-testid="social-proof-submit"
         >
-          {loading ? 'Envoi en cours…' : 'Envoyer ma demande'}
+          {loading ? t('v_app2_envoi_en_cours') : t('v_app2_envoyer_ma_demande')}
         </button>
       </div>
     </div>
@@ -4445,6 +4435,7 @@ const SocialProofFormModal = ({ offer, onClose }) => {
 // V257b: `reserveLabel` / `offersLabel` viennent du concept (editables au
 // dashboard). Absents, les libelles d'origine sont conserves.
 const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLabel, offersLabel }) => {
+  const { t } = useLanguage();
   // V565 : la lecture du média est partagée avec l'espace abonné (utils/afficheEvenement).
   const mediaType = typeMediaAffiche(mediaUrl) === 'embed' ? 'video' : 'image';
   const getVideoEmbed = () => urlEmbedAffiche(mediaUrl);
@@ -4489,7 +4480,7 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
             backdropFilter: 'blur(4px)',
             WebkitBackdropFilter: 'blur(4px)'
           }}
-          aria-label="Fermer"
+          aria-label={t('v_fermer')}
           data-testid="close-event-poster"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -4547,7 +4538,7 @@ const EventPosterModal = ({ mediaUrl, onClose, onReserve, onSeeOffers, reserveLa
           ) : (
             <img
               src={mediaUrl}
-              alt="Événement Afroboost"
+              alt={t('v_evenement_afroboost')}
               style={{
                 width: '100%',
                 display: 'block',
@@ -4831,7 +4822,7 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
             <p><strong>{t('courses')}:</strong> {data.courseName}</p>
             {/* Afficher les variantes si présentes */}
             {data.variantsText && (
-              <p><strong>Options:</strong> {data.variantsText}</p>
+              <p><strong>{t('vm_options')}</strong> {data.variantsText}</p>
             )}
             <p><strong>{t('total')}:</strong> CHF {data.totalPrice}{data.quantity > 1 ? ` (x${data.quantity})` : ''}</p>
           </div>
@@ -4866,7 +4857,7 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               className="flex-1 p-2 rounded-lg text-sm text-white/70 hover:text-white transition-all glass"
               data-testid="share-whatsapp-btn"
             >
-              📤 Partager
+              {t('v_partager')}
             </button>
             <button onClick={handlePrint} className="flex-1 p-2 glass rounded-lg text-white/70 hover:text-white text-sm">
               🖨️ {t('print')}
@@ -4881,7 +4872,7 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               data-testid="clear-ticket-btn"
             >
               <span>🗑️</span>
-              <span>Fermer et effacer le ticket</span>
+              <span>{t('v_fermer_et_effacer_le_ticket')}</span>
             </button>
           )}
 
@@ -4895,9 +4886,9 @@ const SuccessOverlay = ({ t, data, onClose, onClearTicket }) => {
               style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
               data-testid="success-parrainage-ligne"
             >
-              Tu viens accompagné ? Invite un ami avec ton Pass Duo.{' '}
+              {t('vm_pass_duo')}{' '}
               <a href="/parrainage" className="font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
-                Inviter un ami
+                {t('vm_inviter_un_ami')}
               </a>
             </p>
           )}
@@ -4926,7 +4917,9 @@ const ConfirmPaymentOverlay = ({ t, onConfirm, onCancel }) => (
 
 // Main App
 function App() {
-  const [lang, setLang] = useState(localStorage.getItem("af_lang") || "fr");
+  // V670 : lireLangue() valide le code mémorisé (jamais « BAS », « undefined »…) et ne plante pas
+  // si le stockage est bloqué (navigation privée).
+  const [lang, setLang] = useState(() => lireLangue());
   const [showSplash, setShowSplash] = useState(false); // V156: Splash supprimé — toujours false
   const [showCoachLogin, setShowCoachLogin] = useState(false);
   
@@ -6183,7 +6176,9 @@ function App() {
   // V275: repli sur le français si la clé manque dans la langue choisie (les
   // langues africaines ne traduisent qu'un sous-ensemble visiteur). Évite
   // d'afficher le nom brut de la clé. `?.` protège aussi d'une langue inconnue.
-  const t = useCallback((key) => (translations[lang]?.[key]) || translations.fr[key] || key, [lang]);
+  // V670 : 2e argument optionnel `vars` — `t('vm_places', { n: 12 })` remplace `{n}`. Sans lui,
+  // les clés à variables s'affichaient telles quelles (« {n} places »).
+  const t = useCallback((key, vars) => interpoler((translations[lang]?.[key]) || translations.fr[key] || key, vars), [lang]);
 
   /* `uipubReserver` est déclaré AVANT `v541AllerA` dans ce composant. Plutôt
      que de déplacer l'un des deux — et de risquer de casser l'ordre des
@@ -6318,7 +6313,8 @@ function App() {
   }, [menuMobile]);
 
 
-  useEffect(() => { localStorage.setItem("af_lang", lang); }, [lang]);
+  // V670 : le choix survit (rechargement, navigation, connexion) et la page annonce sa langue.
+  useEffect(() => { ecrireLangue(lang); appliquerLangueDocument(lang); }, [lang]);
 
   // V139: PWA Install — récupère le prompt capturé globalement dans index.html
   useEffect(() => {
@@ -6638,7 +6634,7 @@ function App() {
       // V224: sans cet effacement, un abandon laisserait le marqueur en place et
       // le retour d'un achat CLASSIQUE ulterieur serait pris pour un progressif.
       localStorage.removeItem(V224_PROGRESSIVE_KEY);
-      setValidationMessage("Paiement annulé. Vous pouvez réessayer.");
+      setValidationMessage(t('v_app2_paiement_annule_vous_pouvez_reessaye'));
       setTimeout(() => setValidationMessage(""), 4000);
       cleanUrl();
     }
@@ -6948,7 +6944,7 @@ function App() {
     if (avaitUneSession && info.raison && info.raison !== 'deconnexion') {
       // Sortie EXPLICITE : message + formulaire de connexion. Sans alert()
       // bloquante et sans window.location.reload().
-      setLoginWelcomeMessage('Votre session a expiré. Reconnectez-vous pour retrouver vos données.');
+      setLoginWelcomeMessage(t('v_app2_votre_session_a_expire_reconnectez_v'));
       setShowCoachLogin(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7355,7 +7351,7 @@ function App() {
     // accès », POST /subscriber/recover) — le lien /espace/<CODE> part par e-mail
     // à l'adresse enregistrée, jamais à l'écran (V389).
     const email = v529Refus && v529Refus.email;
-    if (!email) { setV529Refus(prev => prev ? { ...prev, envoi: { erreur: 'Adresse e-mail inconnue.' } } : prev); return; }
+    if (!email) { setV529Refus(prev => prev ? { ...prev, envoi: { erreur: t('v_app2_adresse_e_mail_inconnue') } } : prev); return; }
     setV529Refus(prev => prev ? { ...prev, envoi: 'en_cours' } : prev);
     try {
       const r = await axios.post(`${API}/subscriber/recover`, { email });
@@ -7523,7 +7519,7 @@ function App() {
         // survivrait et fausserait le retour d'un achat ulterieur.
         localStorage.removeItem(V224_PROGRESSIVE_KEY);
         setCheckoutBusy(false);
-        alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+        alert(t('v_le_paiement_est_momentanement_indisp'));
       }
     } catch (err) {
       localStorage.removeItem(V224_PROGRESSIVE_KEY); // V224
@@ -7540,7 +7536,7 @@ function App() {
         // /subscriber/recover existante). Aucun nouveau tunnel, 0 checkout créé.
         setV529Refus({ dejaAbonne: /espace abonn/i.test(String(detail409)), texte: String(detail409), email: v527Email.email || null, envoi: null });
       } else {
-        alert('Le paiement est momentanement indisponible. Merci de reessayer.');
+        alert(t('v_le_paiement_est_momentanement_indisp'));
       }
     }
   };
@@ -7807,7 +7803,7 @@ function App() {
     }
     // V285: la date de naissance est obligatoire (anniversaires communautaires).
     if (!userBirthday?.trim()) {
-      setValidationMessage('La date de naissance est obligatoire');
+      setValidationMessage(t('v_app2_la_date_de_naissance_est_obligatoire'));
       setTimeout(() => setValidationMessage(""), 4000);
       return;
     }
@@ -8278,7 +8274,7 @@ function App() {
               <span>{formatDate(date, course.time, lang)} {isSelected && '✔'}</span>
               {course.maxCapacity && (
                 <span className="text-xs opacity-60 ml-1">
-                  · {course.maxCapacity - (course.reservations || 0)} places
+                  · {t('vm_places', { n: course.maxCapacity - (course.reservations || 0) })}
                 </span>
               )}
             </button>
@@ -8392,7 +8388,7 @@ function App() {
       
       // CAS B: NON-partenaire (pas inscrit) - Afficher la page Packs
       console.log('[APP] ⚠️ Non-partenaire - Affichage page d\'inscription');
-      setValidationMessage('✨ Bienvenue ! Choisissez un pack pour devenir partenaire.');
+      setValidationMessage(t('v_app2_bienvenue_choisissez_un_pack_pour_de'));
       setTimeout(() => setValidationMessage(""), 6000);
       
       // Ouvrir la page "Devenir Partenaire" avec les packs
@@ -8544,14 +8540,14 @@ function App() {
             WebkitTextFillColor: 'transparent'
           }}
         >
-          Maintenance en cours
+          {t('v_maintenance_en_cours')}
         </h1>
         
         {/* Message */}
         <p className="text-white/70 text-center max-w-md mb-8">
-          Nous améliorons votre expérience Afroboost.
+          {t('vm_maintenance_1')}
           <br />
-          Revenez dans quelques instants !
+          {t('vm_maintenance_2')}
         </p>
         
         {/* Barre de progression animée */}
@@ -8571,7 +8567,7 @@ function App() {
         
         {/* Contact */}
         <p className="mt-8 text-sm text-white/40">
-          Questions ? <a href="mailto:contact.artboost@gmail.com" className="underline hover:text-white/60">contact.artboost@gmail.com</a>
+          {t('vm_questions')} <a href="mailto:contact.artboost@gmail.com" className="underline hover:text-white/60">contact.artboost@gmail.com</a>
         </p>
         
         {/* Animation CSS */}
@@ -8835,7 +8831,6 @@ function App() {
         libelleCourt="Dashboard"
         onRetour={() => { window.location.href = window.location.origin + '/#partner-dashboard'; }}
       />
-      <LanguageSelector lang={lang} setLang={setLang} />
 
       {/* V260: choix « essai gratuit contre preuve sociale » / « payer » */}
       {v260ChoiceOffer && (
@@ -8938,10 +8933,10 @@ function App() {
             style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
           >
             <span style={{ fontSize: '16px' }}>←</span>
-            <span>Retour Afroboost</span>
+            <span>{t('v_retour_afroboost')}</span>
           </button>
           <div className="text-white text-xs font-semibold opacity-90">
-            Vitrine partenaire
+            {t('v_vitrine_partenaire')}
           </div>
         </div>
       )}
@@ -8961,7 +8956,7 @@ function App() {
             <div className="flex items-center gap-2">
               <span className="text-sm">{isIOS ? '📤' : '📲'}</span>
               <p className="text-white text-xs opacity-80">
-                {isIOS ? 'Ajoutez Afroboost à votre écran' : 'Installer l\'app Afroboost'}
+                {isIOS ? t('v_app2_ajoutez_afroboost_a_votre_ecran') : t('v_app2_installer_l_app_afroboost')}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -8971,7 +8966,7 @@ function App() {
                 style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)', color: '#fff' }}
                 data-testid="pwa-install-btn"
               >
-                {isIOS ? 'Comment ?' : 'Installer'}
+                {isIOS ? t('v_app2_comment') : t('v_app2_installer')}
               </button>
               <button
                 onClick={dismissInstallBanner}
@@ -9000,29 +8995,29 @@ function App() {
             {installStatus === 'waiting' && !isIOS && (
               <>
                 <div className="text-4xl mb-4">📲</div>
-                <h3 className="text-white text-lg font-bold mb-3">Installer Afroboost</h3>
+                <h3 className="text-white text-lg font-bold mb-3">{t('v_installer_afroboost')}</h3>
                 <div className="text-left text-sm text-gray-300 space-y-3 mb-4">
                   <div className="flex items-start gap-3">
                     <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
-                    <span>Appuyez sur les <strong className="text-white">3 points ⋮</strong> en haut à droite de Chrome</span>
+                    <span><TexteRiche classeGras="text-white" texte={t('vm_install_chrome_1')} /></span>
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
-                    <span>Appuyez sur <strong className="text-white">"Installer l'application"</strong></span>
+                    <span><TexteRiche classeGras="text-white" texte={t('vm_install_chrome_2')} /></span>
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                    <span>Confirmez puis <strong className="text-white">patientez 30 à 60 secondes</strong> — Google génère votre app</span>
+                    <span><TexteRiche classeGras="text-white" texte={t('vm_install_chrome_3')} /></span>
                   </div>
                 </div>
                 <div className="text-xs text-gray-500 mb-4">
-                  L'app apparaîtra dans votre tiroir d'applications
+                  {t('v_l_app_apparaitra_dans_votre_tiroir_d')}
                 </div>
                 <button
                   onClick={() => setInstallStatus(null)}
                   className="px-6 py-2 rounded-full text-sm text-white opacity-60 hover:opacity-100"
                 >
-                  Fermer
+                  {t('v_fermer')}
                 </button>
               </>
             )}
@@ -9030,26 +9025,26 @@ function App() {
             {installStatus === 'waiting' && isIOS && (
               <>
                 <div className="text-4xl mb-4">📤</div>
-                <h3 className="text-white text-lg font-bold mb-3">Installer sur iPhone</h3>
+                <h3 className="text-white text-lg font-bold mb-3">{t('v_installer_sur_iphone')}</h3>
                 <div className="text-left text-sm text-gray-300 space-y-3 mb-4">
                   <div className="flex items-start gap-3">
                     <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
-                    <span>Appuyez sur le bouton <strong className="text-white">Partager 📤</strong> en bas</span>
+                    <span><TexteRiche classeGras="text-white" texte={t('vm_install_ios_1')} /></span>
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
-                    <span>Sélectionnez <strong className="text-white">"Sur l'écran d'accueil"</strong></span>
+                    <span><TexteRiche classeGras="text-white" texte={t('vm_install_ios_2')} /></span>
                   </div>
                   <div className="flex items-start gap-3">
                     <span className="bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                    <span>Appuyez sur <strong className="text-white">"Ajouter"</strong></span>
+                    <span><TexteRiche classeGras="text-white" texte={t('vm_install_ios_3')} /></span>
                   </div>
                 </div>
                 <button
                   onClick={() => setInstallStatus(null)}
                   className="px-6 py-2 rounded-full text-sm text-white opacity-60 hover:opacity-100"
                 >
-                  Fermer
+                  {t('v_fermer')}
                 </button>
               </>
             )}
@@ -9057,9 +9052,9 @@ function App() {
             {installStatus === 'installing' && (
               <>
                 <div className="text-4xl mb-4" style={{ animation: 'pulse 1.5s infinite' }}>⏳</div>
-                <h3 className="text-white text-lg font-bold mb-2">Installation en cours...</h3>
+                <h3 className="text-white text-lg font-bold mb-2">{t('v_installation_en_cours')}</h3>
                 <p className="text-gray-400 text-sm mb-4">
-                  Google génère votre application.<br/>Cela peut prendre 30 à 60 secondes.
+                  {t('vm_install_genere')}<br/>{t('vm_install_duree')}
                 </p>
                 <div className="w-full bg-gray-700 rounded-full h-2 mb-4 overflow-hidden">
                   <div
@@ -9070,23 +9065,23 @@ function App() {
                     }}
                   />
                 </div>
-                <p className="text-gray-500 text-xs">Ne fermez pas Chrome</p>
+                <p className="text-gray-500 text-xs">{t('v_ne_fermez_pas_chrome')}</p>
               </>
             )}
 
             {installStatus === 'success' && (
               <>
                 <div className="text-5xl mb-4">✅</div>
-                <h3 className="text-white text-lg font-bold mb-2">Afroboost installé !</h3>
+                <h3 className="text-white text-lg font-bold mb-2">{t('v_afroboost_installe')}</h3>
                 <p className="text-gray-400 text-sm mb-4">
-                  L'app est dans votre tiroir d'applications.<br/>Glissez vers le haut pour la trouver.
+                  {t('vm_install_ok_1')}<br/>{t('vm_install_ok_2')}
                 </p>
                 <button
                   onClick={() => setInstallStatus(null)}
                   className="px-6 py-2.5 rounded-full text-sm font-medium text-white"
                   style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #8b5cf6)' }}
                 >
-                  Super !
+                  {t('v_super')}
                 </button>
               </>
             )}
@@ -9130,7 +9125,7 @@ function App() {
           }} onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: '40px', marginBottom: '12px' }}>💳</div>
             <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, margin: '0 0 8px' }}>
-              Choisissez votre mode de paiement
+              {t('v_choisissez_votre_mode_de_paiement')}
             </h3>
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', margin: '0 0 8px' }}>
               {pendingReservation.offerName} — {pendingReservation.courseName}
@@ -9145,7 +9140,7 @@ function App() {
               boxShadow: '0 4px 20px rgba(var(--primary-rgb, 217, 28, 210), 0.16)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
             }}>
-              <span>💳</span> Payer par carte
+              <span>💳</span> {t('vm_payer_par_carte')}
             </button>
             <button onClick={handlePaymentChoiceTwint} style={{
               width: '100%', padding: '16px', borderRadius: '14px',
@@ -9153,13 +9148,13 @@ function App() {
               color: '#fff', fontSize: '16px', fontWeight: 700, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
             }}>
-              <span>📱</span> Payer par TWINT
+              <span>📱</span> {t('vm_payer_par_twint')}
             </button>
             <button onClick={() => { setShowPaymentChoice(false); setPendingReservation(null); }} style={{
               marginTop: '16px', background: 'none', border: 'none',
               color: 'rgba(255,255,255,0.4)', fontSize: '13px', cursor: 'pointer'
             }}>
-              Annuler
+              {t('v_annuler')}
             </button>
           </div>
         </div>
@@ -9211,7 +9206,7 @@ function App() {
             }}
           >
             <div className="text-4xl mb-3">✅</div>
-            <h3 className="text-xl font-bold text-white mb-2">Paiement confirmé</h3>
+            <h3 className="text-xl font-bold text-white mb-2">{t('v_paiement_confirme')}</h3>
             {progressiveConfirm.offerName ? (
               <p className="text-sm mb-1" style={{ color: 'rgba(255,255,255,0.75)' }}>
                 {progressiveConfirm.offerName}
@@ -9228,17 +9223,17 @@ function App() {
             {progressiveConfirm.evenementAuto ? (
               /* V610 : événement à réservation automatique — la place EST réservée. */
               <p className="text-sm mb-5" data-testid="v610-place-reservee" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                Ta place est réservée
+                {t('vm_place_reservee')}
                 {typeof progressiveConfirm.evenementAuto === 'string' ? <> : <strong>{progressiveConfirm.evenementAuto}</strong></> : null}.
-                {' '}Ta confirmation arrive par e-mail.
+                {' '}{t('vm_confirmation_email')}
               </p>
             ) : (
               <>
                 <p className="text-sm mb-2" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                  📧 Votre <strong>code d'accès</strong> vous est envoyé par email dans quelques instants.
+                  <TexteRiche texte={t('vm_code_acces_envoye')} />
                 </p>
                 <p className="text-sm mb-5" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                  Ouvrez ensuite votre espace avec ce code pour choisir la date de votre séance.
+                  {t('v_ouvrez_ensuite_votre_espace_avec_ce_')}
                 </p>
               </>
             )}
@@ -9253,7 +9248,7 @@ function App() {
               className="w-full py-3 rounded-xl font-bold"
               style={{ background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)', color: '#fff', border: 'none' }}
             >
-              J'ai compris
+              {t('v_j_ai_compris')}
             </button>
           </div>
         </div>
@@ -9434,7 +9429,7 @@ function App() {
             type="button"
             className="af-nav-marque"
             onClick={() => v541AllerA('all')}
-            aria-label="Afroboost — retour à l’accueil"
+            aria-label={t('v_afroboost_retour_a_l_accueil')}
             data-testid="nav-mobile-marque"
           >
             Afroboost
@@ -9454,8 +9449,8 @@ function App() {
               className={liveEnCours ? 'af-nav-live' : 'af-nav-live af-nav-live-hote'}
               onClick={ouvrirLiveDepuisLaBarre}
               disabled={btLive.state === 'loading'}
-              aria-label={liveEnCours ? 'Afroboost Live est en direct — rejoindre' : 'Ouvrir Afroboost Live'}
-              title={liveEnCours ? 'Afroboost Live est en direct' : 'Afroboost Live'}
+              aria-label={liveEnCours ? t('v_app2_afroboost_live_est_en_direct_rejoind') : t('v_app2_ouvrir_afroboost_live')}
+              title={liveEnCours ? t('v_app2_afroboost_live_est_en_direct') : 'Afroboost Live'}
               data-testid="nav-mobile-live"
               data-direct={liveEnCours ? 'true' : 'false'}
             >
@@ -9468,7 +9463,7 @@ function App() {
                   <path d="m23 7-7 5 7 5z" /><rect x="1" y="5" width="15" height="14" rx="2" />
                 </svg>
               )}
-              <span>{liveEnCours ? 'EN DIRECT' : 'LIVE'}</span>
+              <span>{liveEnCours ? t('v_app2_en_direct') : t('v_app2_live')}</span>
             </button>
           )}
           <button
@@ -9487,7 +9482,7 @@ function App() {
             type="button"
             className="af-nav-rond"
             onClick={() => { setMenuMobile((v) => !v); setRechercheMobile(false); }}
-            aria-label={menuMobile ? 'Fermer le menu' : 'Ouvrir le menu'}
+            aria-label={menuMobile ? t('v_app2_fermer_le_menu') : t('v_app2_ouvrir_le_menu')}
             aria-expanded={menuMobile}
             aria-controls="af-menu-mobile"
             data-testid="nav-mobile-menu"
@@ -9614,7 +9609,7 @@ function App() {
             className="af-menu-tiroir"
             role="dialog"
             aria-modal="true"
-            aria-label="Menu Afroboost"
+            aria-label={t('v_menu_afroboost')}
             onClick={(e) => e.stopPropagation()}
             data-testid="nav-mobile-tiroir"
           >
@@ -9624,7 +9619,7 @@ function App() {
                 type="button"
                 className="af-nav-rond"
                 onClick={() => setMenuMobile(false)}
-                aria-label="Fermer le menu"
+                aria-label={t('v_fermer_le_menu')}
                 data-testid="nav-mobile-fermer"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -9686,7 +9681,7 @@ function App() {
                 </svg>
               )}
               <span>Afroboost Live</span>
-              {liveEnCours ? <span className="af-menu-direct">EN DIRECT</span> : null}
+              {liveEnCours ? <span className="af-menu-direct">{t('v_en_direct')}</span> : null}
             </button>
             <a
               className="af-menu-entree"
@@ -9735,7 +9730,7 @@ function App() {
                 <div className="af-boutique-tete">
                   <div className="af-boutique-titres">
                     <h1 className="af-boutique-titre">Boutique <span>Afroboost</span></h1>
-                    <p className="af-boutique-accroche">Équipe-toi. Bouge. Représente Afroboost.</p>
+                    <p className="af-boutique-accroche">{t('v_equipe_toi_bouge_represente_afroboos')}</p>
                     <p className="af-boutique-sous">{t('shopDescription')}</p>
                   </div>
                 </div>
@@ -9750,13 +9745,13 @@ function App() {
                   />
                   <div className="af-boutique-banniere-overlay">
                     <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
-                    <h2 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT.</h2>
+                    <h2 className="af-boutique-banniere-titre">{t('vm_porte_le')}<br />{t('vm_mouvement')}</h2>
                     <button
                       type="button"
                       className="af-boutique-banniere-cta"
                       onClick={() => { const el = document.querySelector('[data-testid="page-boutique-produits"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                     >
-                      Découvrir
+                      {t('v_decouvrir')}
                     </button>
                   </div>
                 </div>
@@ -9778,7 +9773,7 @@ function App() {
                   ))}
                   {filteredProducts.length === 0 && (
                     <p className="af-boutique-page-message" data-testid="page-boutique-vide">
-                      {offers.length === 0 ? 'Chargement de la boutique…' : (searchQuery.trim() ? `${t('noResults')} "${searchQuery.trim()}"` : 'Aucun produit pour le moment.')}
+                      {offers.length === 0 ? t('vm_boutique_chargement') : (searchQuery.trim() ? `${t('noResults')} "${searchQuery.trim()}"` : t('vm_boutique_vide'))}
                     </p>
                   )}
                 </div>
@@ -9789,7 +9784,7 @@ function App() {
                 <>
                   <button type="button" className="af-boutique-page-retour" data-testid="page-boutique-retour" onClick={() => v646AllerBoutique('/boutique')}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" /></svg>
-                    Boutique
+                    {t('v_boutique')}
                   </button>
                   {produit ? (
                     <OfferCardSlider
@@ -9807,7 +9802,7 @@ function App() {
                     />
                   ) : (
                     <p className="af-boutique-page-message" data-testid="page-boutique-introuvable">
-                      {offers.length === 0 ? 'Chargement du produit…' : 'Ce produit n\'est plus disponible.'}
+                      {offers.length === 0 ? t('v_app2_chargement_du_produit') : t('v_app2_ce_produit_n_est_plus_disponible')}
                     </p>
                   )}
                 </>
@@ -9825,7 +9820,7 @@ function App() {
               className="mt-3 px-4 py-2 rounded-lg text-sm"
               style={{ background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', color: '#fff' }}
             >
-              Réinitialiser les filtres
+              {t('v_reinitialiser_les_filtres')}
             </button>
           </div>
         )}
@@ -9833,9 +9828,8 @@ function App() {
         {/* v16: DESCRIPTION PARTENAIRE — entre nav et sessions */}
         {boutiqueRoute === null && !pageOffres && concept.description && activeFilter !== 'shop' && (
           <div className="mb-6 fade-in-section" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
-            <p className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300, whiteSpace: 'pre-wrap' }}>
-              {concept.description}
-            </p>
+            <TexteDynamique as="p" className="text-white/70 text-sm leading-relaxed" style={{ fontWeight: 300, whiteSpace: 'pre-wrap' }}
+              texte={concept.description} defaut={_traductionsApp.fr.conceptDefault} cleDefaut="conceptDefault" />
           </div>
         )}
 
@@ -9893,7 +9887,7 @@ function App() {
                       boxShadow: 'none'
                     }}
                   >
-                    <h3 className="font-semibold text-white">{course.name}</h3>
+                    <TexteDynamique as="h3" className="font-semibold text-white" texte={course.name} />
                     <div className="flex items-center gap-2 text-xs text-white opacity-60 mb-1">
                       <LocationIcon />
                       <span>{course.locationName}</span>
@@ -9934,12 +9928,11 @@ function App() {
                   <SvgIcon name="users" size={18} />
                 </span>
                 <h2 className="af-section-titre" style={{ color: '#fff', margin: 0 }}>
-                  Ce qui se passe chez Afroboost
+                  {t('v_ce_qui_se_passe_chez_afroboost')}
                 </h2>
               </div>
               <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13.5px', margin: '0 0 16px' }}>
-                {v261Publications.length}
-                {v261Publications.length > 1 ? ' publications' : ' publication'} du coach et de ses membres
+                {t(v261Publications.length > 1 ? 'vm_publications_n' : 'vm_publication_1', { n: v261Publications.length })}
               </p>
               <PublicationsCarousel
                 /* V540 : une publication par ligne, jamais deux côte à côte.
@@ -10011,8 +10004,8 @@ function App() {
                 enDirect={liveEnCours}
                 occupe={btLive.state === 'loading'}
                 onOuvrir={ouvrirLiveDepuisLaBarre}
-                titreHors="Le direct n’a pas commencé."
-                titreEnCours="Rejoindre le direct"
+                titreHors={t('vm_live_hors')}
+                titreEnCours={t('vm_live_rejoindre')}
               />
               {/* Sous l'onglet « Offres », les 3 cartes occupent déjà la zone
                   principale : montrer la même offre ici ferait doublon. */}
@@ -10092,11 +10085,11 @@ function App() {
 
               {activeOffer ? (
                 <p className="text-sm mb-4" style={{ color: 'var(--primary-color, #D91CD2)' }}>
-                  👇 Choisissez votre horaire ci-dessous pour cette offre
+                  {t('v_choisissez_votre_horaire_ci_dessous_')}
                 </p>
               ) : (
                 <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                  👉 Sélectionnez une offre pour voir les horaires disponibles
+                  {t('v_selectionnez_une_offre_pour_voir_les')}
                 </p>
               )}
 
@@ -10190,10 +10183,10 @@ function App() {
               data-testid="join-audio-experience-btn"
             >
               <span style={{ fontSize: '24px' }}>🎧</span>
-              <span>Rejoindre l'expérience immersive</span>
+              <span>{t('v_rejoindre_l_experience_immersive')}</span>
             </button>
             <p className="text-center text-white/40 text-xs mt-2">
-              Ambiance musicale pendant votre session
+              {t('v_ambiance_musicale_pendant_votre_sess')}
             </p>
           </div>
         )}
@@ -10217,7 +10210,7 @@ function App() {
                 <div className="flex items-center gap-2">
                   <span className="text-xl">🎧</span>
                   <div>
-                    <p className="text-white text-sm font-medium">Expérience immersive</p>
+                    <p className="text-white text-sm font-medium">{t('v_experience_immersive')}</p>
                     <p className="text-white/50 text-xs truncate max-w-[200px]">
                       {selectedCourse.name}
                     </p>
@@ -10346,7 +10339,7 @@ function App() {
               {/* Info piste actuelle */}
               <div className="mt-3 text-center">
                 <p className="text-white/40 text-xs">
-                  Piste {currentTrackIndex + 1} / {selectedCourse.playlist.length}
+                  {t('vm_piste_n', { n: currentTrackIndex + 1, total: selectedCourse.playlist.length })}
                 </p>
               </div>
 
@@ -10399,7 +10392,7 @@ function App() {
                   Boutique <span>Afroboost</span>
                 </h2>
                 <p className="af-boutique-accroche">
-                  Équipe-toi. Bouge. Représente Afroboost.
+                  {t('v_equipe_toi_bouge_represente_afroboos')}
                 </p>
                 <p className="af-boutique-sous">{t('shopDescription')}</p>
               </div>
@@ -10422,7 +10415,7 @@ function App() {
                   className="af-boutique-toutvoir"
                   onClick={() => { const el = document.querySelector('#products-section .af-boutique-fiche') || document.querySelector('#products-section [data-testid="offers-slider"]') || document.getElementById('products-section'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
                 >
-                  Tout voir
+                  {t('v_tout_voir')}
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
                 </button>
               </div>
@@ -10456,13 +10449,13 @@ function App() {
               />
               <div className="af-boutique-banniere-overlay">
                 <span className="af-boutique-banniere-badge">AFROBOOST COLLECTION</span>
-                <h3 className="af-boutique-banniere-titre">PORTE LE<br />MOUVEMENT.</h3>
+                <h3 className="af-boutique-banniere-titre">{t('vm_porte_le')}<br />{t('vm_mouvement')}</h3>
                 <button
                   type="button"
                   className="af-boutique-banniere-cta"
                   onClick={() => { const el = document.querySelector('#products-section .af-boutique-fiche, #products-section [data-testid="offers-slider"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
                 >
-                  Découvrir
+                  {t('v_decouvrir')}
                 </button>
               </div>
             </div>
@@ -10482,7 +10475,7 @@ function App() {
                 <h3 className="af-boutique-fiche-titre">
                   {(filteredProducts.length === 1 && filteredProducts[0].name)
                     ? filteredProducts[0].name
-                    : 'La boutique'}
+                    : t('v_app2_la_boutique')}
                 </h3>
                 {filteredProducts.length === 1 ? (
                   <>
@@ -10555,7 +10548,7 @@ function App() {
                 <div key={c.id} className="af-avenir-carte" data-testid={`boutique-avenir-${c.id}`}>
                   <div className="af-avenir-media">
                     <span className="af-avenir-badge">{c.badge}</span>
-                    <span className="af-avenir-tag">À VENIR</span>
+                    <span className="af-avenir-tag">{t('v_a_venir')}</span>
                     <div className="af-avenir-icone">{c.icone}</div>
                   </div>
                   <div className="af-avenir-corps">
@@ -10675,7 +10668,7 @@ function App() {
                 }}>
                   <span style={{ fontSize: '16px' }}>💰</span>
                   <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '11px' }}>
-                    Sélectionnez plusieurs titres pour un prix réduit : <strong style={{ color: '#22c55e' }}>-25% dès 2 titres, -40% dès 3 titres</strong>
+                    {t('vm_titres_prix_reduit')} <strong style={{ color: '#22c55e' }}>{t('vm_titres_paliers')}</strong>
                   </span>
                 </div>
               )}
@@ -10756,7 +10749,7 @@ function App() {
                     onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                   >
-                    🛒 Acheter la sélection ({selectedCount} titres) — {bundlePrice} CHF
+                    {t('vm_acheter_selection', { n: selectedCount, prix: bundlePrice })}
                   </button>
                 </div>
               )}
@@ -10837,7 +10830,7 @@ function App() {
                 </p>
               )}
               <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px', marginTop: '12px' }}>
-                Aperçu limité à 30 secondes
+                {t('v_apercu_limite_a_30_secondes')}
               </p>
             </div>
           </div>
@@ -10873,7 +10866,7 @@ function App() {
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
               </svg>
-              <span className="font-medium">Voir les avis</span>
+              <span className="font-medium">{t('v_voir_les_avis')}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                 <polyline points="15 3 21 3 21 9"/>
@@ -10922,10 +10915,9 @@ function App() {
                   <input type="date" required value={userBirthday} onChange={e => setUserBirthday(e.target.value)}
                     max={new Date().toISOString().split('T')[0]}
                     className="w-full p-3 rounded-lg neon-input" data-testid="user-birthday-input"
-                    style={{ colorScheme: 'dark' }} aria-label="Date de naissance" />
+                    style={{ colorScheme: 'dark' }} aria-label={t('v_date_de_naissance')} />
                   <p style={{ fontSize: '10px', color: '#888', marginTop: '4px', lineHeight: 1.3 }}>
-                    Ton âge ne sera pas affiché publiquement sauf si tu le souhaites.
-                    On fête les anniversaires avec toute la communauté Afroboost !
+                    {t('v_ton_age_ne_sera_pas_affiche_publique')}
                   </p>
                 </div>
 
@@ -10933,11 +10925,11 @@ function App() {
                 {/* Champ Adresse - Affiché uniquement pour les produits physiques */}
                 {(selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct) && (
                   <div className="border border-purple-500/30 rounded-lg p-3 bg-purple-900/20">
-                    <p className="text-xs text-purple-400 mb-2">📦 Produit physique - Adresse de livraison requise</p>
+                    <p className="text-xs text-purple-400 mb-2">{t('v_produit_physique_adresse_de_livraiso')}</p>
                     <input 
                       type="text" 
                       required 
-                      placeholder="Adresse complète (rue, numéro, code postal, ville)" 
+                      placeholder={t('v_adresse_complete_rue_numero_code_pos')} 
                       value={shippingAddress} 
                       onChange={e => setShippingAddress(e.target.value)} 
                       className="w-full p-3 rounded-lg neon-input" 
@@ -10950,12 +10942,12 @@ function App() {
                 {/* Sélecteur de variantes interactif - Affiché si le produit a des variantes */}
                 {selectedOffer?.variants && Object.keys(selectedOffer.variants).length > 0 && (
                   <div className="border border-pink-500/30 rounded-lg p-4 bg-pink-900/10" data-testid="variants-selector">
-                    <p className="text-xs text-pink-400 mb-3 font-medium">🎨 Sélectionnez vos options</p>
+                    <p className="text-xs text-pink-400 mb-3 font-medium">{t('v_selectionnez_vos_options')}</p>
                     
                     {/* Tailles */}
                     {selectedOffer.variants.sizes && selectedOffer.variants.sizes.length > 0 && (
                       <div className="mb-4">
-                        <p className="variant-label">Taille</p>
+                        <p className="variant-label">{t('v_taille')}</p>
                         <div className="flex flex-wrap gap-2">
                           {selectedOffer.variants.sizes.map((size) => (
                             <button
@@ -10970,7 +10962,7 @@ function App() {
                           ))}
                         </div>
                         {!selectedVariants.size && (
-                          <p className="text-xs text-red-400 mt-1">* Veuillez sélectionner une taille</p>
+                          <p className="text-xs text-red-400 mt-1">{t('v_veuillez_selectionner_une_taille')}</p>
                         )}
                       </div>
                     )}
@@ -10978,7 +10970,7 @@ function App() {
                     {/* Couleurs */}
                     {selectedOffer.variants.colors && selectedOffer.variants.colors.length > 0 && (
                       <div className="mb-4">
-                        <p className="variant-label">Couleur</p>
+                        <p className="variant-label">{t('v_couleur')}</p>
                         <div className="flex flex-wrap gap-2">
                           {selectedOffer.variants.colors.map((color) => (
                             <button
@@ -10993,7 +10985,7 @@ function App() {
                           ))}
                         </div>
                         {!selectedVariants.color && (
-                          <p className="text-xs text-red-400 mt-1">* Veuillez sélectionner une couleur</p>
+                          <p className="text-xs text-red-400 mt-1">{t('v_veuillez_selectionner_une_couleur')}</p>
                         )}
                       </div>
                     )}
@@ -11001,7 +10993,7 @@ function App() {
                     {/* Autres variantes (poids, etc.) */}
                     {selectedOffer.variants.weights && selectedOffer.variants.weights.length > 0 && (
                       <div className="mb-2">
-                        <p className="variant-label">Poids</p>
+                        <p className="variant-label">{t('v_poids')}</p>
                         <div className="flex flex-wrap gap-2">
                           {selectedOffer.variants.weights.map((weight) => (
                             <button
@@ -11016,7 +11008,7 @@ function App() {
                           ))}
                         </div>
                         {!selectedVariants.weight && (
-                          <p className="text-xs text-red-400 mt-1">* Veuillez sélectionner un poids</p>
+                          <p className="text-xs text-red-400 mt-1">{t('v_veuillez_selectionner_un_poids')}</p>
                         )}
                       </div>
                     )}
@@ -11049,7 +11041,7 @@ function App() {
                   {selectedOffer && (
                     <>
                       <div className="flex justify-between items-center text-white text-sm mb-2">
-                        <span>{selectedOffer.name}</span>
+                        <span><TexteDynamique texte={selectedOffer.name} /></span>
                         <span>CHF {v223UnitPrice(selectedOffer).toFixed(2)}</span>
                       </div>
                       
@@ -11059,7 +11051,7 @@ function App() {
                           background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.1)', 
                           border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' 
                         }}>
-                          <p className="text-xs text-pink-400 mb-2 font-medium">📅 Dates sélectionnées ({selectedDates.length})</p>
+                          <p className="text-xs text-pink-400 mb-2 font-medium">{t('vm_dates_selectionnees', { n: selectedDates.length })}</p>
                           <div className="flex flex-wrap gap-2">
                             {selectedDates.map((dateISO, idx) => (
                               <span 
@@ -11076,7 +11068,7 @@ function App() {
                           </div>
                           {selectedDates.length > 1 && (
                             <p className="text-xs text-white opacity-70 mt-2">
-                              💡 Cliquez sur les dates ci-dessus pour en ajouter ou retirer
+                              {t('v_cliquez_sur_les_dates_ci_dessus_pour')}
                             </p>
                           )}
                         </div>
@@ -11107,7 +11099,7 @@ function App() {
                       {/* Sous-total pour produits physiques */}
                       {(selectedOffer?.isProduct || selectedOffer?.isPhysicalProduct) && quantity > 1 && (
                         <div className="flex justify-between text-white text-xs opacity-60 mb-1">
-                          <span>Sous-total ({quantity} x CHF {v223UnitPrice(selectedOffer).toFixed(2)})</span>
+                          <span>{t('vm_sous_total_quantite', { n: quantity, prix: v223UnitPrice(selectedOffer).toFixed(2) })}</span>
                           <span>CHF {(v223UnitPrice(selectedOffer) * quantity).toFixed(2)}</span>
                         </div>
                       )}
@@ -11115,7 +11107,7 @@ function App() {
                       {/* Sous-total pour services/cours avec multi-dates */}
                       {!selectedOffer?.isProduct && !selectedOffer?.isPhysicalProduct && selectedDates.length > 1 && (
                         <div className="flex justify-between text-white text-xs opacity-60 mb-1">
-                          <span>Sous-total ({selectedDates.length} dates x CHF {v223UnitPrice(selectedOffer).toFixed(2)})</span>
+                          <span>{t('vm_sous_total_dates', { n: selectedDates.length, prix: v223UnitPrice(selectedOffer).toFixed(2) })}</span>
                           <span>CHF {(v223UnitPrice(selectedOffer) * selectedDates.length).toFixed(2)}</span>
                         </div>
                       )}
@@ -11129,7 +11121,7 @@ function App() {
                       {memberQuote?.membre && memberQuote?.avantage_pct > 0 && (
                         <>
                           <div className="flex justify-between text-white text-sm mb-1 opacity-60">
-                            <span>Prix public</span>
+                            <span>{t('v_prix_public')}</span>
                             <span style={{ textDecoration: 'line-through' }}>
                               CHF {parseFloat(memberQuote.prix_public).toFixed(2)}
                             </span>
@@ -11145,7 +11137,7 @@ function App() {
                                    strokeLinejoin="round" aria-hidden="true">
                                 <path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7.4-6.3-4.6L5.7 21.4 8 14 2 9.4h7.6z" />
                               </svg>
-                              Avantage membre
+                              {t('v_avantage_membre')}
                             </span>
                             <span>-{memberQuote.avantage_pct}%</span>
                           </div>
@@ -11161,13 +11153,13 @@ function App() {
                         <div className="text-xs mb-1 opacity-70"
                              style={{ color: 'var(--primary-color, #D91CD2)' }}
                              data-testid="member-identification-hint">
-                          Membre Afroboost ? Ouvrez votre espace pour voir votre tarif.
+                          {t('v_membre_afroboost_ouvrez_votre_espace')}
                         </div>
                       )}
 
                       {appliedDiscount && (
                         <div className="flex justify-between text-green-400 text-sm mb-1">
-                          <span>Réduction ({appliedDiscount.code})</span>
+                          <span>{t('vm_reduction', { code: appliedDiscount.code })}</span>
                           <span>
                             {appliedDiscount.type === '100%' ? '-100%' : 
                              appliedDiscount.type === '%' ? `-${appliedDiscount.value}%` : 
@@ -11182,7 +11174,7 @@ function App() {
                     <span>{t('total')}:</span>
                     <span style={{ color: parseFloat(totalPrice) === 0 ? '#4ade80' : 'var(--primary-color, #D91CD2)' }}>
                       CHF {totalPrice}
-                      {parseFloat(totalPrice) === 0 && <span className="ml-2 text-sm">(GRATUIT)</span>}
+                      {parseFloat(totalPrice) === 0 && <span className="ml-2 text-sm">{t('v_gratuit')}</span>}
                     </span>
                   </p>
                 </div>
@@ -11231,7 +11223,7 @@ function App() {
                   </span>
                   {(v535EtapeMode.offer && v535EtapeMode.offer.name) || 'Mode de paiement'}
                 </h3>
-                <button type="button" onClick={() => setV535EtapeMode(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
+                <button type="button" onClick={() => setV535EtapeMode(null)} className="text-2xl text-white hover:opacity-80" aria-label={t('v_fermer')}>×</button>
               </div>
               <ChoixModePaiement
                 offre={v535EtapeMode.offer}
@@ -11255,20 +11247,20 @@ function App() {
                   <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
                   </span>
-                  Tes informations
+                  {t('v_tes_informations')}
                 </h3>
-                <button type="button" onClick={() => setV528EtapeEmail(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
+                <button type="button" onClick={() => setV528EtapeEmail(null)} className="text-2xl text-white hover:opacity-80" aria-label={t('v_fermer')}>×</button>
               </div>
               <p className="text-white text-sm mb-1" style={{ opacity: 0.8, lineHeight: 1.5 }}>
-                Tu as choisi ton offre.
+                {t('v_tu_as_choisi_ton_offre')}
               </p>
               {v528EtapeEmail.offer && v528EtapeEmail.offer.name && (
                 <p className="text-sm mb-1 font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }} data-testid="v570-offre-choisie">
-                  {v528EtapeEmail.offer.name}
+                  <TexteDynamique texte={v528EtapeEmail.offer.name} />
                 </p>
               )}
               <p className="text-white text-sm mb-4" style={{ opacity: 0.8, lineHeight: 1.5 }}>
-                Renseigne maintenant tes coordonnées pour créer ton espace membre et continuer ton inscription.
+                {t('v_renseigne_maintenant_tes_coordonnees')}
               </p>
               {/* V610b : AVANT le paiement, pour TOUS (aucune déduction depuis l'e-mail saisi). */}
               {v528EtapeEmail.offer && v528EtapeEmail.offer.gratuit_membres && (
@@ -11286,9 +11278,9 @@ function App() {
                 const nom = String(v570Nom || '').trim();
                 const adresse = String(v528EmailSaisi || '').trim().toLowerCase();
                 const tel = String(v570Tel || '').trim();
-                if (nom.length < 2) { setV528EmailErreur('Indique ton nom et prénom.'); return; }
-                if (!v528EmailValide(adresse)) { setV528EmailErreur('Adresse e-mail invalide.'); return; }
-                if (!v570TelValide(tel)) { setV528EmailErreur('Numéro WhatsApp invalide (ex. +41 79 123 45 67).'); return; }
+                if (nom.length < 2) { setV528EmailErreur(t('v_app2_indique_ton_nom_et_prenom')); return; }
+                if (!v528EmailValide(adresse)) { setV528EmailErreur(t('v_app2_adresse_e_mail_invalide')); return; }
+                if (!v570TelValide(tel)) { setV528EmailErreur(t('v_app2_numero_whatsapp_invalide_ex_41_79_12')); return; }
                 setUserName(nom); setUserEmail(adresse); setUserWhatsapp(tel);
                 saveClientInfo(nom, adresse, tel); // mémorisation client existante (pré-remplissage au prochain passage)
                 const etape = v528EtapeEmail;
@@ -11310,7 +11302,7 @@ function App() {
                   <p className="text-sm mt-2" role="alert" style={{ color: 'var(--primary-color, #D91CD2)' }}>{v528EmailErreur}</p>
                 )}
                 <button type="submit" className="mt-4 w-full py-3 rounded-lg btn-primary" data-testid="v528-email-continuer" disabled={checkoutBusy}>
-                  Continuer
+                  {t('v_continuer')}
                 </button>
               </form>
             </div>
@@ -11329,12 +11321,12 @@ function App() {
                   <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9 12l2 2 4-4" /></svg>
                   </span>
-                  {v529Refus.dejaAbonne ? 'Tu as déjà cette formule' : /WhatsApp/.test(String(v529Refus.texte || '')) ? 'Numéro WhatsApp déjà utilisé' : 'Offre indisponible'}
+                  {v529Refus.dejaAbonne ? t('v_app2_tu_as_deja_cette_formule') : /WhatsApp/.test(String(v529Refus.texte || '')) ? t('v_app2_numero_whatsapp_deja_utilise') : t('v_app2_offre_indisponible')}
                 </h3>
-                <button type="button" onClick={() => setV529Refus(null)} className="text-2xl text-white hover:opacity-80" aria-label="Fermer">×</button>
+                <button type="button" onClick={() => setV529Refus(null)} className="text-2xl text-white hover:opacity-80" aria-label={t('v_fermer')}>×</button>
               </div>
               <p className="text-white text-sm mb-4" style={{ opacity: 0.85, lineHeight: 1.5 }} data-testid="v529-refus-texte">
-                {v529Refus.dejaAbonne ? 'Aucun nouveau paiement n\u2019a été créé.' : v529Refus.texte}
+                {v529Refus.dejaAbonne ? t('v_app2_aucun_nouveau_paiement_n_a_ete_cree') : v529Refus.texte}
               </p>
               {v529Refus.dejaAbonne && v529Refus.envoi && v529Refus.envoi !== 'en_cours' && (
                 <p className="text-sm mb-4" role="status" style={{ color: v529Refus.envoi.erreur ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.85)', lineHeight: 1.5 }} data-testid="v529-refus-envoi">
@@ -11347,12 +11339,12 @@ function App() {
                 {v529Refus.dejaAbonne && (
                   <button type="button" onClick={v529AccederEspace} className="flex-1 py-3 rounded-lg btn-primary" data-testid="v529-refus-espace"
                     disabled={v529Refus.envoi === 'en_cours' || !!(v529Refus.envoi && v529Refus.envoi.masque)} style={{ minWidth: '160px' }}>
-                    {v529Refus.envoi === 'en_cours' ? 'Envoi…' : 'Accéder à mon espace'}
+                    {v529Refus.envoi === 'en_cours' ? t('v_app2_envoi') : t('v_app2_acceder_a_mon_espace')}
                   </button>
                 )}
                 <button type="button" onClick={() => setV529Refus(null)} className="flex-1 py-3 rounded-lg text-white" data-testid="v529-refus-fermer"
                   style={{ minWidth: '120px', border: '1px solid rgba(255,255,255,0.25)', background: 'transparent' }}>
-                  Fermer
+                  {t('v_fermer')}
                 </button>
               </div>
             </div>
@@ -11364,25 +11356,25 @@ function App() {
           <div className="modal-overlay" onClick={() => setShowLegalModal(false)}>
             <div className="modal-content glass rounded-xl p-6 max-w-lg w-full neon-border" onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-white">Mentions légales</h3>
+                <h3 className="text-xl font-bold text-white">{t('v_mentions_legales')}</h3>
                 <button onClick={() => setShowLegalModal(false)} className="text-2xl text-white hover:text-purple-400">×</button>
               </div>
               <div className="max-h-[60vh] overflow-y-auto text-white text-sm" style={{ lineHeight: '1.8' }}>
-                <p style={{ fontWeight: 'bold', marginBottom: '12px', fontSize: '14px' }}>Impressum</p>
-                <p><strong>Dénomination :</strong> Association Afroboosteur</p>
-                <p><strong>Adresse :</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
-                <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: 'var(--primary-color, #D91CD2)' }}>contact@afroboosteur.com</a></p>
+                <p style={{ fontWeight: 'bold', marginBottom: '12px', fontSize: '14px' }}>{t('v_impressum')}</p>
+                <p><strong>{t('vm_denomination')}</strong> Association Afroboosteur</p>
+                <p><strong>{t('vm_adresse')}</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
+                <p><strong>{t('vm_contact')}</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: 'var(--primary-color, #D91CD2)' }}>contact@afroboosteur.com</a></p>
                 <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                  <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>Moyens de paiement</p>
-                  <p>Les paiements sont traités de manière sécurisée via Stripe. Les moyens de paiement acceptés incluent TWINT, carte de crédit (Visa, Mastercard) et PayPal selon la configuration du coach.</p>
-                  <p style={{ marginTop: '8px' }}>Devise : CHF (francs suisses). Livraison : Suisse.</p>
+                  <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>{t('v_moyens_de_paiement')}</p>
+                  <p>{t('v_les_paiements_sont_traites_de_manier')}</p>
+                  <p style={{ marginTop: '8px' }}>{t('v_devise_chf_francs_suisses_livraison_')}</p>
                 </div>
                 <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                  <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>Responsabilité</p>
-                  <p>Le contenu de ce site est fourni à titre informatif. L'Association Afroboosteur décline toute responsabilité pour les erreurs ou omissions dans le contenu proposé.</p>
+                  <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>{t('v_responsabilite')}</p>
+                  <p>{t('v_le_contenu_de_ce_site_est_fourni_a_t')}</p>
                 </div>
               </div>
-              <button onClick={() => setShowLegalModal(false)} className="mt-4 w-full py-3 rounded-lg btn-primary">Fermer</button>
+              <button onClick={() => setShowLegalModal(false)} className="mt-4 w-full py-3 rounded-lg btn-primary">{t('v_fermer')}</button>
             </div>
           </div>
         )}
@@ -11485,7 +11477,7 @@ function App() {
             <a href="https://www.afroboosteur.com" target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.62)', fontSize: '0.8rem', textDecoration: 'none', transition: 'color 0.2s' }}
               onMouseEnter={(e) => e.target.style.color = '#d946ef'}
               onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.62)'}
-            >Association</a>
+            >{t('vm_association')}</a>
 
             <span style={{ color: 'rgba(255,255,255,0.15)', fontSize: '0.8rem' }}>|</span>
 
@@ -11493,7 +11485,7 @@ function App() {
             <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.62)', fontSize: '0.8rem', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' }}
               onMouseEnter={(e) => e.target.style.color = '#d946ef'}
               onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.62)'}
-            >Mentions légales</button>
+            >{t('v_mentions_legales')}</button>
 
             {/* Séparateur avant paiement */}
             {(concept.paymentTwint || concept.paymentPaypal || concept.paymentCreditCard) && (
@@ -11529,7 +11521,7 @@ function App() {
                 <a href={concept.externalLink2Url} target="_blank" rel="noopener noreferrer" style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem', textDecoration: 'none' }} data-testid="external-link-2">{concept.externalLink2Title}</a>
               )}
               {(deferredPrompt || isIOS) && !window.matchMedia('(display-mode: standalone)').matches && (
-                <button onClick={handleInstallClick} style={{ color: 'rgba(255,255,255,0.62)' /* V526: contraste 2.46 -> ~5.2 */, fontSize: '0.75rem', background: 'none', border: 'none', cursor: 'pointer' }} data-testid="footer-install-link">Installer l'app</button>
+                <button onClick={handleInstallClick} style={{ color: 'rgba(255,255,255,0.62)' /* V526: contraste 2.46 -> ~5.2 */, fontSize: '0.75rem', background: 'none', border: 'none', cursor: 'pointer' }} data-testid="footer-install-link">{t('v_installer_l_app')}</button>
               )}
             </div>
           )}
@@ -11552,7 +11544,7 @@ function App() {
             data-testid="view-saved-ticket-btn"
           >
             <span className="text-lg">🎫</span>
-            <span className="text-white font-semibold text-sm">Mon ticket</span>
+            <span className="text-white font-semibold text-sm">{t('v_mon_ticket')}</span>
           </button>
         )}
         
@@ -11619,7 +11611,7 @@ function App() {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between'
               }}>
                 <span style={{ color: '#0f0f0f', fontSize: '16px', fontWeight: 700 }}>
-                  Commentaires {socialTotalCount || socialComments.length}
+                  {t('vm_commentaires', { n: socialTotalCount || socialComments.length })}
                 </span>
                 <button
                   onClick={() => setShowCommentsPanel(false)}
@@ -11681,7 +11673,7 @@ function App() {
                             padding: '2px 6px',
                             borderRadius: '8px',
                             letterSpacing: '0.3px'
-                          }}>✓ Vérifié</span>
+                          }}>{t('v_verifie')}</span>
                         )}
                         <div style={{ display: 'flex', gap: '1px' }}>
                           {[1,2,3,4,5].map(i => (
@@ -11739,7 +11731,7 @@ function App() {
               ))}
               {socialComments.length === 0 && (
                 <p style={{ color: '#999', fontSize: '14px', textAlign: 'center', marginTop: '40px' }}>
-                  Aucun avis pour le moment
+                  {t('v_aucun_avis_pour_le_moment')}
                 </p>
               )}
             </div>

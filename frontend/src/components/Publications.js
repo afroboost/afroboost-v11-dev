@@ -16,7 +16,8 @@ import { useBoostTribeLive, BoostTribeLiveOverlay, iconLive } from './live/Boost
 import VideoTrimEditor from './VideoTrimEditor'; // L'UNIQUE éditeur vidéo (partagé avec OfferWizard)
 import { trimValide, useTrimVideo } from '../utils/videoTrim'; // découpe non destructive : lecture bornée
 import { ctaDe, estALaUne, objectifLibelle, OBJECTIFS, CTAS } from '../utils/publicationsConversion'; // V646 : objectif / appel a l'action / a la une
-import useLargeurEcran from '../utils/useLargeurEcran'; // modale : plein écran mobile, deux colonnes desktop
+import useLargeurEcran from '../utils/useLargeurEcran';
+import { useLanguage } from '../contexts/LanguageContext'; // V670 // modale : plein écran mobile, deux colonnes desktop
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 const API = `${BACKEND_URL}/api`;
@@ -221,12 +222,14 @@ const V268Remaining = ({ remaining, noExpiry }) => {
 // leger drop-shadow pour rester lisible sur n'importe quelle image.
 // `onToggle` recoit l'evenement pour que l'appelant fasse l'action AUDIO
 // directement dans le handler du clic (exigence des navigateurs mobiles).
-const V268MuteButton = ({ muted, onToggle, size }) => (
+const V268MuteButton = ({ muted, onToggle, size }) => {
+  const { t } = useLanguage();
+  return (
   <button
     type="button"
     onClick={onToggle}
-    aria-label={muted ? 'Activer le son' : 'Couper le son'}
-    title={muted ? 'Activer le son' : 'Couper le son'}
+    aria-label={muted ? t('v_pub_activer_le_son') : t('v_pub_couper_le_son')}
+    title={muted ? t('v_pub_activer_le_son') : t('v_pub_couper_le_son')}
     style={{
       background: 'transparent', border: 'none', padding: 4, cursor: 'pointer',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -246,6 +249,7 @@ const V268MuteButton = ({ muted, onToggle, size }) => (
     )}
   </button>
 );
+};
 
 // V268b Fix B2 : coupe/active le son EN DIRECT dans le handler du clic. Les
 // navigateurs mobiles bloquent le son s'il n'est pas active par un geste
@@ -262,6 +266,7 @@ const v268ToggleSound = (videoRef, setMuted) => (e) => {
 
 // V268 (F5): légende avec « Lire plus » / « Voir moins » au-delà de 100 car.
 const V268Caption = ({ caption, light }) => {
+  const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   if (!caption) return null;
   const long = caption.length > 100;
@@ -274,7 +279,7 @@ const V268Caption = ({ caption, light }) => {
           onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
           style={{ color: 'var(--primary-color, #D91CD2)', cursor: 'pointer', fontWeight: 600 }}
         >
-          {open ? ' Voir moins' : 'Lire plus'}
+          {open ? t('v_pub_voir_moins') : t('v_pub_lire_plus')}
         </span>
       )}
     </p>
@@ -341,6 +346,7 @@ export const v542LienPublication = (pub) => {
 // ou sélection. Le menu sort du flux via `createPortal` pour ne jamais être
 // rogné par `overflow: hidden` des cartes.
 const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
+  const { t } = useLanguage();
   const [copie, setCopie] = useState(false);
   const [menuOuvert, setMenuOuvert] = useState(false);
   const [menuPos, setMenuPos] = useState({ right: 60, top: 0 });
@@ -433,12 +439,12 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
         fontSize: 8.5, lineHeight: 1.1, textAlign: 'center', letterSpacing: '.02em',
         color: 'rgba(255,255,255,0.62)', maxWidth: 52, margin: '-1px 0 3px',
         textShadow: '0 1px 3px rgba(0,0,0,0.95)',
-      }}>de toute la page</span>
+      }}>{t('v_pub_de_toute_la_page')}</span>
       {/* Bouton « ⋮ » — ouvre le menu secondaire */}
       <button
         ref={btnMenuRef}
         type="button"
-        aria-label="Plus d'actions"
+        aria-label={t('v_pub_plus_d_actions')}
         aria-expanded={menuOuvert}
         aria-haspopup="menu"
         data-testid="publication-menu"
@@ -461,7 +467,7 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
         <div
           ref={menuRef}
           role="menu"
-          aria-label="Actions sur la publication"
+          aria-label={t('v_pub_actions_sur_la_publication')}
           style={{
             position: 'fixed', left: menuPos.left, top: menuPos.top,
             background: 'rgba(12,12,18,0.94)',
@@ -480,7 +486,7 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
               onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
             >
               <SvgIcon name="share" size={16} />
-              <span>{copie ? 'Copié !' : 'Partager'}</span>
+              <span>{copie ? t('v_pub_copie') : t('v_pub_partager')}</span>
             </button>
           ) : null}
           {actions.onSessions ? (
@@ -491,7 +497,7 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
               onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
             >
               <SvgIcon name="calendar" size={16} />
-              <span>Séances</span>
+              <span>{t('v_pub_seances')}</span>
             </button>
           ) : null}
           <button role="menuitem" type="button" data-testid="publication-offres"
@@ -501,7 +507,7 @@ const UiPub2Colonne = ({ actions, ancre = 8, pub }) => {
             onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
           >
             <SvgIcon name="gift" size={16} />
-            <span>Voir les offres</span>
+            <span>{t('v_pub_voir_les_offres')}</span>
           </button>
         </div>,
         document.body
@@ -580,6 +586,7 @@ const VideoPublication = React.forwardRef(({ pub, ...props }, refExterne) => {
    Avec eux, elle gagne la navigation entre publications et le panneau auteur
    à gauche sur grand écran. Rien n'est retiré, tout est ajouté. */
 const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
+  const { t } = useLanguage();
   const videoRef = useRef(null);
   // DÉCOUPE : la publication ne joue que [trim_start, trim_end], en boucle —
   // jamais un retour à 00:00.
@@ -736,7 +743,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
 
       <button
         onClick={onClose}
-        aria-label="Fermer"
+        aria-label={t('v_pub_fermer')}
         style={{
           position: 'absolute', top: 10, right: 10, zIndex: 4,
           background: 'transparent', border: 'none', padding: 4, cursor: 'pointer',
@@ -790,7 +797,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
               padding: '3px 8px', borderRadius: 999, fontSize: 10, letterSpacing: '.05em', fontWeight: 700,
               background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)',
             }}>
-              {pub.author_id && pub.coach_id && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase() ? 'COACH' : 'MEMBRE'}
+              {pub.author_id && pub.coach_id && String(pub.author_id).toLowerCase() === String(pub.coach_id).toLowerCase() ? t('v_pub_coach') : t('v_pub_membre')}
             </span>
           </div>
           <p style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', margin: '0 0 6px' }}>{v540Depuis(pub.created_at)}</p>
@@ -889,7 +896,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
               </span>
               <button
                 type="button"
-                aria-label="Fermer les avis"
+                aria-label={t('v_pub_fermer_les_avis')}
                 onClick={(e) => { e.stopPropagation(); setAvisOuverts(false); }}
                 style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 4, display: 'inline-flex' }}
               >
@@ -916,7 +923,7 @@ const V268Lightbox = ({ pub, onClose, actions, liste, index, onNaviguer }) => {
               </div>
             ))}
             {(!actions || !actions.comments || actions.comments.length === 0) && (
-              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, margin: 0 }}>Aucun avis pour le moment.</p>
+              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, margin: 0 }}>{t('v_pub_aucun_avis_pour_le_moment')}</p>
             )}
           </div>
         )}
@@ -1094,16 +1101,20 @@ const V646BoutonCta = ({ pub, actions }) => {
 /* V646 — « À LA UNE », en pastille sobre : la même grammaire que le badge
    COACH juste à côté (contour, pas d'aplat), pour ne pas voler le regard au
    média. Elle n'apparaît que sur les publications réellement marquées. */
-const V646BadgeALaUne = () => (
+const V646BadgeALaUne = () => {
+  const { t } = useLanguage();
+  return (
   <span data-testid="publication-a-la-une" style={{
     flex: '0 0 auto', padding: '2px 6px', borderRadius: 999, fontSize: 9,
     letterSpacing: '.06em', fontWeight: 700, background: 'transparent',
     border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.55)',
     color: 'var(--primary-color, #D91CD2)',
-  }}>À LA UNE</span>
+  }}>{t('v_pub_a_la_une')}</span>
 );
+};
 
 const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
+  const { t } = useLanguage();
   const videoRef = useRef(null);
   const [sonActif, setSonActif] = useState(v542SonCarte(pub.id));
   useEffect(() => v540EcouterSon(() => setSonActif(v542SonCarte(pub.id))), [pub.id]);
@@ -1259,7 +1270,7 @@ const V540CartePublication = ({ pub, actions, onOpen, reel }) => {
           <span style={{
             flex: '0 0 auto', padding: '2px 6px', borderRadius: 999, fontSize: 9, letterSpacing: '.06em', fontWeight: 700,
             background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.5)',
-          }}>COACH</span>
+          }}>{t('v_pub_coach')}</span>
         )}
         {estALaUne(pub) && <V646BadgeALaUne />}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: 'rgba(255,255,255,0.6)', flex: '0 0 auto' }}>
@@ -1379,6 +1390,7 @@ export const V540IconeSon = ({ actif, size = 17 }) => (actif ? (
  * il n'ouvre jamais la publication.
  */
 export const V540BoutonSon = ({ style, pubId }) => {
+  const { t } = useLanguage();
   const [actif, setActif] = useState(v542SonCarte(pubId));
   useEffect(() => v540EcouterSon(() => setActif(v542SonCarte(pubId))), [pubId]);
   return (
@@ -1387,8 +1399,8 @@ export const V540BoutonSon = ({ style, pubId }) => {
       data-testid="publication-son"
       data-pub={pubId}
       data-son={actif ? 'on' : 'off'}
-      aria-label={actif ? 'Couper le son' : 'Activer le son'}
-      title={actif ? 'Couper le son' : 'Activer le son'}
+      aria-label={actif ? t('v_pub_couper_le_son') : t('v_pub_activer_le_son')}
+      title={actif ? t('v_pub_couper_le_son') : t('v_pub_activer_le_son')}
       onClick={(e) => v542BasculerSon(pubId, e)}
       style={{
         position: 'absolute', right: 10, bottom: 10, zIndex: 3,
@@ -1405,6 +1417,7 @@ export const V540BoutonSon = ({ style, pubId }) => {
 };
 
 export const PublicationsCarousel = ({ publications, actions, disposition = 'carrousel' }) => {
+  const { t } = useLanguage();
   // V268 (F2): publication ouverte en plein ecran, ou null.
   const [lightbox, setLightbox] = useState(null);
 
@@ -1581,7 +1594,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
               type="button"
               className="af-reels-nav af-reels-nav--prev"
               onClick={scrollPrev}
-              aria-label="Publications précédentes"
+              aria-label={t('v_pub_publications_precedentes')}
               disabled={bords.debut}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1610,7 +1623,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
               type="button"
               className="af-reels-nav af-reels-nav--next"
               onClick={scrollNext}
-              aria-label="Publications suivantes"
+              aria-label={t('v_pub_publications_suivantes')}
               disabled={bords.fin}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1621,7 +1634,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
         </div>
         {/* Dots de navigation (PC uniquement, CSS masqués sur mobile) */}
         {nbPages > 1 && (
-          <div className="af-reels-dots" aria-label="Navigation publications">
+          <div className="af-reels-dots" aria-label={t('v_pub_navigation_publications')}>
             {Array.from({ length: nbPages }).map((_, i) => (
               <button
                 key={i}
@@ -1700,6 +1713,7 @@ export const PublicationsCarousel = ({ publications, actions, disposition = 'car
    elle-même toute valeur hors vocabulaire et n'accepte ces trois champs que
    d'un coach authentifié. Aucun nouvel appel, aucune nouvelle route. */
 const V646Conversion = ({ pub, onEnregistre }) => {
+  const { t } = useLanguage();
   const [objectif, setObjectif] = useState(pub.objectif || '');
   const [cta, setCta] = useState(pub.cta || '');
   const [aLaUne, setALaUne] = useState(!!pub.a_la_une);
@@ -1741,21 +1755,21 @@ const V646Conversion = ({ pub, onEnregistre }) => {
         <label style={{ fontSize: '0.64rem', color: 'rgba(255,255,255,0.5)' }}>
           Type / objectif
           <select data-testid="publication-objectif" value={objectif} onChange={(e) => setObjectif(e.target.value)} style={champ}>
-            <option value="">— non défini —</option>
+            <option value="">{t('v_pub_non_defini')}</option>
             {OBJECTIFS.map((o) => <option key={o.id} value={o.id}>{o.libelle}</option>)}
           </select>
         </label>
         <label style={{ fontSize: '0.64rem', color: 'rgba(255,255,255,0.5)' }}>
           Appel à l’action affiché sur l’accueil
           <select data-testid="publication-cta-choix" value={cta} onChange={(e) => setCta(e.target.value)} style={champ}>
-            <option value="">— aucun bouton —</option>
+            <option value="">{t('v_pub_aucun_bouton')}</option>
             {CTAS.map((c) => <option key={c.id} value={c.id}>{c.libelle}</option>)}
           </select>
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.7rem', color: '#fff', cursor: 'pointer' }}>
           <input type="checkbox" data-testid="publication-a-la-une-choix" checked={aLaUne}
             onChange={(e) => setALaUne(e.target.checked)} style={{ accentColor: 'var(--primary-color, #D91CD2)' }} />
-          À la une — remonte en haut de l’accueil
+          {t('v_pub_a_la_une_remonte_en_haut_de_l_accuei')}
         </label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <button type="button" data-testid="publication-conversion-enregistrer" onClick={enregistrer}
@@ -1763,10 +1777,10 @@ const V646Conversion = ({ pub, onEnregistre }) => {
             style={{ padding: '5px 11px', borderRadius: 7, border: 'none', fontSize: '0.72rem', fontWeight: 700,
               cursor: modifie && etat !== 'envoi' ? 'pointer' : 'default', color: '#fff',
               background: modifie ? 'var(--primary-color, #D91CD2)' : 'rgba(255,255,255,0.1)' }}>
-            {etat === 'envoi' ? 'Enregistrement…' : 'Enregistrer'}
+            {etat === 'envoi' ? t('v_pub_enregistrement') : t('v_pub_enregistrer')}
           </button>
-          {etat === 'ok' && <span style={{ fontSize: '0.68rem', color: '#22c55e' }}>Enregistré</span>}
-          {etat === 'erreur' && <span style={{ fontSize: '0.68rem', color: '#f87171' }}>Échec — réessayez</span>}
+          {etat === 'ok' && <span style={{ fontSize: '0.68rem', color: '#22c55e' }}>{t('v_pub_enregistre')}</span>}
+          {etat === 'erreur' && <span style={{ fontSize: '0.68rem', color: '#f87171' }}>{t('v_pub_echec_reessayez')}</span>}
         </div>
       </div>
     </details>
@@ -1774,6 +1788,7 @@ const V646Conversion = ({ pub, onEnregistre }) => {
 };
 
 const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
+  const { t } = useLanguage();
   const [items, setItems] = useState(null); // null = chargement
   const [editing, setEditing] = useState(null); // id en cours d'edition
   const [editCaption, setEditCaption] = useState('');
@@ -1864,7 +1879,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
       {/* V342 : l'info prix du Boost, avec le crayon de réglage réservé au super-admin. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     gap: 8, flexWrap: 'wrap', margin: '0 0 12px' }}>
-        <h4 style={{ color: '#fff', fontSize: '0.9rem', margin: 0 }}>Mes publications</h4>
+        <h4 style={{ color: '#fff', fontSize: '0.9rem', margin: 0 }}>{t('v_pub_mes_publications')}</h4>
         <PrixBoost />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1880,16 +1895,16 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
             <div style={{ flex: 1, minWidth: 0 }}>
               {editing === p.id ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <input value={editName} onChange={e => setEditName(e.target.value.slice(0, 60))} placeholder="Nom affiché" style={inputStyle} />
-                  <textarea value={editCaption} onChange={e => setEditCaption(e.target.value.slice(0, 500))} placeholder="Légende" rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
+                  <input value={editName} onChange={e => setEditName(e.target.value.slice(0, 60))} placeholder={t('v_pub_nom_affiche')} style={inputStyle} />
+                  <textarea value={editCaption} onChange={e => setEditCaption(e.target.value.slice(0, 500))} placeholder={t('v_pub_legende')} rows={2} style={{ ...inputStyle, resize: 'vertical' }} />
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" onClick={() => saveEdit(p.id)} disabled={busy}
                       style={{ flex: 1, padding: '7px', borderRadius: 8, border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
-                      Enregistrer
+                      {t('v_pub_enregistrer')}
                     </button>
                     <button type="button" onClick={() => setEditing(null)}
                       style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #333', background: 'transparent', color: '#999', fontSize: '0.8rem', cursor: 'pointer' }}>
-                      Annuler
+                      {t('v_pub_annuler')}
                     </button>
                   </div>
                 </div>
@@ -1900,7 +1915,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
                       {p.display_name || p.subscriber_name}
                     </p>
                     <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                      <button type="button" onClick={() => startEdit(p)} title="Modifier" aria-label="Modifier"
+                      <button type="button" onClick={() => startEdit(p)} title={t('v_pub_modifier')} aria-label={t('v_pub_modifier')}
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'var(--primary-color, #D91CD2)' }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -1917,7 +1932,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
                           V327 : sans objet sur une publication programmée (elle n'est
                           pas encore en ligne, son compte à rebours n'a pas démarré). */}
                       {!p.scheduled && (
-                      <button type="button" onClick={() => doRenew(p.id)} disabled={busy} title="Renouveler 48h" aria-label="Renouveler"
+                      <button type="button" onClick={() => doRenew(p.id)} disabled={busy} title={t('v_pub_renouveler_48h')} aria-label={t('v_pub_renouveler')}
                         style={{ background: 'none', border: 'none', padding: 4, cursor: busy ? 'wait' : 'pointer', color: '#22c55e' }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <polyline points="23 4 23 10 17 10" />
@@ -1925,7 +1940,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
                         </svg>
                       </button>
                       )}
-                      <button type="button" onClick={() => { setConfirmDel(p.id); setEditing(null); }} title="Supprimer" aria-label="Supprimer"
+                      <button type="button" onClick={() => { setConfirmDel(p.id); setEditing(null); }} title={t('v_pub_supprimer')} aria-label={t('v_pub_supprimer')}
                         style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: '#f87171' }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <polyline points="3 6 5 6 21 6" />
@@ -1963,7 +1978,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
                         {p.scheduled_at
                           ? 'Programmée pour le ' + new Date(p.scheduled_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
                             + ' à ' + new Date(p.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-                          : 'Programmée'}
+                          : t('v_pub_programmee')}
                       </span>
                     ) : (
                       <V268Remaining remaining={p.remaining_hours} noExpiry={p.no_expiry} />
@@ -1972,15 +1987,15 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
                   )}
                   {confirmDel === p.id && (
                     <div style={{ marginTop: 6, background: 'rgba(229,62,62,0.1)', borderRadius: 8, padding: 8 }}>
-                      <p style={{ color: '#fca5a5', fontSize: '0.75rem', margin: '0 0 6px' }}>Supprimer cette publication ?</p>
+                      <p style={{ color: '#fca5a5', fontSize: '0.75rem', margin: '0 0 6px' }}>{t('v_pub_supprimer_cette_publication')}</p>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button type="button" onClick={() => doDelete(p.id)} disabled={busy}
                           style={{ flex: 1, padding: '6px', borderRadius: 8, border: 'none', background: '#E53E3E', color: '#fff', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer' }}>
-                          Supprimer
+                          {t('v_pub_supprimer')}
                         </button>
                         <button type="button" onClick={() => setConfirmDel(null)}
                           style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #333', background: 'transparent', color: '#999', fontSize: '0.75rem', cursor: 'pointer' }}>
-                          Annuler
+                          {t('v_pub_annuler')}
                         </button>
                       </div>
                     </div>
@@ -2008,6 +2023,7 @@ const V268MyPublications = ({ subscriberCode, refreshKey, onEditerVideo }) => {
 // On ecoute les postMessage de BoostTribe en FILTRANT strictement l'origine.
 // =====================================================================
 export const BoostTribeSection = ({ subscriberCode }) => {
+  const { t } = useLanguage();
   // LIVE RAPIDE : la logique (jeton d'accès, iframe, postMessage, annonce du
   // live) vit dans components/live/BoostTribeLive.js — la MÊME que le bouton
   // « Live » de la barre de navigation. Cette section n'en est qu'une entrée.
@@ -2023,34 +2039,34 @@ export const BoostTribeSection = ({ subscriberCode }) => {
     <div style={{ border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)', borderRadius: 12, padding: 14, marginBottom: 16, background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.06)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ color: 'var(--primary-color, #D91CD2)', display: 'inline-flex' }}>{iconLive}</span>
-        <span style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>Sessions live (BoostTribe)</span>
+        <span style={{ color: '#fff', fontSize: 14, fontWeight: 700 }}>{t('v_pub_sessions_live_boosttribe')}</span>
       </div>
       {state === 'denied' ? (
         <div>
           <p style={{ color: '#ccc', fontSize: 12, margin: '0 0 10px', lineHeight: 1.4 }}>
             {reason === 'no_credit'
-              ? 'Tu es abonné(e) mais il ne te reste plus de crédit. Recharge pour accéder aux sessions live.'
-              : "Réservé aux abonné(e)s avec du crédit. Abonne-toi pour débloquer les sessions live gratuites."}
+              ? t('v_pub_tu_es_abonne_e_mais_il_ne_te_reste_p')
+              : t('v_pub_reserve_aux_abonne_e_s_avec_du_credi')}
           </p>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button
               onClick={() => { window.location.href = '/'; }}
               style={{ padding: '8px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--primary-color, #D91CD2)', color: '#fff', fontSize: 12, fontWeight: 600 }}
             >
-              {reason === 'no_credit' ? 'Recharger du crédit' : "S'abonner"}
+              {reason === 'no_credit' ? t('v_pub_recharger_du_credit') : t('v_pub_s_abonner')}
             </button>
             <button
               onClick={() => setState('idle')}
               style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #444', cursor: 'pointer', background: 'transparent', color: '#aaa', fontSize: 12 }}
             >
-              Plus tard
+              {t('v_pub_plus_tard')}
             </button>
           </div>
         </div>
       ) : (
         <div>
           <p style={{ color: '#aaa', fontSize: 12, margin: '0 0 10px', lineHeight: 1.4 }}>
-            Rejoins une session live musique + vidéo. Gratuit pour les abonné(e)s avec crédit.
+            {t('v_pub_rejoins_une_session_live_musique_vid')}
           </p>
           <button
             onClick={openLive}
@@ -2066,6 +2082,7 @@ export const BoostTribeSection = ({ subscriberCode }) => {
 };
 
 export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
+  const { t } = useLanguage();
   const [file, setFile] = useState(null);           // fichier brut selectionne
   const [preview, setPreview] = useState(null);      // apercu affiche
   const [mediaType, setMediaType] = useState('image');
@@ -2272,7 +2289,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
       body.trim_end = trim ? trim.end : null;
       await axios.put(`${API}/publications/${edition.id}`, body);
       try { window.dispatchEvent(new CustomEvent('afroboost:publications-changed')); } catch (e) { /* ignore */ }
-      setSuccess(true); setScheduledMsg('Publication modifiée !');
+      setSuccess(true); setScheduledMsg(t('v_pub2_publication_modifiee'));
       setTimeout(() => { setSuccess(false); setScheduledMsg(''); annulerEdition(); }, 1200);
     } catch (e) {
       setError((e && e.message) || 'Modification impossible.');
@@ -2388,7 +2405,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value.slice(0, 500))}
-          placeholder="Ajoutez une légende..."
+          placeholder={t('v_pub_ajoutez_une_legende')}
           maxLength={500}
           rows={2}
           style={{
@@ -2407,7 +2424,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
             <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
           </svg>
-          Visible 48 h, puis supprimée automatiquement
+          {t('v_pub_visible_48_h_puis_supprimee_automati')}
         </p>
         )}
 
@@ -2449,7 +2466,7 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                 <line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" />
                 <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
-              Programmer
+              {t('v_pub_programmer')}
             </button>
 
             {/* V343 (POUVOIR A) : bascule de durée, réservée au super-admin.
@@ -2460,8 +2477,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
               <button
                 type="button"
                 onClick={() => setSansLimite(!sansLimite)}
-                title={sansLimite ? 'Durée : sans limite' : 'Durée : 48 h'}
-                aria-label={sansLimite ? 'Durée : sans limite' : 'Durée : 48 h'}
+                title={sansLimite ? t('v_pub_duree_sans_limite') : t('v_pub_duree_48_h')}
+                aria-label={sansLimite ? t('v_pub_duree_sans_limite') : t('v_pub_duree_48_h')}
                 aria-pressed={sansLimite}
                 data-testid="publish-duree-toggle"
                 style={{
@@ -2501,8 +2518,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                   {/* V343 : le rappel des 48 h n'a plus de sens si le super-admin a
                       choisi « sans limite » pour cette publication. */}
                   {adminDuree && sansLimite
-                    ? 'Laissez vide pour publier tout de suite. Cette publication restera en ligne sans limite de durée.'
-                    : 'Laissez vide pour publier tout de suite. Les 48 h de visibilité démarrent à la sortie, pas à la programmation.'}
+                    ? t('v_pub_laissez_vide_pour_publier_tout_de_su')
+                    : t('v_pub_laissez_vide_pour_publier_tout_de_su_2')}
                 </p>
               </div>
             )}
@@ -2530,13 +2547,13 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             }}
             data-testid="publish-submit"
           >
-            {uploading ? (edition ? 'Enregistrement…' : 'Publication en cours…') : (edition ? 'Enregistrer les modifications' : (scheduleAt ? 'Programmer' : 'Publier'))}
+            {uploading ? (edition ? t('v_pub_enregistrement') : t('v_pub_publication_en_cours')) : (edition ? t('v_pub_enregistrer_les_modifications') : (scheduleAt ? t('v_pub_programmer') : t('v_pub_publier')))}
           </button>
         )}
         {edition && !success && (
           <button type="button" onClick={annulerEdition} data-testid="publish-annuler-edition"
             style={{ width: '100%', padding: '9px', borderRadius: 25, border: '1px solid #333', background: 'transparent', color: '#999', fontSize: '0.85rem', cursor: 'pointer', marginTop: 8 }}>
-            Annuler la modification
+            {t('v_pub_annuler_la_modification')}
           </button>
         )}
     </>
@@ -2562,8 +2579,8 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
         data-mode={edition ? 'edition' : 'creation'}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>{edition ? 'Modifier la publication' : 'Nouvelle publication'}</h3>
-          <button onClick={onClose} aria-label="Fermer" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}>
+          <h3 style={{ color: '#fff', fontSize: '1rem', margin: 0 }}>{edition ? t('v_pub_modifier_la_publication') : t('v_pub_nouvelle_publication')}</h3>
+          <button onClick={onClose} aria-label={t('v_pub_fermer')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', padding: 0 }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
@@ -2620,17 +2637,17 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                 className="v270-range"
                 type="range" min={1} max={3} step={0.01} value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                aria-label="Zoom"
+                aria-label={t('v_pub_zoom')}
               />
               <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
                 <button type="button"
                   onClick={() => { if (cropTarget === 'thumb') { setShowCrop(false); } else { clearFile(); } }}
                   style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid #333', background: 'transparent', color: '#999', cursor: 'pointer', fontWeight: 600 }}>
-                  Annuler
+                  {t('v_pub_annuler')}
                 </button>
                 <button type="button" onClick={applyCrop}
                   style={{ flex: 1, padding: '11px', borderRadius: 12, border: 'none', background: 'var(--primary-color, #D91CD2)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
-                  Valider
+                  {t('v_pub_valider')}
                 </button>
               </div>
             </div>
@@ -2669,14 +2686,14 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--primary-color, #D91CD2)' }} strokeWidth="2" strokeLinecap="round">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <p style={{ color: '#999', fontSize: '0.85rem', margin: 0 }}>Appuyez pour choisir</p>
-            <p style={{ color: '#666', fontSize: '0.7rem', margin: 0 }}>Image ou vidéo (format 9:16)</p>
+            <p style={{ color: '#999', fontSize: '0.85rem', margin: 0 }}>{t('v_pub_appuyez_pour_choisir')}</p>
+            <p style={{ color: '#666', fontSize: '0.7rem', margin: 0 }}>{t('v_pub_image_ou_video_format_9_16')}</p>
           </div>
         ) : preview ? (
           /* Apercu image (recadree). */
           <div style={{ position: 'relative', width: '100%', borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-            <img src={preview} alt="Aperçu" style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
-            <button onClick={clearFile} aria-label="Changer de média"
+            <img src={preview} alt={t('v_pub_apercu')} style={{ width: '100%', maxHeight: 380, objectFit: 'contain', display: 'block' }} />
+            <button onClick={clearFile} aria-label={t('v_pub_changer_de_media')}
               style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
                 <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -2706,12 +2723,12 @@ export const PublishModal = ({ subscriberCode, onClose, onPublished }) => {
                 <button type="button" data-testid="publish-remplacer-video"
                   onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'video/*'; fileInputRef.current.click(); } }}
                   style={{ width: '100%', padding: '9px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#fff', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}>
-                  {file ? 'Nouvelle vidéo choisie : ' + (file.name || 'vidéo') : 'Remplacer la vidéo'}
+                  {file ? 'Nouvelle vidéo choisie : ' + (file.name || 'vidéo') : t('v_pub_remplacer_la_video')}
                 </button>
               ) : (
                 <button type="button" onClick={clearFile} data-testid="publish-changer-media"
                   style={{ justifySelf: 'start', padding: '5px 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: 'rgba(255,255,255,0.75)', fontSize: '0.75rem', cursor: 'pointer' }}>
-                  Changer de média
+                  {t('v_pub_changer_de_media')}
                 </button>
               )}
             />

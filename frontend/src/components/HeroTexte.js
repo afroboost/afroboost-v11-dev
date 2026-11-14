@@ -33,6 +33,8 @@ import {
   pxVersNormalise,
   texteHero,
 } from '../utils/heroLayout';
+import { useLanguage } from '../contexts/LanguageContext'; // V670
+import { useTexteCoach } from './TexteDynamique'; // V670
 
 export const HREF_ESSAI = '/?link=b83914b4-c5a';
 const SCRIM = 'linear-gradient(to bottom, rgba(0,0,0,0) 12%, rgba(0,0,0,0.5) 34%, rgba(0,0,0,0.5) 66%, rgba(0,0,0,0) 88%)';
@@ -100,6 +102,7 @@ export function lirePositionsFlux(racine) {
  *                       appareil, largeur, hauteur, lirePositions() }
  */
 export default function HeroTexte({ concept, appareil: appareilForce, modeEdition = false, selection = null, onSaisirElement, refsElements }) {
+  const { t } = useLanguage();
   const c = concept || {};
   /* V645.4k — typographie réglable du titre. Absente (null), on ne pose rien :
      le thème garde la main et un concept existant rend exactement comme avant.
@@ -276,9 +279,12 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
     funnelTracer('trial_cta_click', { source: 'homepage_hero', variante: 'chat' }, { transport: 'sendBeacon' });
   };
 
-  const titre = texteHero(c.heroTitle, HERO_TEXTES_DEFAUT.title);
-  const sousTitre = texteHero(c.heroSubtitle, HERO_TEXTES_DEFAUT.subtitle);
-  const libelleCta = texteHero(c.heroCtaLabel, HERO_TEXTES_DEFAUT.cta);
+  // V670 : valeur par défaut -> traduction STATIQUE relue ; texte personnalisé par le coach ->
+  // traduction dynamique de SON texte. Le contenu du coach n'est jamais modifié.
+  // (Le titre se découpe en lignes sur les points : chaque traduction garde trois phrases.)
+  const titre = useTexteCoach(texteHero(c.heroTitle, HERO_TEXTES_DEFAUT.title), HERO_TEXTES_DEFAUT.title, 'v_hero_titre_defaut').texte;
+  const sousTitre = useTexteCoach(texteHero(c.heroSubtitle, HERO_TEXTES_DEFAUT.subtitle), HERO_TEXTES_DEFAUT.subtitle, 'v_hero_sous_titre_defaut').texte;
+  const libelleCta = useTexteCoach(texteHero(c.heroCtaLabel, HERO_TEXTES_DEFAUT.cta), HERO_TEXTES_DEFAUT.cta, 'v_hero_cta_defaut').texte;
   const setRef = (el) => (n) => { elRefs.current[el] = n; };
 
   // V645 : le titre se rend en lignes — une par phrase (decoupe sur les points) —
@@ -375,7 +381,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           className="af-hero-offre mt-2 font-semibold text-white"
           style={{ textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
         >
-          Nouveau chez Afroboost ? Ton premier cours est offert !
+          {t('v_hero_nouveau_chez_afroboost_ton_premier_c')}
         </p>
         {/* Vrai <a> : si le JavaScript du clic echoue, la navigation se fait quand meme. */}
         <a
@@ -499,7 +505,7 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
           className="af-hero-offre font-semibold text-white"
           style={{ fontSize: `${16 * sC}px`, lineHeight: 1.5, marginBottom: 24 * sC, textShadow: '0 2px 12px rgba(0,0,0,0.9)' }}
         >
-          Nouveau chez Afroboost ? Ton premier cours est offert !
+          {t('v_hero_nouveau_chez_afroboost_ton_premier_c')}
         </p>
         <a
           href={HREF_ESSAI}

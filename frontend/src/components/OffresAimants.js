@@ -32,7 +32,8 @@ import { trimDeLOffre, useTrimVideo } from '../utils/videoTrim';
 import AccesMembreEvenement from './AccesMembreEvenement'; // V610b
 import CodePromoEvenement from './CodePromoEvenement'; // V628
 import { offrePartageable } from '../utils/partageOffre'; // V629 : partage V626, côté vitrine
-import IconesPartageOffre from './IconesPartageOffre'; // V630 : deux petites icônes
+import IconesPartageOffre from './IconesPartageOffre';
+import { useLanguage } from '../contexts/LanguageContext'; // V670 // V630 : deux petites icônes
 
 // V610 : « mercredi 28 octobre · 18h45 » — la date de l'événement (compte à rebours de l'offre).
 function v610QuandOffre(o) {
@@ -75,11 +76,12 @@ const cadreFiche = (ratio, mesure, estMobile) => {
 
 /** Bouton « Agrandir » posé sur le cadre. */
 function BoutonAgrandir({ onClick }) {
+  const { t } = useLanguage();
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label="Agrandir le média"
+      aria-label={t('v_aim_agrandir_le_media')}
       data-testid="fiche-agrandir"
       style={{ position: 'absolute', right: 10, bottom: 10, zIndex: 3, width: 36, height: 36, borderRadius: 18, border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(0,0,0,0.55)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
     >
@@ -94,6 +96,7 @@ function BoutonAgrandir({ onClick }) {
  * 1:1 carré), avec ses contrôles natifs (le plein écran garde ce rendu).
  */
 function MediaAgrandi({ offre, poster, video, ratio, onFermer }) {
+  const { t } = useLanguage();
   const videoRef = useRef(null);
   useTrimVideo(videoRef, trimDeLOffre(offre), { loop: false });
   useEffect(() => {
@@ -104,10 +107,10 @@ function MediaAgrandi({ offre, poster, video, ratio, onFermer }) {
   if (typeof document === 'undefined') return null;
   const st = stylesLecteur(ratio, { hauteurMax: '88vh', fond: 'transparent' });
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label="Média en grand" data-testid="media-agrandi" data-ratio={ratio}
+    <div role="dialog" aria-modal="true" aria-label={t('v_aim_media_en_grand')} data-testid="media-agrandi" data-ratio={ratio}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onFermer(); }}
       style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
-      <button type="button" onClick={onFermer} aria-label="Fermer" data-testid="media-agrandi-fermer"
+      <button type="button" onClick={onFermer} aria-label={t('v_aim_fermer')} data-testid="media-agrandi-fermer"
         style={{ position: 'absolute', top: 12, right: 12, width: 40, height: 40, borderRadius: 20, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.08)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
         <SvgIcon name="x" size={18} />
       </button>
@@ -283,6 +286,7 @@ export function VignetteOffre({ offre, analyser, hauteur }) {
 /* ───────────────────────── panneau (modale / feuille) ───────────────────────── */
 
 function Panneau({ ouvert, onFermer, titre, children, estMobile, testId }) {
+  const { t } = useLanguage();
   useEffect(() => {
     if (!ouvert) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onFermer(); };
@@ -326,7 +330,7 @@ function Panneau({ ouvert, onFermer, titre, children, estMobile, testId }) {
           <button
             type="button"
             onClick={onFermer}
-            aria-label="Fermer"
+            aria-label={t('v_aim_fermer')}
             data-testid="panneau-fermer"
             style={{ width: 36, height: 36, borderRadius: 18, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
           >
@@ -401,6 +405,7 @@ function LigneFiche({ icone, libelle, valeur }) {
 
 // V594 — exportée pour le parcours Partenaire (« Détail de l’offre » existant).
 export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, checkoutBusy, estMobile, Countdown, toutesOffres }) {
+  const { t } = useLanguage();
   // `choix` = { offres: [...] } — 1 offre, ou les 2 offres de la saison.
   const offres = (choix && choix.offres) || [];
   const [selection, setSelection] = useState(offres[0] ? offres[0].id : null);
@@ -431,7 +436,7 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
         {!groupeSaison && Countdown && familleOffre(offre) === FAMILLE.LANCEMENT ? <Countdown offer={offre} /> : null}
 
         {groupeSaison ? (
-          <div role="radiogroup" aria-label="Mode de paiement" style={{ marginTop: 14, display: 'grid', gap: 8 }} data-testid="fiche-choix-saison">
+          <div role="radiogroup" aria-label={t('v_aim_mode_de_paiement')} style={{ marginTop: 14, display: 'grid', gap: 8 }} data-testid="fiche-choix-saison">
             {offres.map((o) => {
               const actif = o.id === selection;
               const p = prixAffiche(o);
@@ -522,7 +527,7 @@ export function FicheOffre({ choix, mensuelRef, analyser, onChoisir, onFermer, c
               boxShadow: `0 6px 24px rgba(${RGB}, 0.45)`, opacity: checkoutBusy ? 0.7 : 1,
             }}
           >
-            {fiche.gratuit ? 'Réserver mon 1er cours gratuit' : 'Choisir cette formule'}
+            {fiche.gratuit ? t('v_aim_reserver_mon_1er_cours_gratuit') : t('v_aim_choisir_cette_formule')}
           </button>
           {/* V650 — LA CONDITION SE LIT LÀ OÙ L'ON CLIQUE. Annoncer « gratuit »
               sans dire « une première fois, sur les cours récurrents » promet
@@ -657,6 +662,7 @@ function ToutesLesOffres({ ouvert, offres, mensuelRef, analyser, onOuvrirFiche, 
 /* ───────────────────────── carte aimant ───────────────────────── */
 
 function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
+  const { t } = useLanguage();
   const o = aimant.offre;
   const fam = familleOffre(o);
   const badge = aimant.cle === 'saison' ? aimant.badge : badgeOffre(o, mensuelRef); // V526: badge saison calculé
@@ -700,7 +706,7 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
           <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name={ICONE_AIMANT[aimant.cle] || 'gift'} size={16} /></span>
           <Badge texte={badge} fort={fort} />
         </span>
-        <span style={{ fontSize: 18, fontWeight: 800 }}>{aimant.cle === 'saison' ? 'Saison 8 mois' : o.name}</span>
+        <span style={{ fontSize: 18, fontWeight: 800 }}>{aimant.cle === 'saison' ? t('v_aim_saison_8_mois') : o.name}</span>
         <span style={{ fontSize: 22, fontWeight: 900, color: COULEUR }}>
           {prix.montant}{prix.unite ? <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}> {prix.unite}</span> : null}
         </span>
@@ -715,7 +721,7 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
         {limitee ? <span style={{ fontSize: 12, color: '#fff', fontWeight: 600 }} data-testid="aimant-limitee">{limitee}</span> : null}
         {fort && Countdown ? <Countdown offer={o} /> : null}
         <span style={{ marginTop: 'auto', paddingTop: 6, fontSize: 14, fontWeight: 700, color: COULEUR, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          Voir l’offre <SvgIcon name="arrowRight" size={14} />
+          {t('v_aim_voir_l_offre')} <SvgIcon name="arrowRight" size={14} />
         </span>
       </div>
     </button>
@@ -740,6 +746,7 @@ function CarteAimant({ aimant, mensuelRef, analyser, onOuvrir, Countdown }) {
  * panneau, aucune logique recopiée ailleurs.
  */
 export default function OffresAimants({ offres, analyserMedia, onChoisir, checkoutBusy, ouvrirToutesSignal, titre, Countdown, cartes = true, titreToutes, notes }) {
+  const { t } = useLanguage();
   // V566 : `titreToutes` / `notes` — l'espace abonné (Recharger) réutilise CE panneau ;
   // la vitrine ne les passe pas et reste identique.
   // V525: `Countdown` = le composant OfferCountdown existant d'App.js (j/h/m/s
@@ -877,7 +884,7 @@ export default function OffresAimants({ offres, analyserMedia, onChoisir, checko
         onMouseLeave={(e) => { e.currentTarget.style.background = `rgba(${RGB}, 0.08)`; e.currentTarget.style.borderColor = `rgba(${RGB}, 0.5)`; }}
       >
         <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name="grid" size={14} /></span>
-        Voir toutes les offres
+        {t('v_aim_voir_toutes_les_offres')}
         <span style={{ color: COULEUR, display: 'inline-flex' }}><SvgIcon name="arrowRight" size={14} /></span>
       </button>
 

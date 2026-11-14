@@ -1,6 +1,8 @@
 // Traductions i18n - Afroboost
 // Structure modulaire pour Vercel
 
+import { VISITEUR, VISITEUR_APP } from './i18n-visiteur';
+
 export const translations = {
   fr: {
     // App
@@ -413,15 +415,108 @@ Object.keys(_V275D_EXTRA).forEach((k) => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// V670 — Ce qui suit étend le moteur EXISTANT. Il n'y a toujours qu'UN dictionnaire
+// (`translations`) et qu'UNE fonction `t` : App.js fusionne son dictionnaire local
+// ici au lieu d'en garder un second (cf. `fusionnerDictionnaire`).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Remplace `{nom}` par `vars.nom`. Une variable absente laisse `{nom}` visible : jamais « undefined ». */
+export function interpoler(texte, vars) {
+  if (!vars || typeof texte !== 'string') return texte;
+  return texte.replace(/\{([A-Za-z0-9_]+)\}/g, (m, nom) => (
+    Object.prototype.hasOwnProperty.call(vars, nom) && vars[nom] != null ? String(vars[nom]) : m
+  ));
+}
+
+/**
+ * Fusionne `source` ({ fr:{…}, en:{…} }) DANS `cible`, sans jamais remplacer l'objet
+ * d'une langue (les références déjà distribuées restent valides). Les clés de
+ * `source` l'emportent : c'est le dictionnaire local d'App.js, celui qui s'affichait.
+ */
+export function fusionnerDictionnaire(cible, source) {
+  Object.keys(source || {}).forEach((lang) => {
+    cible[lang] = Object.assign(cible[lang] || {}, source[lang]);
+  });
+  return cible;
+}
+
+/**
+ * Fusionne une table « par clé » : { cle: { fr:'…', en:'…', sw:'…' } }.
+ * Une langue absente de l'entrée n'écrit RIEN → `t()` retombe sur le français.
+ * Jamais de chaîne vide ni de valeur égale au français comme « traduction » : ce
+ * serait afficher du français en le faisant passer pour traduit.
+ */
+export function fusionnerTable(cible, table) {
+  Object.keys(table || {}).forEach((cle) => {
+    const entree = table[cle] || {};
+    Object.keys(entree).forEach((lang) => {
+      const v = entree[lang];
+      if (typeof v !== 'string' || !v.trim()) return;
+      if (lang !== 'fr' && v === entree.fr) return;
+      cible[lang] = cible[lang] || {};
+      cible[lang][cle] = v;
+    });
+  });
+  return cible;
+}
+
+// V670 — Interface visiteur d'App.js : un mot par clé, fusionnée dans le dictionnaire unique.
+fusionnerTable(translations, VISITEUR);
+fusionnerTable(translations, VISITEUR_APP);
+
+// V670 — Traductions RETIRÉES parce que démontrablement fausses. `wo.discoverCta`
+// contenait « cours », « réservé » et « next » : du français et de l'anglais dans
+// une phrase censée être en wolof. Le français vaut mieux qu'un faux wolof.
+const _V670_RETIREES = { wo: ['discoverCta'] };
+Object.keys(_V670_RETIREES).forEach((l) => {
+  _V670_RETIREES[l].forEach((k) => { if (translations[l]) delete translations[l][k]; });
+});
+
+// Clés qui ont dû retomber sur le français, par langue. Sert au diagnostic et aux
+// tests de couverture ; ne produit AUCUN bruit en console.
+const _enRepli = {};
+function _noterRepli(lang, key) {
+  if (lang === 'fr') return;
+  (_enRepli[lang] = _enRepli[lang] || new Set()).add(key);
+}
+export function clesEnRepli(lang) {
+  return Array.from((lang ? _enRepli[lang] : null) || []);
+}
+
+/** Traduction d'une clé : langue demandée → français → clé brute. Jamais d'exception. */
+function _traduire(key, lang, vars) {
+  const dict = translations[lang];
+  let v = dict && dict[key];
+  if (!v) {
+    _noterRepli(lang, key);
+    v = (translations.fr && translations.fr[key]) || key;
+  }
+  return interpoler(v, vars);
+}
+
 // Hook de traduction
 export const useTranslation = (lang = 'fr') => {
-  const t = (key) => translations[lang]?.[key] || translations.fr[key] || key;
+  const t = (key, vars) => _traduire(key, lang, vars);
   return { t, translations: translations[lang] || translations.fr };
 };
 
 // V275d: helper autonome — permet `import { t } from '../utils/i18n'` puis
 // `t('cle', lang)` dans n'importe quel composant visiteur. Repli sur le français
 // si la clé manque dans la langue choisie, puis sur la clé brute en dernier recours.
-export const t = (key, lang = 'fr') => (translations[lang] && translations[lang][key]) || translations.fr[key] || key;
+// V670 : un 3e argument optionnel interpole `{variables}` : `t('places', lang, { n: 3 })`.
+export const t = (key, lang = 'fr', vars) => _traduire(key, lang, vars);
+
+/**
+ * Couverture de l'interface dans une langue : part des clés FRANÇAISES qui ont
+ * une vraie valeur dans cette langue. C'est le chiffre à donner — pas « la langue
+ * est disponible ». Une langue à 12 % n'est pas « traduite ».
+ */
+export function couverture(lang) {
+  const fr = Object.keys(translations.fr || {});
+  const d = translations[lang] || {};
+  const traduites = fr.filter((k) => typeof d[k] === 'string' && d[k].trim() && (lang === 'fr' || d[k] !== translations.fr[k]));
+  return { langue: lang, total: fr.length, traduites: traduites.length, pourcent: fr.length ? Math.round((traduites.length / fr.length) * 1000) / 10 : 0 };
+}
 
 export default translations;

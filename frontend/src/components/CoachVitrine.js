@@ -14,7 +14,8 @@ import { copyToClipboard } from "../utils/clipboard";
 import VitrineCheckout from "./VitrineCheckout"; // v15.0
 import AudioPlayer from "./AudioPlayer"; // v17.4
 import SvgIcon from "./SvgIcon";
-import { surErreurImage, IMAGE_SECOURS_LOCAL } from "../utils/imageSecours"; // IMG-1
+import { surErreurImage, IMAGE_SECOURS_LOCAL } from "../utils/imageSecours";
+import { useLanguage } from '../contexts/LanguageContext'; // V670 // IMG-1
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -33,6 +34,7 @@ function isVideoUrl(url) {
 
 // === V159: COUNTDOWN TIMER pour vitrine ===
 const VitrineCountdown = ({ offer }) => {
+  const { t } = useLanguage();
   const calcRemaining = () => {
     if (!offer.countdown_enabled || !offer.countdown_date) return 0;
     const endStr = offer.countdown_date + 'T' + (offer.countdown_time || '23:59') + ':00';
@@ -60,7 +62,7 @@ const VitrineCountdown = ({ offer }) => {
   if (remaining <= 0) {
     return (
       <div style={{ marginTop: '8px', padding: '6px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '11px', color: '#f87171', textAlign: 'center', fontWeight: 600 }}>
-        Offre expirée
+        {t('v_vit_offre_expiree')}
       </div>
     );
   }
@@ -172,6 +174,7 @@ const ClockIcon = () => (
 );
 
 const CoachVitrine = ({ username, onClose, onBack }) => {
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [coach, setCoach] = useState(null);
@@ -259,7 +262,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
       setSelectedBookings(prev => prev.filter((_, i) => i !== exists));
     } else if (selectedBookings.length >= 3) {
       // Max 3 séances
-      alert('Maximum 3 séances à la fois');
+      alert(t('v_vit_maximum_3_seances_a_la_fois'));
     } else {
       // Ajout
       setSelectedBookings(prev => [...prev, { course, date }]);
@@ -382,7 +385,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
   useEffect(() => {
     const fetchVitrine = async () => {
-      if (!username) { setError('Aucun coach spécifié'); setLoading(false); return; }
+      if (!username) { setError(t('v_vit_aucun_coach_specifie')); setLoading(false); return; }
       try {
         const res = await axios.get(`${API}/coach/vitrine/${encodeURIComponent(username)}`);
         setCoach(res.data.coach);
@@ -675,7 +678,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         <button onClick={onBack || onClose}
           className="px-6 py-3 rounded-xl text-white font-medium"
           style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)' }}>
-          <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> Retour</span>
+          <span className="inline-flex items-center gap-1.5"><SvgIcon name="arrowLeft" size={14} /> {t('v_vit_retour')}</span>
         </button>
       </div>
     );
@@ -775,15 +778,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.9)' }} onClick={() => setShowQR(false)}>
           <div className="bg-white rounded-2xl p-8 max-w-sm w-full text-center" onClick={e => e.stopPropagation()}>
-            <h3 className="text-gray-900 font-bold text-xl mb-4">Partagez cette vitrine</h3>
+            <h3 className="text-gray-900 font-bold text-xl mb-4">{t('v_vit_partagez_cette_vitrine')}</h3>
             <div className="bg-white p-4 rounded-xl inline-block mb-4">
               <QRCodeSVG value={vitrineUrl} size={200} bgColor="#ffffff" fgColor="#1a0a1f" level="M" />
             </div>
             <p className="text-gray-600 text-sm mb-4 break-all">{vitrineUrl}</p>
-            <button onClick={() => { navigator.clipboard.writeText(vitrineUrl); alert('Lien copié!'); }}
+            <button onClick={() => { navigator.clipboard.writeText(vitrineUrl); alert(t('v_vit_lien_copie')); }}
               className="w-full py-3 rounded-xl text-white font-medium"
               style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)' }}>
-              Copier le lien
+              {t('v_vit_copier_le_lien')}
             </button>
           </div>
         </div>
@@ -951,7 +954,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <path d="M28 16L0 32V0L28 16Z" fill="white"/>
                         </svg>
                       </div>
-                      <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem', fontWeight: 500 }}>Chargement vidéo...</span>
+                      <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.85rem', fontWeight: 500 }}>{t('v_vit_chargement_video')}</span>
                     </div>
                   </div>
                   <style>{`@keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: 0.85; } }`}</style>
@@ -1078,7 +1081,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
               </svg>
             </div>
-            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>Aperçu terminé</h3>
+            <h3 style={{ color: '#fff', fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>{t('v_vit_apercu_termine')}</h3>
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '14px', marginBottom: '20px', textAlign: 'center', maxWidth: '280px' }}>
               {currentHeroVideo?.description || 'Achetez la version complète pour continuer'}
             </p>
@@ -1110,7 +1113,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 fontSize: '13px', cursor: 'pointer'
               }}
             >
-              Revoir l'aperçu
+              {t('v_vit_revoir_l_apercu')}
             </button>
           </div>
         )}
@@ -1216,7 +1219,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h2M4 12h2m14 0h2M6 20h2m-2-8h2" />
               </svg>
             </div>
-            <span className="text-white text-[10px]">QR</span>
+            <span className="text-white text-[10px]">{t('v_vit_qr')}</span>
           </button>
 
           {/* v106.4: Partager — contour blanc */}
@@ -1227,7 +1230,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
               </svg>
             </div>
-            <span className="text-white text-[10px]">Partager</span>
+            <span className="text-white text-[10px]">{t('v_vit_partager')}</span>
           </button>
 
           {/* v106.4: Réserver (scroll) — contour blanc */}
@@ -1244,7 +1247,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
             </div>
-            <span className="text-white text-[10px]">Réserver</span>
+            <span className="text-white text-[10px]">{t('v_vit_reserver')}</span>
           </button>
         </div>
 
@@ -1308,8 +1311,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 }}>
                 <span style={{ fontSize: '22px' }}><SvgIcon name="warning" size={22} /></span>
                 <div>
-                  <p className="text-white font-semibold text-sm">Choisissez d'abord l'horaire de votre première séance</p>
-                  <p className="text-white/70 text-xs mt-1">Pour réserver votre offre, sélectionnez une date ci-dessous.</p>
+                  <p className="text-white font-semibold text-sm">{t('v_vit_choisissez_d_abord_l_horaire_de_votr')}</p>
+                  <p className="text-white/70 text-xs mt-1">{t('v_vit_pour_reserver_votre_offre_selectionn')}</p>
                 </div>
               </div>
             )}
@@ -1393,10 +1396,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {selectedBooking && uniqueOffers.length > 0 && (
           <div className="mb-8">
             <h2 className="font-semibold mb-2 text-white" style={{ fontSize: '18px' }}>
-              {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage' : 'Choisissez votre offre'}
+              {offers === DEFAULT_STARTER_OFFERS ? t('v_vit_offres_de_demarrage') : t('v_vit_choisissez_votre_offre')}
             </h2>
             <p className="text-sm mb-4" style={{ color: 'var(--primary-color, #D91CD2)' }}>
-              Sélectionnez une offre pour continuer
+              {t('v_vit_selectionnez_une_offre_pour_continue')}
             </p>
 
             <div ref={sliderRef}
@@ -1471,7 +1474,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                         {offer.price === 0 && (
                           <div className="absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold text-white"
                             style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}>
-                            GRATUIT
+                            {t('v_vit_gratuit')}
                           </div>
                         )}
                         {isOfferSelected && (
@@ -1491,10 +1494,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                               {offer.description}
                             </p>
                           )}
-                          <span className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
+                          <span className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{t('v_vit_lire_plus')}</span>
                         </div>
                         <span className="text-xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
-                          {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
+                          {offer.price === 0 ? t('v_vit_offert') : `CHF ${offer.price}.-`}
                         </span>
                         {offer.duration_value && offer.duration_unit && (
                           <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '20px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', fontSize: '11px', color: '#a78bfa' }}>
@@ -1520,13 +1523,13 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-white" style={{ fontSize: '18px' }}>
-                {offers === DEFAULT_STARTER_OFFERS ? 'Offres de démarrage' : 'Offres disponibles'}
+                {offers === DEFAULT_STARTER_OFFERS ? t('v_vit_offres_de_demarrage') : t('v_vit_offres_disponibles')}
               </h2>
               {uniqueOffers.length > 1 && (
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 text-sm"><SvgIcon name="search" size={14} /></span>
                   <input type="text" value={offerSearch} onChange={(e) => setOfferSearch(e.target.value)}
-                    placeholder="Rechercher..."
+                    placeholder={t('v_vit_rechercher')}
                     className="pl-9 pr-4 py-2 rounded-full bg-black/40 text-white text-sm border border-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500 w-40" />
                 </div>
               )}
@@ -1603,7 +1606,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                             {offer.price === 0 && (
                               <div className="absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold text-white"
                                 style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)' }}>
-                                GRATUIT
+                                {t('v_vit_gratuit')}
                               </div>
                             )}
                           </div>
@@ -1615,10 +1618,10 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                                   {offer.description}
                                 </p>
                               )}
-                              <span className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>Lire plus</span>
+                              <span className="text-xs cursor-pointer font-semibold" style={{ color: 'var(--primary-color, #D91CD2)' }}>{t('v_vit_lire_plus')}</span>
                             </div>
                             <span className="text-xl font-bold" style={{ color: 'var(--primary-color, #D91CD2)' }}>
-                              {offer.price === 0 ? 'Offert' : `CHF ${offer.price}.-`}
+                              {offer.price === 0 ? t('v_vit_offert') : `CHF ${offer.price}.-`}
                             </span>
                             {offer.duration_value && offer.duration_unit && (
                               <div style={{ marginTop: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '20px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.4)', fontSize: '11px', color: '#a78bfa' }}>
@@ -1648,7 +1651,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
         {audioTracks.length > 0 && (
           <div className="mb-8 vitrine-fade-in" style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '24px' }}>
             <h2 className="font-semibold text-white text-center mb-4" style={{ fontSize: '16px' }}>
-              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="music" size={16} /> Contenus Audio</span>
+              <span className="inline-flex items-center justify-center gap-1.5"><SvgIcon name="music" size={16} /> {t('v_vit_contenus_audio')}</span>
             </h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {audioTracks.map(track => (
@@ -1689,8 +1692,8 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
             {bookingSuccess ? (
               <div className="text-center py-8">
                 <div className="text-5xl mb-4"><SvgIcon name="check" size={48} /></div>
-                <h4 className="text-xl font-bold text-white mb-2">Réservation confirmée !</h4>
-                <p className="text-white/60 mb-4">Vous recevrez une confirmation par email.</p>
+                <h4 className="text-xl font-bold text-white mb-2">{t('v_vit_reservation_confirmee')}</h4>
+                <p className="text-white/60 mb-4">{t('v_vit_vous_recevrez_une_confirmation_par_e')}</p>
                 <button onClick={() => {
                   setBookingSuccess(false);
                   setSelectedBookings([]);
@@ -1698,7 +1701,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 }}
                   className="px-6 py-3 rounded-xl text-white font-medium transition-all hover:scale-105"
                   style={{ background: 'linear-gradient(135deg, #8b5cf6 0%, var(--primary-color, #D91CD2) 100%)' }}>
-                  Nouvelle réservation
+                  {t('v_vit_nouvelle_reservation')}
                 </button>
               </div>
             ) : (
@@ -1721,14 +1724,14 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           </p>
                         </div>
                         <button type="button" onClick={() => setSelectedBookings(prev => prev.filter((_, i) => i !== idx))}
-                          aria-label="Retirer cette séance"
+                          aria-label={t('v_vit_retirer_cette_seance')}
                           className="text-white/40 hover:text-red-400 text-xs ml-2 transition-colors"><SvgIcon name="close" size={14} /></button>
                       </div>
                     </div>
                   ))}
                   {selectedOffer && (
                     <p className="text-white/60 text-sm mt-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                      Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: 'var(--primary-color, #D91CD2)' }}>{selectedOffer.price === 0 ? 'Offert' : `CHF ${selectedOffer.price}.-`}</span>
+                      Offre : <span className="text-white">{selectedOffer.name}</span> — <span style={{ color: 'var(--primary-color, #D91CD2)' }}>{selectedOffer.price === 0 ? t('v_vit_offert') : `CHF ${selectedOffer.price}.-`}</span>
                     </p>
                   )}
                 </div>
@@ -1736,15 +1739,15 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                 {/* Formulaire */}
                 <form onSubmit={handleBookingSubmit} className="space-y-4">
                   <div>
-                    <label className="text-white/60 text-xs mb-1 block">Nom complet</label>
+                    <label className="text-white/60 text-xs mb-1 block">{t('v_vit_nom_complet')}</label>
                     <input type="text" required value={bookingForm.name}
                       onChange={e => setBookingForm(prev => ({ ...prev, name: e.target.value }))}
                       className="w-full px-4 py-3 rounded-lg text-white"
                       style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}
-                      placeholder="Votre nom" />
+                      placeholder={t('v_vit_votre_nom')} />
                   </div>
                   <div>
-                    <label className="text-white/60 text-xs mb-1 block">Email</label>
+                    <label className="text-white/60 text-xs mb-1 block">{t('v_vit_email')}</label>
                     <input type="email" required value={bookingForm.email}
                       onChange={e => setBookingForm(prev => ({ ...prev, email: e.target.value }))}
                       className="w-full px-4 py-3 rounded-lg text-white"
@@ -1752,7 +1755,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       placeholder="email@example.com" />
                   </div>
                   <div>
-                    <label className="text-white/60 text-xs mb-1 block">WhatsApp</label>
+                    <label className="text-white/60 text-xs mb-1 block">{t('v_vit_whatsapp')}</label>
                     <input type="tel" required value={bookingForm.whatsapp}
                       onChange={e => setBookingForm(prev => ({ ...prev, whatsapp: e.target.value }))}
                       className="w-full px-4 py-3 rounded-lg text-white"
@@ -1762,7 +1765,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
 
                   {/* Code Promo — v17: layout mobile-safe */}
                   <div>
-                    <label className="text-white/60 text-xs mb-1 block">Code Promo (optionnel)</label>
+                    <label className="text-white/60 text-xs mb-1 block">{t('v_vit_code_promo_optionnel')}</label>
                     <div className="flex gap-2" style={{ flexWrap: 'nowrap', maxWidth: '100%' }}>
                       <input type="text" value={bookingForm.promoCode}
                         onChange={e => setBookingForm(prev => ({ ...prev, promoCode: e.target.value.toUpperCase() }))}
@@ -1773,11 +1776,11 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           background: appliedDiscount ? 'rgba(34, 197, 94, 0.15)' : 'rgba(255,255,255,0.08)',
                           border: appliedDiscount ? '1px solid rgba(34, 197, 94, 0.5)' : '1px solid rgba(255,255,255,0.15)'
                         }}
-                        placeholder="CODE123" />
+                        placeholder={t('v_vit_code123')} />
                       <button type="button" onClick={() => validatePromoCode(bookingForm.promoCode)}
                         className="rounded-lg font-medium transition-all hover:scale-105 text-sm"
                         style={{ flexShrink: 0, padding: '12px 14px', background: 'rgba(var(--primary-rgb, 217, 28, 210), 0.3)', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.5)', color: 'var(--primary-color, #D91CD2)', whiteSpace: 'nowrap' }}>
-                        Valider
+                        {t('v_vit_valider')}
                       </button>
                     </div>
                     {promoMessage.text && (
@@ -1801,7 +1804,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                       </div>
                     )}
                     <div className="flex justify-between text-white font-bold mt-2 pt-2 border-t border-white/10">
-                      <span>Total</span>
+                      <span>{t('v_vit_total')}</span>
                       <span>{calculateFinalPrice().toFixed(2)} CHF</span>
                     </div>
                   </div>
@@ -1838,9 +1841,9 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        Réservation en cours...
+                        {t('v_vit_reservation_en_cours')}
                       </span>
-                    ) : 'Confirmer la réservation'}
+                    ) : t('v_vit_confirmer_la_reservation')}
                   </button>
                 </form>
               </>
@@ -1952,7 +1955,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: '4px'
-                            }}><SvgIcon name="check" size={10} /> Vérifié</span>
+                            }}><SvgIcon name="check" size={10} /> {t('v_vit_verifie')}</span>
                           )}
                           <div style={{ display: 'flex', gap: '1px' }}>
                             {[1,2,3,4,5].map(i => (
@@ -2052,7 +2055,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
               }}
             >
               <h2 className="font-semibold text-white" style={{ fontSize: '16px', margin: 0 }}>
-                Questions fréquentes
+                {t('v_vit_questions_frequentes')}
               </h2>
               <span style={{
                 color: brandAccent, fontSize: '18px', fontWeight: '300',
@@ -2107,20 +2110,20 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={() => setShowLegalModal(false)}>
             <div style={{ background: '#1a1a2e', borderRadius: '12px', padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflowY: 'auto', border: '1px solid rgba(var(--primary-rgb, 217, 28, 210), 0.3)' }} onClick={e => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold' }}>Mentions légales</h3>
+                <h3 style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold' }}>{t('v_vit_mentions_legales')}</h3>
                 <button onClick={() => setShowLegalModal(false)} style={{ color: '#fff', fontSize: '24px', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
               </div>
               <div style={{ color: '#fff', fontSize: '13px', lineHeight: '1.8' }}>
-                <p style={{ fontWeight: 'bold', marginBottom: '12px' }}>Impressum</p>
+                <p style={{ fontWeight: 'bold', marginBottom: '12px' }}>{t('v_vit_impressum')}</p>
                 <p><strong>Dénomination :</strong> Association Afroboosteur</p>
                 <p><strong>Adresse :</strong> Rue Maillefer 39, 2000 Neuchâtel, Suisse</p>
                 <p><strong>Contact :</strong> <a href="mailto:contact@afroboosteur.com" style={{ color: 'var(--primary-color, #D91CD2)' }}>contact@afroboosteur.com</a></p>
                 <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                  <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>Moyens de paiement</p>
-                  <p>Les paiements sont traités de manière sécurisée via Stripe. Devise : CHF. Livraison : Suisse.</p>
+                  <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>{t('v_vit_moyens_de_paiement')}</p>
+                  <p>{t('v_vit_les_paiements_sont_traites_de_manier')}</p>
                 </div>
               </div>
-              <button onClick={() => setShowLegalModal(false)} style={{ marginTop: '16px', width: '100%', padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Fermer</button>
+              <button onClick={() => setShowLegalModal(false)} style={{ marginTop: '16px', width: '100%', padding: '10px', borderRadius: '8px', background: 'linear-gradient(135deg, var(--primary-color, #D91CD2), #FF2DAA)', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>{t('v_vit_fermer')}</button>
             </div>
           </div>
         )}
@@ -2130,7 +2133,7 @@ const CoachVitrine = ({ username, onClose, onBack }) => {
           <p className="text-white/30 text-xs">
             Propulsé par <span style={{ color: 'var(--primary-color, #D91CD2)' }}>Afroboost</span> - La plateforme des coachs
           </p>
-          <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.25)', fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', marginTop: '4px' }}>Mentions légales</button>
+          <button onClick={() => setShowLegalModal(true)} style={{ color: 'rgba(255,255,255,0.25)', fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', marginTop: '4px' }}>{t('v_vit_mentions_legales')}</button>
         </div>
       </div>
     </div>

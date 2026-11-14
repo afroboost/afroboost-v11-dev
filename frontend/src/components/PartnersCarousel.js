@@ -13,6 +13,8 @@ import { QRCodeSVG } from "qrcode.react";
 import SvgIcon from "./SvgIcon";
 import { t } from "../utils/i18n"; // V275d: traductions interface visiteur
 import { surErreurImage } from "../utils/imageSecours"; // IMG-1 : anti-boucle des images
+import LanguageMenu from './LanguageMenu';
+import TexteDynamique from './TexteDynamique'; // V670 : la bio du coach, traduite à l'affichage
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const API = `${BACKEND_URL}/api`;
@@ -1012,7 +1014,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                     </h2>
                     {/* Bio ou accroche */}
                     <p className="text-white/70 text-sm max-w-xs">
-                      {bio || t('discoverCta', lang)}
+                      {bio ? <TexteDynamique texte={bio} /> : t('discoverCta', lang)}
                     </p>
                     {/* Bouton CTA */}
                     <button
@@ -1136,7 +1138,7 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
                 overflow: 'hidden'
               }}
             >
-              {bio}
+              <TexteDynamique texte={bio} />
             </p>
           )}
           {/* Lieu du coach */}
@@ -1176,19 +1178,8 @@ const PartnerVideoCard = ({ partner, onToggleMute, isMuted, onLike, isLiked, onN
   );
 };
 
-// Icône Globe pour sélecteur de langue
-const GlobeIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" />
-    <line x1="2" y1="12" x2="22" y2="12" />
-    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-  </svg>
-);
-
 // === COMPOSANT PRINCIPAL v9.7.2 - Vitrine Unique + Son global unique ===
 const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, isSuperAdmin = false, lang = 'fr', onLangChange, currentVitrineEmail = null, onBuyVideo, socialCommentsCount = 0, onShowComments }) => {
-  // v9.6.8: État pour sélecteur de langue
-  const [showLangMenu, setShowLangMenu] = useState(false);
   const [globalMuted, setGlobalMuted] = useState(true); // Son global muté par défaut
   const [showQRModal, setShowQRModal] = useState(false); // v160.6: Modal QR code vitrine coach
   const [partners, setPartners] = useState([]);
@@ -1540,57 +1531,11 @@ const PartnersCarousel = ({ onPartnerClick, onSearch, maintenanceMode = false, i
           
           {/* v9.6.8: Container icônes avec gap de 15px (gap-4) - LANGUE + LOUPE + SON */}
           <div className="flex items-center gap-4">
-            {/* v9.6.8: Sélecteur de langue */}
-            <div className="relative">
-              <button
-                onClick={() => setShowLangMenu(!showLangMenu)}
-                className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:scale-110"
-                style={{ 
-                  background: 'rgba(255,255,255,0.1)',
-                  color: 'white'
-                }}
-                data-testid="lang-selector-btn"
-              >
-                <GlobeIcon />
-              </button>
-              {showLangMenu && (
-                <div
-                  className="absolute top-full right-0 mt-1 py-1 rounded-lg overflow-hidden"
-                  style={{
-                    background: 'rgba(0,0,0,0.95)',
-                    border: '1px solid rgba(139, 92, 246, 0.4)',
-                    minWidth: '60px',
-                    maxHeight: '300px',   // V275c: assez pour 8 langues
-                    overflowY: 'auto',    // V275c: scroll si besoin
-                    zIndex: 50
-                  }}
-                >
-                  {/* V275c: 3 langues d'origine + 5 langues africaines. Le code
-                       diffère du label pour le Bassa (label BA, code 'bas'). */}
-                  {[
-                    { code: 'fr', label: 'FR' }, { code: 'en', label: 'EN' }, { code: 'de', label: 'DE' },
-                    { code: 'ln', label: 'LN' }, { code: 'wo', label: 'WO' }, { code: 'sw', label: 'SW' },
-                    { code: 'bm', label: 'BM' }, { code: 'bas', label: 'BA' }, { code: 'ht', label: 'CR' }
-                  ].map(l => (
-                    <button
-                      key={l.code}
-                      onClick={() => {
-                        if (onLangChange) onLangChange(l.code);
-                        setShowLangMenu(false);
-                      }}
-                      className="w-full px-3 py-1.5 text-white text-xs text-center hover:bg-purple-500/30"
-                      style={{
-                        background: lang === l.code ? 'rgba(139, 92, 246, 0.3)' : 'transparent'
-                      }}
-                      data-testid={`lang-${l.code}`}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            
+            {/* V670 : sélecteur de langue PARTAGÉ (components/LanguageMenu.js). La liste vient de
+                config/translateLangs.js : noms complets, langue active marquée, statut
+                « partiel » / « bêta » dit honnêtement, clavier et tactile. */}
+            <LanguageMenu lang={lang} onChange={onLangChange} />
+
             {/* Bouton Recherche/Fermer */}
             <button
               onClick={() => {

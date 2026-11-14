@@ -17,6 +17,7 @@
  */
 import React from 'react';
 import SvgIcon from '../SvgIcon';
+import { useLanguage } from '../../contexts/LanguageContext'; // V670
 
 const CADRE = {
   border: '1px solid rgba(255,255,255,0.12)',
@@ -61,7 +62,9 @@ const SOUS = { color: 'rgba(255,255,255,0.6)', fontSize: 13.5, lineHeight: 1.45,
  * non déclenché de la page, et il veut dire quelque chose — il y a du son en ce
  * moment. Coupé si le système demande moins d'animations.
  */
-export const CarteLive = ({ enDirect, onOuvrir, occupe, titreHors, titreEnCours }) => (
+export const CarteLive = ({ enDirect, onOuvrir, occupe, titreHors, titreEnCours }) => {
+  const { t } = useLanguage();
+  return (
   <div
     style={enDirect
       ? { ...CADRE, borderColor: 'rgba(255,59,48,0.5)', background: 'linear-gradient(140deg, rgba(255,59,48,0.16), rgba(var(--primary-rgb, 217, 28, 210), 0.10) 58%, rgba(255,255,255,0.02))' }
@@ -92,7 +95,7 @@ export const CarteLive = ({ enDirect, onOuvrir, occupe, titreHors, titreEnCours 
         )}
         <div style={{ minWidth: 0 }}>
           {enDirect && (
-            <div style={{ fontSize: 11, letterSpacing: '.07em', color: '#ff8a82', fontWeight: 700 }}>EN DIRECT</div>
+            <div style={{ fontSize: 11, letterSpacing: '.07em', color: '#ff8a82', fontWeight: 700 }}>{t('v_col_en_direct')}</div>
           )}
           <h3 style={TITRE}>Afroboost Live</h3>
           {!enDirect && <p style={SOUS}>{titreHors}</p>}
@@ -105,11 +108,12 @@ export const CarteLive = ({ enDirect, onOuvrir, occupe, titreHors, titreEnCours 
         data-testid="accueil-live-ouvrir"
         style={enDirect ? BOUTON_PLEIN : BOUTON}
       >
-        {occupe ? '…' : (enDirect ? titreEnCours : 'Découvrir le Live')}
+        {occupe ? '…' : (enDirect ? titreEnCours : t('v_col_decouvrir_le_live'))}
       </button>
     </div>
   </div>
 );
+};
 
 /**
  * L'OFFRE DU MOMENT — UNE carte, pas trois.
@@ -124,6 +128,7 @@ export const CarteLive = ({ enDirect, onOuvrir, occupe, titreHors, titreEnCours 
  * rebours (`Countdown` est le composant existant).
  */
 export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, Countdown, onChoisir, onToutesLesOffres, nbOffres }) => {
+  const { t } = useLanguage();
   if (!offre) return null;
   return (
     <div style={CADRE} data-testid="accueil-offre-du-moment">
@@ -162,7 +167,7 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
           data-testid="accueil-offre-cta"
           style={{ ...BOUTON_PLEIN, minHeight: 40, marginTop: 10 }}
         >
-          Voir l’offre
+          {t('v_col_voir_l_offre')}
         </button>
         <button
           type="button"
@@ -190,7 +195,9 @@ export const CarteOffreDuMoment = ({ offre, badge, prix, unite, detail, media, C
  * clic milieu et la navigation sans JS, `entrerDansSpordate` au clic gauche,
  * préchargement au survol). Aucun accès n'est retiré, il change de place.
  */
-export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
+export const CarteSpordateur = ({ href, onClick, onPrecharger }) => {
+  const { t } = useLanguage();
+  return (
   <div style={{ ...CADRE, background: 'rgba(255,255,255,0.02)' }} data-testid="accueil-carte-spordateur">
     <div className="af-carte-spordateur" style={{ padding: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
       <span
@@ -212,7 +219,7 @@ export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
       </span>
       <div style={{ minWidth: 0 }}>
         <h3 style={TITRE}>Spordateur</h3>
-        <p style={SOUS}>Trouver un partenaire de sport.</p>
+        <p style={SOUS}>{t('v_col_trouver_un_partenaire_de_sport')}</p>
       </div>
       <a
         href={href}
@@ -223,11 +230,12 @@ export const CarteSpordateur = ({ href, onClick, onPrecharger }) => (
         data-testid="accueil-spordateur-ouvrir"
         style={{ ...BOUTON, width: 'auto', marginTop: 0, marginLeft: 'auto', minHeight: 40, fontSize: 13, textDecoration: 'none', flex: '0 0 auto' }}
       >
-        Découvrir
+        {t('v_decouvrir')}
       </a>
     </div>
   </div>
 );
+};
 
 /* V645.2 — CARTE HORAIRES DYNAMIQUES.
    SOURCE DE VÉRITÉ : le planning réel (`courses`), filtré sur les SEULS cours
@@ -278,6 +286,7 @@ function extraireHoraires(courses) {
 }
 
 export const CarteHoraires = ({ courses, lieu, onClick }) => {
+  const { t } = useLanguage();
   var dynamique = extraireHoraires(courses);
   var aHoraires = !!dynamique.texte;
   return (
@@ -293,14 +302,14 @@ export const CarteHoraires = ({ courses, lieu, onClick }) => {
             </svg>
           </span>
           <div style={{ minWidth: 0 }}>
-            <h3 style={TITRE}>{aHoraires ? dynamique.texte : 'Séances régulières'}</h3>
+            <h3 style={TITRE}>{aHoraires ? dynamique.texte : t('v_col_seances_regulieres')}</h3>
             <p style={SOUS}>{aHoraires
               ? (lieu || dynamique.lieu)
-              : 'Consulte les prochaines séances au planning.'}</p>
+              : t('v_col_consulte_les_prochaines_seances_au_p')}</p>
           </div>
         </div>
         <button type="button" onClick={onClick} style={BOUTON} data-testid="accueil-horaires-voir-seances">
-          {aHoraires ? 'Voir les séances' : 'Voir le planning'}
+          {aHoraires ? t('v_col_voir_les_seances') : t('v_col_voir_le_planning')}
         </button>
       </div>
     </div>

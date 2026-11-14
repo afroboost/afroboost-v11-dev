@@ -32,6 +32,7 @@ import { normaliserAgenda, regrouperSeancesPhysiques } from '../SessionsModal';
 import {
   FAMILLE, familleOffre, prixAffiche, badgeOffre, regrouperOffres, promesseCourte,
 } from '../../utils/offresAimants';
+import { useLanguage } from '../../contexts/LanguageContext'; // V670
 
 const COULEUR = 'var(--primary-color, #D91CD2)';
 const RGB = 'var(--primary-rgb, 217, 28, 210)';
@@ -93,6 +94,7 @@ function LigneInfo({ children }) {
 }
 
 export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onToutesLesOffres, onProgramme }) {
+  const { t } = useLanguage();
   const [seances, setSeances] = useState(null); // null = en cours, [] = aucune
 
   useEffect(() => {
@@ -124,12 +126,12 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
 
   return (
     <div data-testid="decouvrir-afroboost" style={{ marginBottom: 12 }}>
-      <p style={SURTITRE}>Découvrir Afroboost</p>
+      <p style={SURTITRE}>{t('v_dec_decouvrir_afroboost')}</p>
 
       {/* A — PROCHAIN COURS */}
       <div style={CARTE} data-testid="decouvrir-prochain-cours">
         {seances === null ? (
-          <p style={{ margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: 12.5 }}>Recherche de la prochaine séance…</p>
+          <p style={{ margin: 0, color: 'rgba(255,255,255,0.5)', fontSize: 12.5 }}>{t('v_dec_recherche_de_la_prochaine_seance')}</p>
         ) : prochaine ? (
           <>
             <p style={{ margin: 0, color: '#fff', fontSize: 14.5, fontWeight: 700, lineHeight: 1.3 }}>
@@ -142,7 +144,7 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
             </LigneInfo>
             {prochaine.lieu ? <LigneInfo>{prochaine.lieu}</LigneInfo> : null}
             {prochaine.places != null ? (
-              <LigneInfo>{prochaine.places > 0 ? `${prochaine.places} places restantes` : 'Complet'}</LigneInfo>
+              <LigneInfo>{prochaine.places > 0 ? `${prochaine.places} places restantes` : t('v_dec_complet')}</LigneInfo>
             ) : null}
             <button
               type="button"
@@ -150,7 +152,7 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
               data-testid="decouvrir-reserver"
               onClick={() => onSeance && onSeance(prochaine)}
             >
-              Réserver ma place
+              {t('v_dec_reserver_ma_place')}
             </button>
             {suivante ? (
               <button
@@ -169,9 +171,9 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
           </>
         ) : (
           <>
-            <p style={{ margin: 0, color: '#fff', fontSize: 14, fontWeight: 600 }}>Aucune séance annoncée pour l'instant.</p>
+            <p style={{ margin: 0, color: '#fff', fontSize: 14, fontWeight: 600 }}>{t('v_dec_aucune_seance_annoncee_pour_l_instan')}</p>
             <button type="button" style={BOUTON_LEGER} data-testid="decouvrir-programme" onClick={() => onProgramme && onProgramme()}>
-              Voir le programme
+              {t('v_dec_voir_le_programme')}
             </button>
           </>
         )}
@@ -192,7 +194,7 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
               }}
             >
               <span style={{ display: 'block', fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: COULEUR }}>
-                Premier cours offert
+                {t('v_dec_premier_cours_offert')}
               </span>
               <span style={{ display: 'block', marginTop: 2, fontSize: 13.5, fontWeight: 700, color: '#fff' }}>{essai.name}</span>
             </button>
@@ -230,7 +232,7 @@ export default function DecouvrirAfroboost({ API, offres, onSeance, onOffre, onT
           ) : null}
 
           <button type="button" style={BOUTON_LEGER} data-testid="decouvrir-toutes-offres" onClick={() => onToutesLesOffres && onToutesLesOffres()}>
-            Voir toutes les offres
+            {t('v_dec_voir_toutes_les_offres')}
           </button>
         </div>
       )}
