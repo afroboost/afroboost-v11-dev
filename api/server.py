@@ -5921,9 +5921,19 @@ def _v670_cle_cache(code: str, text: str) -> str:
 
 
 def _v670_ip(request) -> str:
-    return (request.headers.get("CF-Connecting-IP")
-            or (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
-            or (request.client.host if getattr(request, "client", None) else "")).strip()
+    """IP servant de clé aux limites. Un en-tête envoyé par le client n'est PAS fiable :
+    `CF-Connecting-IP` n'est lu que si TRANSLATE_TRUST_CF=1 (déploiement derrière Cloudflare) ;
+    sinon on prend le DERNIER saut de X-Forwarded-For (celui qu'AJOUTE notre proxy, que le client
+    ne contrôle pas), puis l'adresse du socket. Le budget global journalier borne de toute façon
+    le pire cas."""
+    if os.environ.get("TRANSLATE_TRUST_CF") == "1":
+        _cf = (request.headers.get("CF-Connecting-IP") or "").strip()
+        if _cf:
+            return _cf
+    _xff = [h.strip() for h in (request.headers.get("X-Forwarded-For", "") or "").split(",") if h.strip()]
+    if _xff:
+        return _xff[-1]
+    return (request.client.host if getattr(request, "client", None) else "").strip()
 
 
 def _v670_debit_ia_ok(ip: str):
@@ -5995,8 +6005,10 @@ async def translate_text(request: Request):
             detail="Langue cible non supportée. Codes acceptés : " + ", ".join(sorted(_V292_LANGS.keys())),
         )
     # Un target_name explicite du frontend (nom complet) prime pour guider l'IA.
+    # V670 : si la réponse sera MÉMORISÉE (cache public), le nom de langue vient UNIQUEMENT du
+    # serveur — un client ne doit pas pouvoir orienter le prompt d'une entrée partagée.
     _explicit_name = (body.get("target_name") or "").strip()
-    if _explicit_name:
+    if _explicit_name and body.get("cache") is not True:
         target_name = _explicit_name
     target = code
     if len(text) > 2000:
