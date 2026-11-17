@@ -360,7 +360,11 @@ async def main():
 
     print("\n== 6. Page /a-propos ==")
     nsa = {"_m1_echapper": None}
-    monter("_m1_echapper", "_m1_jsonld", *CONSTANTES_GEO, "_M1_SITE", "_M1_TUNNEL", "_seo_geo_contact_html",
+    # V671 : `_seo_geo_lien_essai` part desormais de `_V671_CHEMIN` (« /essai »),
+    # plus du tunnel de discussion. Les DEUX constantes sont montees —
+    # `_M1_TUNNEL` reste le repli de la page d'essai, il n'a pas disparu.
+    monter("_m1_echapper", "_m1_jsonld", *CONSTANTES_GEO, "_M1_SITE", "_M1_TUNNEL",
+           "_V671_CHEMIN", "_seo_geo_contact_html",
            "_seo_geo_lien_essai", "SEO_GEO_APROPOS_CHEMIN", "SEO_GEO_APROPOS_TITRE", "SEO_GEO_APROPOS_DESC",
            "SEO_GEO_APROPOS_PHOTO_ALT", "SEO_GEO_APROPOS_PHOTOS", "SEO_GEO_APROPOS_TEXTE",
            "_seo_geo_apropos_photo_html", ns=nsa)
@@ -402,8 +406,13 @@ async def main():
         "et le bien-être à Neuchâtel à travers des activités sportives et artistiques innovantes.",
     ):
         v("texte exact : « %s… »" % re.sub("<[^>]+>", "", morceau)[:48], morceau in ap)
-    v("bouton « Réserver mon cours d'essai gratuit » -> même tunnel que la page d'essai",
-      '<a class="cta" href="/?link=b83914b4-c5a">Réserver mon cours d\'essai gratuit</a>' in ap)
+    # V671 — CE BOUTON MENAIT AU TUNNEL DE DISCUSSION, IL MENE AU FORMULAIRE.
+    # La page d'essai allait deja droit au formulaire (V622) ; celui-ci etait
+    # reste en arriere. `/essai` resout l'offre cote serveur, pour qu'aucun
+    # identifiant d'offre ne soit recopie dans une page.
+    v("bouton « Réserver mon cours d'essai gratuit » -> /essai (le formulaire)",
+      '<a class="cta" href="/essai">Réserver mon cours d\'essai gratuit</a>' in ap)
+    v("... et plus aucun renvoi vers le tunnel de discussion", "?link=" not in ap)
     v("bouton placé AVANT le bloc Contact", ap.index('class="cta"') < ap.index("<h2>Contact</h2>"))
     v("bloc Contact complet (texte + carte au clic) sur « À propos »", nsa["_seo_geo_contact_html"]() in ap)
     v("carte : AUCUNE ressource Google avant le clic", sans_google_avant_clic(ap))

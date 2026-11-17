@@ -34,7 +34,29 @@ import {
   texteHero,
 } from '../utils/heroLayout';
 
-export const HREF_ESSAI = '/?link=b83914b4-c5a';
+// V671 — LE CTA DU HERO MÈNE AU FORMULAIRE, PLUS À LA DISCUSSION.
+//
+// AVANT : `/?link=b83914b4-c5a`, le tunnel de captation. Quatre étapes (nom,
+// WhatsApp, e-mail, une question) rendues par l'assistant de discussion, APRÈS
+// un clic sur « Réserver mon 1er cours gratuit ». Le tunnel finissait bien par
+// renvoyer au formulaire (`ChatWidget`, action `booking`), mais le bouton ne
+// tenait pas sa promesse : il ouvrait une conversation.
+//
+// MAINTENANT : `/essai`, qui redirige (302) vers le parcours de réservation
+// EXISTANT — exactement celui où la page /cours-essai-gratuit-neuchatel envoie
+// déjà tout le monde depuis V622. L'assistant de discussion n'est PAS touché :
+// il garde sa bulle et son propre lien, ce lien-ci n'est simplement plus sur
+// le chemin de l'essai.
+//
+// POURQUOI UNE ADRESSE ET PAS L'IDENTIFIANT DE L'OFFRE. Écrire
+// `/?offre=c1e5f73c…&reserver=1` ici aurait figé dans le navigateur une
+// information qui vit dans le tableau de bord : le jour où Bassi change
+// d'offre d'essai, ce bouton pointerait vers une offre périmée, sans erreur
+// visible. `/essai` résout l'offre côté serveur, sur le lien d'essai lui-même.
+//
+// C'est un vrai `<a href>` vers un vrai 302 : le bouton marche même si le
+// JavaScript de la page échoue.
+export const HREF_ESSAI = '/essai';
 const SCRIM = 'linear-gradient(to bottom, rgba(0,0,0,0) 12%, rgba(0,0,0,0.5) 34%, rgba(0,0,0,0.5) 66%, rgba(0,0,0,0) 88%)';
 const clamp = (min, v, max) => Math.min(max, Math.max(min, v));
 
@@ -271,9 +293,15 @@ export default function HeroTexte({ concept, appareil: appareilForce, modeEditio
     // ⚠️ Jamais de `preventDefault` hors edition : la navigation reste native
     // et immediate, la mesure est un BONUS, jamais une condition. `funnelTracer`
     // porte le try/catch et le filtre de donnees personnelles.
-    // `variante: 'chat'` decrit la DESTINATION du CTA (le tunnel) : le jour ou
-    // il pointera sur l'offre, elle devra devenir 'direct'.
-    funnelTracer('trial_cta_click', { source: 'homepage_hero', variante: 'chat' }, { transport: 'sendBeacon' });
+    // V671 — `variante` decrit la DESTINATION du CTA. Elle etait 'chat' tant
+    // que le bouton menait au tunnel ; le commentaire d'origine annoncait deja
+    // ce changement (« le jour ou il pointera sur l'offre, elle devra devenir
+    // 'direct' »). Ce jour est arrive : `/essai` renvoie au formulaire.
+    //
+    // La valeur doit rester l'une des quatre que `funnelVariante` sait produire
+    // ('chat', 'direct', 'organique', 'inconnu') — sinon la comparaison des
+    // parcours comparerait deux libelles differents pour le meme chemin.
+    funnelTracer('trial_cta_click', { source: 'homepage_hero', variante: 'direct' }, { transport: 'sendBeacon' });
   };
 
   const titre = texteHero(c.heroTitle, HERO_TEXTES_DEFAUT.title);

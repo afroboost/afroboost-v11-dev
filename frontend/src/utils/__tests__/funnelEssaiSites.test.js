@@ -147,13 +147,36 @@ describe('chaque evenement part au bon moment', () => {
 
 // --------------------------------------------------------------------------
 describe('ETAPE 1 — ce qui ne doit PAS avoir bouge', () => {
-  test('le CTA du Hero pointe TOUJOURS sur le tunnel Chat', () => {
-    // Le changement de navigation est l'ETAPE 2, explicitement non autorisee.
-    // V554 : le lien vit dans HeroTexte (constante HREF_ESSAI, `href={HREF_ESSAI}`).
-    expect(HERO).toContain("const HREF_ESSAI = '/?link=b83914b4-c5a';");
+  test('V671 : le CTA du Hero mene a l adresse d essai, par un vrai <a href>', () => {
+    // CE TEST A CHANGE DE CAMP, VOLONTAIREMENT. Il epinglait le tunnel Chat
+    // (« le changement de navigation est l'ETAPE 2, explicitement non
+    // autorisee ») : l'etape est desormais autorisee, et faite. Ce qu'il
+    // garantit maintenant : le CTA mene a `/essai` et ne porte AUCUN
+    // identifiant d'offre — le serveur resout l'offre, pour qu'un changement
+    // d'offre d'essai dans le tableau de bord ne laisse pas ce bouton en
+    // arriere, muet et perime.
+    expect(HERO).toContain("export const HREF_ESSAI = '/essai';");
     expect(HERO).toContain('href={HREF_ESSAI}');
     expect(APP_SEUL).toMatch(/<HeroTexte concept=\{concept\} \/>/);
+    // Le Hero n'envoie plus personne dans le tunnel de discussion — verifie sur
+    // le CODE EXECUTE. Le fichier CITE l'ancienne adresse dans le commentaire
+    // qui explique le changement ; une recherche de texte brute prenait cette
+    // explication pour du code (mesure : ce test en echec au 1er essai, comme
+    // le meme piege deja documente plus haut pour `APP_CODE`).
+    const HERO_CODE = HERO
+      .split('\n')
+      .filter((l) => l.trim().indexOf('//') !== 0)
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(HERO_CODE).not.toContain('?link=b83914b4-c5a');
+    // Aucun identifiant d'offre ecrit en dur, ni ici ni dans App.js.
     expect(APP).not.toContain('href="/?offre=');
+    expect(HERO_CODE).not.toMatch(/offre=[0-9a-f]{8}-/);
+    // La mesure doit decrire la VRAIE destination : sinon les clics du Hero
+    // seraient comptes comme des parcours « chat » et la comparaison serait
+    // exactement inversee.
+    expect(HERO_CODE).toContain("variante: 'direct'");
+    expect(HERO_CODE).not.toContain("variante: 'chat'");
   });
 
   test('le corps du POST /checkout/free garde tout ce qui vient du client', () => {

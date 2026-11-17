@@ -114,7 +114,9 @@ describe('bouton d’essai', () => {
   });
   test('le Hero garde son bouton', () => {
     const hero = fs.readFileSync(path.join(__dirname, '..', 'HeroTexte.js'), 'utf8');
-    expect(hero).toContain("const HREF_ESSAI = '/?link=b83914b4-c5a'");
+    // V671 : la destination est passee du tunnel de discussion a `/essai`.
+    // Ce que ce banc garantit reste le meme — le Hero GARDE son bouton.
+    expect(hero).toContain("export const HREF_ESSAI = '/essai'");
     expect(hero).toContain('href={HREF_ESSAI}');
   });
 });

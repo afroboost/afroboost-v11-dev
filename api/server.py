@@ -60530,6 +60530,19 @@ _M1_SITE = "https://afroboost.com"
 _M1_CHEMIN = "/cours-essai-gratuit-neuchatel"
 # Le tunnel d'essai EXISTANT — on n'en cree pas un second.
 _M1_TUNNEL = "/?link=b83914b4-c5a"
+# V671 — L'ADRESSE UNIQUE DE L'ESSAI : celle qu'un bouton peut porter SANS y
+# recopier l'identifiant d'une offre.
+#
+# POURQUOI ELLE EXISTE. Deux boutons menaient encore au tunnel de discussion :
+# le CTA du Hero (`frontend/src/components/HeroTexte.js`) et celui de
+# `/a-propos`. La page d'essai, elle, allait DEJA droit au formulaire (V622) —
+# mesure du 17/11/2026 sur la production. Pour aligner les deux retardataires,
+# il y avait deux routes : recopier l'identifiant de l'offre gratuite dans le
+# code du navigateur — qui serait devenu FAUX, en silence, le jour ou Bassi
+# change d'offre — ou resoudre cette offre a l'endroit qui la connait deja, le
+# lien d'essai lui-meme (`_v594_offre_du_tunnel_essai`). Cette adresse expose
+# cette resolution. Le navigateur n'ecrit donc AUCUN identifiant d'offre.
+_V671_CHEMIN = "/essai"
 # M1-GEO1 : la region servie par CETTE page. Elle vient de la liste fermee —
 # une page locale ne peut pas inventer sa ville.
 _M1_REGION = "neuchatel"
@@ -61243,10 +61256,27 @@ def _seo_geo_contact_html() -> str:
 
 
 def _seo_geo_lien_essai(request, chemin: str) -> str:
-    """Le bouton « Réserver » : le MÊME tunnel d'essai que la page d'essai
-    (`_M1_TUNNEL`), suivi de l'origine normalisée (M2-A) pour qu'un visiteur
-    venu de Google ou d'Instagram garde sa source après le clic."""
-    _lien = _M1_TUNNEL
+    """Le bouton « Réserver » de `/a-propos` : l'adresse d'essai (`_V671_CHEMIN`),
+    suivie de l'origine normalisée (M2-A) pour qu'un visiteur venu de Google ou
+    d'Instagram garde sa source après le clic.
+
+    V671 — LA DESTINATION CHANGE, LE REPORT D'ORIGINE NE CHANGE PAS. Avant, ce
+    bouton menait au tunnel de discussion (`_M1_TUNNEL`) : sept étapes après
+    avoir cliqué « Réserver », la personne atterrissait dans une conversation.
+    Il mène désormais à `/essai`, qui redirige vers le formulaire — la page
+    d'essai le faisait déjà depuis V622, ce bouton-ci était resté en arrière.
+
+    L'ORIGINE PASSE PAR L'URL, PAS PAR LE REFERRER. Un clic depuis `/a-propos`
+    présente un referrer INTERNE : `/essai` ne pourrait donc rien en déduire
+    (et ne doit rien inventer, cf. `M2A_HOTES_INTERNES`). C'est pourquoi les
+    UTM sont recopiées ici, à l'arrivée sur `/a-propos`, et voyagent dans le
+    lien — exactement le motif V622/M1 déjà en production.
+
+    Le séparateur est `?` et non `&` : `_V671_CHEMIN` est une adresse NUE, là
+    où `_M1_TUNNEL` portait déjà `?link=`. L'inverser produisait `/essai&utm…`,
+    donc un chemin inexistant et une origine perdue.
+    """
+    _lien = _V671_CHEMIN
     try:
         from api.routes.shared import m2a_attribution_entrante
         _attr = m2a_attribution_entrante(
@@ -61256,10 +61286,72 @@ def _seo_geo_lien_essai(request, chemin: str) -> str:
             ("source", "utm_source"), ("medium", "utm_medium"), ("campaign", "utm_campaign"),
             ("content", "utm_content"), ("term", "utm_term")) if (_attr or {}).get(_cle)]
         if _bouts:
-            _lien = _M1_TUNNEL + "&amp;" + "&amp;".join(_bouts)
-    except Exception as _aerr:  # noqa: BLE001 — en cas de doute : le tunnel nu
+            _lien = _V671_CHEMIN + "?" + "&amp;".join(_bouts)
+    except Exception as _aerr:  # noqa: BLE001 — en cas de doute : l'adresse nue
         logger.warning("[SEO-GEO] origine non lue (%s)", type(_aerr).__name__)
     return _lien
+
+
+@fastapi_app.get(_V671_CHEMIN)
+async def v671_essai_direct(request: Request):
+    """V671 — « Réserver mon 1er cours gratuit » mène AU FORMULAIRE, pas au chat.
+
+    CE QUE FAIT CETTE ADRESSE, ET RIEN D'AUTRE : elle résout l'offre d'essai
+    gratuite et renvoie (302) vers le parcours de réservation EXISTANT, celui
+    où la page d'essai envoie déjà tout le monde depuis V622 —
+    `/?offre=<id>&reserver=1&parcours=essai`. Aucun second moteur, aucun
+    formulaire nouveau, aucune règle d'éligibilité touchée : la suite du
+    parcours (choix de la séance, coordonnées, `POST /checkout/free`, verrou
+    ESSAI-1, Conditions, code AFR-) est inchangée au caractère près.
+
+    POURQUOI UNE REDIRECTION SERVEUR PLUTÔT QU'UN LIEN ÉCRIT EN DUR. Le CTA du
+    Hero vit dans le navigateur ; y recopier `c1e5f73c…` aurait créé une
+    seconde vérité, muette le jour où l'offre d'essai change. Ici l'offre est
+    LUE sur le lien d'essai (`end_actions` de type `booking`), et seulement si
+    elle figure parmi les offres gratuites du catalogue
+    (`_v594_offre_du_tunnel_essai`). Bassi change d'offre dans son tableau de
+    bord : cette adresse suit, sans déploiement.
+
+    REPLI. Offre introuvable, payante, archivée, base muette, exception
+    quelconque : on renvoie vers `_M1_TUNNEL`, le comportement d'AUJOURD'HUI.
+    Le bouton ne peut donc pas devenir mort — au pire il redevient ce qu'il
+    est en ce moment.
+
+    L'ORIGINE SURVIT PAR LES DEUX CHEMINS. Les UTM présentes sur `/essai` sont
+    recopiées dans la cible ; un referrer EXTERNE (Instagram sans UTM) est lu
+    par `m2a_attribution_entrante`, qui n'invente rien sur un referrer interne
+    et ne transforme jamais de l'organique en payant. Côté navigateur,
+    `attributionEnregistrer` a de toute façon déjà figé la première source.
+
+    `no-store` + `Vary: Referer` : la cible dépend du referrer, cette réponse
+    ne doit JAMAIS être partagée entre deux visiteurs (même raison qu'en V670).
+    """
+    from starlette.responses import RedirectResponse as RR
+    _cible = _M1_TUNNEL
+    try:
+        _offre = await _v594_offre_du_tunnel_essai(await _m1_offres())
+        if _offre:
+            _cible = "/?offre=%s&reserver=1&parcours=essai" % _offre
+        from api.routes.shared import m2a_attribution_entrante
+        _attr = m2a_attribution_entrante(
+            request.query_params if request is not None else None,
+            (request.headers.get("referer", "") if request is not None else ""),
+            _V671_CHEMIN)
+        _bouts = ["%s=%s" % (_utm, (_attr or {}).get(_cle)) for _cle, _utm in (
+            ("source", "utm_source"), ("medium", "utm_medium"),
+            ("campaign", "utm_campaign"), ("content", "utm_content"),
+            ("term", "utm_term")) if (_attr or {}).get(_cle)]
+        if _bouts:
+            # `&` NU, jamais `&amp;` : c'est un en-tete HTTP `Location`, pas du
+            # HTML. Echapper ici fabriquerait un parametre nomme `amp;utm_source`.
+            _cible = _cible + ("&" if "?" in _cible else "?") + "&".join(_bouts)
+    except Exception as _eerr:  # noqa: BLE001 — en cas de doute : le tunnel, comme avant
+        try:
+            logger.warning("[V671] essai non resolu (%s)", type(_eerr).__name__)
+        except Exception:  # noqa: BLE001
+            pass
+    return RR(url=_cible, status_code=302,
+              headers={"Cache-Control": "no-store", "Vary": "Referer"})
 
 
 @fastapi_app.get(_M1_CHEMIN, response_class=HTMLResponse)
