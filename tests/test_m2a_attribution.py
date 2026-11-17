@@ -110,6 +110,68 @@ def cta_de(html):
     return m.group(1) if m else ""
 
 
+# ═══ V670 — LE MONTAGE DE `share_offer_page` (page de partage d'une offre) ═══
+#
+# On monte la VRAIE fonction, extraite de `api/server.py`, avec une base
+# factice. Rien n'est imite : `m2a_attribution_entrante` n'est PAS injecte dans
+# l'espace de noms — la fonction doit l'importer elle-meme, exactement comme en
+# production. C'est la lecon de l'incident consigne dans `_noms_libres` : un
+# banc qui fournit ce que la production n'a pas est un banc qui ment.
+
+class _CollOffres:
+    """Une seule offre visible, `o-ok`. Tout autre identifiant est inconnu."""
+    async def find_one(self, filtre, projection=None):
+        if (filtre or {}).get("id") != "o-ok":
+            return None
+        return {"id": "o-ok", "name": "Mensuel Liberté", "price": 89,
+                "visible": True, "description": "Accès mensuel."}
+
+
+class _BaseOffres:
+    offers = _CollOffres()
+
+
+_PARTAGE_DISPO = bool(source_de("share_offer_page"))
+
+
+def _partage_monte(journal):
+    from fastapi.responses import HTMLResponse
+    ns = {"db": _BaseOffres(), "logger": journal, "HTMLResponse": HTMLResponse}
+    exec(compile(source_de("share_offer_page"), "partage", "exec"), ns)
+    return ns["share_offer_page"]
+
+
+async def partage(params=None, referer=None, offre="o-ok"):
+    """(cible de la redirection, corps HTML, reponse, journal)."""
+    j = Journal()
+    rep = await _partage_monte(j)(offre, Req(params, referer))
+    corps = rep.body.decode("utf-8") if getattr(rep, "body", None) else ""
+    m = re.search(r'content="0;url=([^"]+)"', corps)
+    return (m.group(1) if m else ""), corps, rep, j
+
+
+def _starlette_request():
+    from starlette.requests import Request as _R
+    return _R
+
+
+def _partage_annotation_resolue():
+    """Ce que FastAPI fait REELLEMENT de l'annotation differee `"Request"`.
+
+    On lui donne les memes globals que `api/server.py` (ou `Request` est
+    importe) et on lui demande la signature typee : si la resolution cessait de
+    fonctionner, FastAPI traiterait `request` comme un simple parametre de
+    requete et l'origine redeviendrait illisible — en silence.
+    """
+    try:
+        from fastapi.dependencies.utils import get_typed_signature
+        ns = {"Request": _starlette_request()}
+        exec(compile(source_de("share_offer_page"), "partage", "exec"), ns)
+        return get_typed_signature(ns["share_offer_page"]).parameters["request"].annotation
+    except Exception as e:  # noqa: BLE001
+        return "ECHEC: %s: %s" % (type(e).__name__, e)
+
+
 async def principal():
     # ═══════════ 1. LES BRIQUES DE NORMALISATION ════════════════════════════
     for nom in ("m2a_valeur_propre", "m2a_source_normalisee", "m2a_source_du_referrer",
@@ -354,7 +416,7 @@ async def principal():
              '"source": "subscriber_space"' in "".join(LIGNES))
 
     # ═══════════ 9. AUCUN NOM LIBRE — LA LECON DE L'INCIDENT ════════════════
-    for f in ("m1_page_essai_neuchatel", "_m1_seances"):
+    for f in ("m1_page_essai_neuchatel", "_m1_seances", "share_offer_page"):
         manquants = _noms_libres(f)
         verifier("49. `%s` n'utilise aucun nom inexistant" % f, not manquants,
                  "noms absents de api/server.py : %s" % sorted(manquants))
@@ -362,6 +424,116 @@ async def principal():
         manquants = _noms_libres(f, ARBRE_CHECKOUT)
         verifier("50. `%s` n'utilise aucun nom inexistant" % f, not manquants,
                  "noms absents de checkout_routes.py : %s" % sorted(manquants))
+
+    # ═══ 10. V670 — LE LIEN DE PARTAGE D'UNE OFFRE GARDE SON ORIGINE ════════
+    #
+    # LE DEFAUT, EN DEUX MOITIES. `/api/share/offer/<id>` est un REBOND : elle
+    # sert les balises og:* au robot du reseau social, puis renvoie le vrai
+    # navigateur vers la vitrine. Au SECOND saut, `document.referrer` vaut
+    # « afroboost.com/api/share/offer/... » — un hote INTERNE, donc ecarte (et
+    # c'est bien : une navigation interne ne doit jamais fabriquer de source).
+    # L'Instagram d'origine etait donc PERDU (D1 : la page ne recevait meme pas
+    # `request`), et les UTM eventuelles mouraient aussi, la cible etant
+    # construite en dur (D2). Mesure en production le 17/11/2026 : un appel
+    # portant `utm_source=instagram` ET `Referer: l.instagram.com` renvoyait
+    # vers `/?offre=<id>` — ZERO parametre d'origine. La personne n'etait pas
+    # « direct », elle etait SANS attribution.
+    #
+    # CE QUE CES TESTS VERROUILLENT : le gain (l'origine arrive), et surtout
+    # tout ce qui ne doit PAS changer — pas de source inventee, pas de
+    # confusion organique/payant, pas d'injection, cible nue a l'identique
+    # quand rien n'est connu, et chemin 302 intact.
+    if not _PARTAGE_DISPO:
+        verifier("51. `share_offer_page` est montable par le banc", False,
+                 "fonction introuvable dans api/server.py")
+    else:
+        verifier("51. La page recoit `request` (sans quoi rien n'est lisible)",
+                 re.search(r"async def share_offer_page\([^)]*request",
+                           source_de("share_offer_page")) is not None)
+        # L'annotation est DIFFEREE (`"Request"`) pour que la fonction reste
+        # montable sans `Request` dans l'espace de noms (banc V626). FastAPI la
+        # resout quand meme vers la vraie requete : on le PROUVE, sinon la
+        # subtilite se perdrait au premier refactoring.
+        verifier("52. L'annotation `request` a un DEFAUT (appel a un argument possible)",
+                 re.search(r"async def share_offer_page\(offer_id: str, request: \"?Request\"? = None\)",
+                           source_de("share_offer_page")) is not None,
+                 source_de("share_offer_page").split("\n")[0])
+        verifier("53. FastAPI resout l'annotation vers le vrai `Request`",
+                 _partage_annotation_resolue() is _starlette_request(),
+                 repr(_partage_annotation_resolue()))
+
+        cible, corps, rep, j = await partage(referer="https://l.instagram.com/?u=afroboost")
+        verifier("54. INSTAGRAM SANS UTM : l'origine arrive dans la cible",
+                 "utm_source=instagram" in cible and "utm_medium=social" in cible, cible)
+        verifier("55. Aucun avertissement : l'origine est VRAIMENT lue, pas avalee",
+                 not j.lignes, str(j.lignes)[:120])
+        verifier("56. ORGANIQUE N'EST PAS PAYANT : le referrer ne dit jamais `paid`",
+                 "utm_medium=paid" not in cible and "utm_medium=cpc" not in cible, cible)
+
+        cible, _c, _r, _j = await partage({"utm_source": "instagram", "utm_medium": "paid",
+                                           "utm_campaign": "hiver"})
+        verifier("57. PAYANT ANNONCE EXPLICITEMENT : l'UTM est respectee",
+                 "utm_medium=paid" in cible and "utm_campaign=hiver" in cible, cible)
+
+        cible, _c, _r, _j = await partage({"utm_source": "whatsapp"},
+                                          referer="https://l.instagram.com/")
+        verifier("58. UTM PRIORITAIRE sur le referrer",
+                 "utm_source=whatsapp" in cible and "instagram" not in cible, cible)
+
+        nue = "https://afroboost.com/?offre=o-ok"
+        cible, _c, _r, _j = await partage()
+        verifier("59. NI UTM NI REFERRER : la cible est celle d'AVANT, a l'identique",
+                 cible == nue, cible)
+        cible, _c, _r, _j = await partage(referer="https://afroboost.com/api/share/offer/o-ok")
+        verifier("60. REFERRER INTERNE : aucune source fabriquee",
+                 cible == nue, cible)
+        cible, _c, _r, _j = await partage({"utm_source": "mon-canal-invente"})
+        verifier("61. Une source hors liste fermee n'entre pas dans la cible",
+                 cible == nue, cible)
+
+        cible, corps, _r, _j = await partage({"utm_source": "instagram",
+                                              "utm_campaign": "<img onerror=1>",
+                                              "utm_term": "x" * 400})
+        # L'INJECTION EST IMPOSSIBLE PAR CONSTRUCTION, et c'est cela qu'on teste :
+        # `m2a_valeur_propre` ne laisse passer que `[a-z0-9_-]`. Il ne reste donc
+        # ni `<`, ni `>`, ni `"`, ni `=` — rien qui puisse fermer l'attribut HTML
+        # ou ouvrir une balise. « imgonerror1 » est du TEXTE inerte, pas du code.
+        verifier("62. UTM malformees : rien ne peut sortir de l'attribut HTML",
+                 not set('<>"\'') & set(cible) and "imgonerror1" in cible, cible[:140])
+        _term = re.search(r"utm_term=([^&]*)", cible)
+        verifier("62b. Une valeur demesuree est TRONQUEE, pas rejetee",
+                 _term is not None and len(_term.group(1)) == 64,
+                 len(_term.group(1)) if _term else "absente")
+
+        cible, corps, _r, _j = await partage(referer="https://l.instagram.com/")
+        lien = re.search(r'<a href="([^"]+)">Voir sur', corps)
+        verifier("63. `<meta refresh>` et `<a href>` menent au MEME endroit",
+                 lien is not None and lien.group(1) == cible, cible)
+        verifier("64. Le `&` est ECHAPPE (`&amp;`) : on ecrit dans un attribut HTML",
+                 "&amp;utm_source=" in corps, cible)
+
+        # La reponse depend desormais du Referer : elle ne doit jamais etre
+        # partagee entre deux visiteurs, sinon l'origine de l'un serait
+        # attribuee a l'autre.
+        verifier("65. La reponse n'est JAMAIS mise en cache (`no-store`)",
+                 "no-store" in (rep.headers.get("cache-control") or ""),
+                 str(rep.headers.get("cache-control")))
+        verifier("66. `Vary: Referer` : la dependance est annoncee",
+                 "referer" in (rep.headers.get("vary") or "").lower(),
+                 str(rep.headers.get("vary")))
+
+        # V626 — CE QUI NE DOIT PAS BOUGER. Une offre inconnue, masquee ou
+        # archivee part a l'accueil, SANS origine : ce n'est pas un parcours
+        # d'acquisition, et le banc V626 asserte cette adresse a la lettre.
+        _c2, _corps2, rep302, _j2 = await partage(
+            {"utm_source": "instagram"}, referer="https://l.instagram.com/", offre="inconnue")
+        verifier("67. Offre inconnue : 302 vers l'accueil, inchange",
+                 rep302.status_code == 302
+                 and rep302.headers.get("location") == "https://afroboost.com",
+                 "%s %s" % (rep302.status_code, rep302.headers.get("location")))
+
+        verifier("68. L'aperçu Open Graph n'a pas bouge (nom et prix servis)",
+                 "Mensuel Liberté" in corps and "89" in corps)
 
 
 def _noms_libres(nom_fonction, arbre=None):

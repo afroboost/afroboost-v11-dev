@@ -22495,7 +22495,7 @@ async def get_og_meta(username: str, request: Request):
     return HTMLResponse(html)
 
 @api_router.get("/share/offer/{offer_id}")
-async def share_offer_page(offer_id: str):
+async def share_offer_page(offer_id: str, request: "Request" = None):
     """V278 : page de partage d'une offre avec balises Open Graph.
 
     Quand un visiteur partage une offre (WhatsApp, Facebook...), le crawler du
@@ -22503,6 +22503,20 @@ async def share_offer_page(offer_id: str):
     (image de l'offre + titre + prix). Un vrai navigateur, lui, est redirige
     aussitot vers le site. Tout est ECHAPPE (html.escape) : le nom et la
     description viennent de la base, on ne les injecte jamais bruts dans le HTML.
+
+    V670 — `request` arrive AVEC UN DEFAUT `None`, et ce n'est pas un detail :
+    la page doit rester appelable avec le seul `offer_id` (le banc V626 le fait,
+    et toute origine absente est un cas NORMAL, pas une erreur). Voir plus bas
+    pourquoi l'origine se lit ici.
+
+    POURQUOI L'ANNOTATION EST ENTRE GUILLEMETS. `"Request"` est une annotation
+    DIFFEREE : Python ne l'evalue pas a la definition, FastAPI la resout a
+    l'enregistrement de la route contre les imports de ce fichier (`Request` y
+    est bien importe) et injecte la vraie requete. Ecrite sans guillemets, elle
+    casserait le banc V626, qui monte cette seule fonction sans `Request` dans
+    son espace de noms. Un test (`test_m2a_attribution.py`) verifie que FastAPI
+    la resout bien vers `starlette.requests.Request` : la subtilite est tenue
+    par un banc, elle ne peut pas se perdre en silence.
     """
     from starlette.responses import HTMLResponse
     import html as _html
@@ -22547,6 +22561,55 @@ async def share_offer_page(offer_id: str):
     e_url = _html.escape(f"{FRONT}/api/share/offer/{offer_id}", quote=True)
     e_cible = _html.escape(f"{FRONT}/?offre={offer_id}", quote=True)
 
+    # ─── V670 — L'ORIGINE SURVIT AU REBOND (D1 + D2) ──────────────────────────
+    #
+    # CETTE PAGE EST UN REBOND, ET C'EST LA QUE L'ORIGINE MOURAIT. Le navigateur
+    # repart aussitot vers la vitrine. Au SECOND saut, `document.referrer` vaut
+    # « afroboost.com/api/share/offer/... » : un hote INTERNE, donc ecarte par
+    # `M2A_HOTES_INTERNES` — c'est voulu, une navigation interne ne doit jamais
+    # fabriquer une source. Consequence mesuree en production : une personne
+    # venue d'Instagram par un lien de partage n'avait AUCUNE attribution (pas
+    # meme « direct »), alors que le meme lien en `/?offre=<id>` l'aurait gardee.
+    # Et les UTM eventuelles mouraient aussi : la cible etait construite en dur.
+    #
+    # ON LIT DONC L'ORIGINE COTE SERVEUR, A L'ARRIVEE, et on la recopie dans la
+    # cible. Aucun systeme nouveau : c'est EXACTEMENT le motif deja en
+    # production sur `/cours-essai-gratuit-neuchatel` (`m1_page_essai_neuchatel`)
+    # et « A propos » (`_seo_geo_lien_essai`), avec la meme fonction.
+    #
+    # CE QUE `m2a_attribution_entrante` GARANTIT, ET QU'ON NE REFAIT PAS ICI :
+    #   - les UTM explicites gagnent TOUJOURS sur le referrer ;
+    #   - une source hors de la liste fermee `M2A_SOURCES` ne passe pas ;
+    #   - un referrer interne ne fabrique rien (on repart sans suffixe) ;
+    #   - le referrer ne donne que `social` / `organic` — JAMAIS `paid` : seule
+    #     une UTM explicite peut annoncer de la publicite. Organique et payant
+    #     ne peuvent donc pas se confondre.
+    #   - les valeurs sont reduites a `[a-z0-9_-]` : aucune injection possible.
+    # `first` / `last` ne sont PAS decides ici : on ne transmet qu'une touche,
+    # la fusion (first fige, last remplace par une origine externe seulement)
+    # reste ou elle est — `attributionEnregistrer` au front, `m2a_fusionner` au
+    # serveur. Cette page ne peut donc pas ecraser une premiere attribution.
+    # `&amp;` et non `&` : on ecrit dans un ATTRIBUT HTML.
+    try:
+        from api.routes.shared import m2a_attribution_entrante
+        _attr = m2a_attribution_entrante(
+            request.query_params if request is not None else None,
+            (request.headers.get("referer", "") if request is not None else ""),
+            "/api/share/offer")
+        _bouts = ["%s=%s" % (_utm, (_attr or {}).get(_cle)) for _cle, _utm in (
+            ("source", "utm_source"), ("medium", "utm_medium"),
+            ("campaign", "utm_campaign"), ("content", "utm_content"),
+            ("term", "utm_term")) if (_attr or {}).get(_cle)]
+        if _bouts:
+            e_cible = e_cible + "&amp;" + "&amp;".join(_bouts)
+    except Exception as _aerr:  # noqa: BLE001 — en cas de doute : la cible NUE, comme avant
+        # Le suivi ne casse jamais une page — pas meme par son journal (le banc
+        # V626 monte cette fonction avec `logger = None`).
+        try:
+            logger.warning("[V670] origine non lue (%s)", type(_aerr).__name__)
+        except Exception:  # noqa: BLE001
+            pass
+
     html_page = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -22571,7 +22634,13 @@ async def share_offer_page(offer_id: str):
     <a href="{e_cible}">Voir sur Afroboost</a>
 </body>
 </html>"""
-    return HTMLResponse(html_page)
+    # V670 — CETTE REPONSE DEPEND MAINTENANT DU REFERER : elle ne doit JAMAIS
+    # etre partagee entre deux visiteurs, sinon l'origine de l'un serait
+    # attribuee a l'autre. Cloudflare ne la cache pas aujourd'hui
+    # (`cf-cache-status: DYNAMIC`), mais rien ne l'ecrivait : on le dit.
+    # `Vary` l'enonce dans les termes du protocole.
+    return HTMLResponse(html_page, headers={"Cache-Control": "no-store",
+                                            "Vary": "Referer"})
 
 # ═══════════════════════════════════════════════════════════════════════════
 # V552 — LA CARTE SOCIALE D'UNE INVITATION PASS DUO
