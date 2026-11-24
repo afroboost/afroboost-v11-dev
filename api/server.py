@@ -49060,7 +49060,9 @@ async def _v673_cours_du_coach(course_id: str, request: Request):
     # ni `PUT .../reminders`.
     _email = (await _v309_require_coach_or_admin(request)).strip().lower()
     _cours = await db.courses.find_one(
-        {"id": course_id}, {"_id": 0, "id": 1, "name": 1, "coach_id": 1})
+        {"id": course_id}, {"_id": 0, "id": 1, "name": 1, "coach_id": 1,
+                            # V673d : de quoi calculer ses VRAIES séances
+                            "weekday": 1, "time": 1, "date": 1, "dates_annulees": 1})
     if not _cours:
         raise HTTPException(status_code=404, detail="Cours non trouvé")
     _proprio = (_cours.get("coach_id") or "").strip().lower()
@@ -49081,10 +49083,18 @@ async def v673_ecrire_message_exceptionnel(course_id: str, request: Request):
         _body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Corps de requête illisible")
-    _msg, _refus = _v673.valider(
-        _body, _v673.aujourd_hui_zurich(_ZI("Europe/Zurich")))
+    _auj = _v673.aujourd_hui_zurich(_ZI("Europe/Zurich"))
+    _msg, _refus = _v673.valider(_body, _auj)
     if _refus:
         raise HTTPException(status_code=400, detail=_refus)
+    # V673d — la période doit contenir une VRAIE séance de CE cours (même calcul
+    # que le moteur, jours annulés exclus) : jamais un message pour une autre séance.
+    _horizon = (datetime.strptime(_msg["au"], "%Y-%m-%d").date() - _auj).days + 1
+    _seances = [o.get("date") for o in _v184_next_occurrences(_cours, days_ahead=max(_horizon, 0))]
+    if not _v673.periode_contient_seance(_msg, _seances):
+        raise HTTPException(
+            status_code=400,
+            detail="Aucune séance de ce cours à cette date : choisis le jour où il a lieu.")
     _msg["maj"] = datetime.now(timezone.utc).isoformat()
     _msg["par"] = _email.strip().lower()
     await db.courses.update_one({"id": course_id}, {"$set": {_v673.CHAMP: _msg}})

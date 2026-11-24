@@ -9,7 +9,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
 import CourseRemindersCard from '../CourseRemindersCard';
-import { prochaineSeance, dateLisible, periodeLisible, aujourdhuiZurich } from '../CourseReminderMessage';
+import { prochaineSeance, dateLisible, periodeLisible, aujourdhuiZurich, seancesDansPeriode } from '../CourseReminderMessage';
 
 jest.mock('axios', () => ({
   __esModule: true,
@@ -60,10 +60,13 @@ afterEach(async () => {
   racine = null; conteneur = null;
 });
 
-const DEMAIN = (() => {
+const LENDEMAIN = (() => {
   const d = new Date(`${aujourdhuiZurich()}T00:00:00Z`);
   return new Date(d.getTime() + 86400000).toISOString().slice(0, 10);
 })();
+// V673d : les dates de test sont de VRAIES séances (le composant refuse un autre jour).
+const DEMAIN = prochaineSeance({ weekday: 3 }, LENDEMAIN);        // un mercredi
+const DIM_D = prochaineSeance({ weekday: 0 }, LENDEMAIN);         // un dimanche
 
 describe('V673 — fonctions de date', () => {
   test('prochaine séance : même jour ou jours suivants, convention JS (dim = 0)', () => {
@@ -116,20 +119,57 @@ describe('V673 — message exceptionnel dans la carte des rappels', () => {
     expect(par('cr-message-merc')).not.toBeNull();
   });
 
-  test('multi-cours : un appel par cours coché, avertissement si rappels désactivés', async () => {
+  test('multi-cours : un appel par cours, CHAQUE cours reçoit SA propre date (V673d)', async () => {
     await monter();
     await act(async () => { par('cr-cours-dim').querySelector('input').click(); });
     await clic(par('crm-ajouter'));
     expect(par('crm-muets').textContent).toContain('Sunday Vibes');
+    const _auj = aujourdhuiZurich();
+    const _merc = prochaineSeance(MERCREDI, _auj);
+    const _dim = prochaineSeance(DIMANCHE, _auj);
+    expect(par('crm-du')).toBeNull();                         // plus de date commune
+    expect(par('crm-du-merc').value).toBe(_merc);
+    expect(par('crm-du-dim').value).toBe(_dim);
+    expect(par('crm-lisible-merc').textContent).toContain('mercredi');
+    expect(par('crm-lisible-dim').textContent).toContain('dimanche');
     await saisir(par('crm-texte'), 'Remplacement');
-    await saisir(par('crm-du'), DEMAIN);
     axios.put.mockImplementation((u, c) => Promise.resolve({ data: { message_exceptionnel: c } }));
     expect(par('crm-enregistrer').textContent).toContain('2 cours');
     await clic(par('crm-enregistrer'));
-    const urls = axios.put.mock.calls.map(([u]) => u);
-    expect(urls.filter((u) => /reminder-message$/.test(u))).toHaveLength(2);
+    const appels = axios.put.mock.calls.filter(([u]) => /reminder-message$/.test(u));
+    expect(appels).toHaveLength(2);
+    const corpsDe = (id) => appels.find(([u]) => u.includes(`/courses/${id}/`))[1];
+    expect(corpsDe('merc')).toEqual({ texte: 'Remplacement', du: _merc, au: _merc });
+    expect(corpsDe('dim')).toEqual({ texte: 'Remplacement', du: _dim, au: _dim });
     expect(par('cr-message-merc')).not.toBeNull();
     expect(par('cr-message-dim')).not.toBeNull();
+  });
+
+  test('V673d : une date qui n’est pas un jour du cours bloque l’enregistrement', async () => {
+    await monter();
+    await act(async () => { par('cr-cours-dim').querySelector('input').click(); });
+    await clic(par('crm-ajouter'));
+    await saisir(par('crm-texte'), 'Remplacement');
+    await saisir(par('crm-du-dim'), DEMAIN);                   // un mercredi pour le dimanche
+    expect(par('crm-refus').textContent).toContain('Sunday Vibes');
+    expect(par('crm-enregistrer').disabled).toBe(true);
+    await clic(par('crm-enregistrer'));
+    expect(axios.put).not.toHaveBeenCalled();
+  });
+
+  test('V673d : en période, les vraies séances de chaque cours sont affichées', async () => {
+    await monter();
+    await act(async () => { par('cr-cours-dim').querySelector('input').click(); });
+    await clic(par('crm-ajouter'));
+    await clic(par('crm-plage'));
+    await saisir(par('crm-du'), DEMAIN);
+    const _au = new Date(new Date(`${DEMAIN}T00:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0, 10);
+    await saisir(par('crm-au'), _au);
+    expect(par('crm-seances-merc').textContent).toContain(dateLisible(DEMAIN));
+    expect(par('crm-seances-dim').textContent).toContain('dimanche');
+    expect(seancesDansPeriode(DIMANCHE, DEMAIN, _au)).toHaveLength(1);
+    expect(seancesDansPeriode({ weekday: 0, dates_annulees: [DIM_D] }, DIM_D, DIM_D)).toHaveLength(0);
+    expect(seancesDansPeriode({ name: 'sans jour' }, DEMAIN, _au)).toBeNull();
   });
 
   test('modification puis retrait d’un message existant', async () => {

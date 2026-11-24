@@ -250,19 +250,36 @@ def req(corps=None, email=None, **kw):
     return _Req(corps, {"Authorization": "Bearer " + jeton(email, **kw)} if email else {})
 
 
+def prochain_jour(js_wd, apres=1):
+    """Date ISO du prochain jour `js_wd` (convention JS, dim = 0), au moins `apres` jours plus tard."""
+    _d = datetime.now(timezone.utc).astimezone(ZH).date() + timedelta(days=apres)
+    while (_d.weekday() + 1) % 7 != js_wd:
+        _d += timedelta(days=1)
+    return _d.isoformat()
+
+
 def charger_routes():
     b, base = H.bac([], cours_docs=[
-        {"id": "c1", "name": "Mercredi", "coach_id": "coach@exemple.com",
-         "reminders_enabled": True, "reminder_rules": [{"type": "relative", "minutes": 1440}]},
-        {"id": "c9", "name": "Autre", "coach_id": "autre@exemple.com"},
-        {"id": "c0", "name": "Sans propriétaire"}])
+        {"id": "c1", "name": "Mercredi", "coach_id": "coach@exemple.com", "weekday": 3,
+         "time": "18:45", "reminders_enabled": True,
+         "reminder_rules": [{"type": "relative", "minutes": 1440}]},
+        {"id": "c9", "name": "Autre", "coach_id": "autre@exemple.com", "weekday": 3, "time": "18:45"},
+        {"id": "c0", "name": "Sans propriétaire", "weekday": 3, "time": "18:45"},
+        # V673d : le dimanche du même coach, avec un jour ANNULÉ
+        {"id": "c7", "name": "Dimanche", "coach_id": "coach@exemple.com", "weekday": 0,
+         "time": "18:30", "reminders_enabled": True,
+         "reminder_rules": [{"type": "relative", "minutes": 180}],
+         "dates_annulees": [prochain_jour(0, 8)]}])
     base.coaches = H._Coll([{"email": e} for e in COACHS])
     base.coach_auth = H._Coll([])
     b["api_router"] = type("r", (), {k: staticmethod(lambda *a, **kw: (lambda f: f))
                                      for k in ("get", "put", "delete", "post")})
     # V673c : plus de faux appelant — les VRAIES gardes du serveur, avec PyJWT.
     b.pop("_n1b3b2_coach_appelant", None)
+    # V673d : le VRAI calcul des séances du moteur (jours annulés compris).
+    b["_V184_WEEKDAY_LABELS_FR"] = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
     code = "\n\n".join(H.extraire(n) for n in (
+        "_v184_parse_time_hhmm", "_v184_next_occurrences",
         # les gardes de l'ANCIEN chemin sont chargées aussi (vraies, pas simulées) :
         # elles ne servent qu'à prouver que les tests S* attrapent l'ancienne faille.
         "_v263_authenticated_coach", "_n1b3b2_coach_appelant",
@@ -296,7 +313,7 @@ async def _scenarios_routes():
     b, base = charger_routes()
     ECR, RET = b["v673_ecrire_message_exceptionnel"], b["v673_retirer_message_exceptionnel"]
     PROPRIO, ADMIN = "coach@exemple.com", "admin@exemple.com"
-    _dem = (datetime.now(timezone.utc).astimezone(ZH).date() + timedelta(days=1)).isoformat()
+    _dem = prochain_jour(3)                       # V673d : une VRAIE séance du mercredi
     _avant = copy.deepcopy(base.courses.docs[0])
     _ok = {"texte": "x", "du": _dem}
 
@@ -364,6 +381,52 @@ async def _scenarios_routes():
     verifie("C10. super-admin AVEC JWT : peut poser sur tout cours", st == 200, st)
     st, _ = await appel(RET, "c9", req({}, ADMIN))
     verifie("C11. super-admin AVEC JWT : peut retirer", st == 200, st)
+
+    # ---- V673d : chaque cours, SA séance
+    _dim = prochain_jour(0)
+    _dim_annule = base.courses.docs[3]["dates_annulees"][0]
+    _reg_dim = copy.deepcopy(base.courses.docs[3]["reminder_rules"])
+    st, d = await appel(ECR, "c7", req({"texte": "x", "du": _dem}, PROPRIO))
+    verifie("T1. date du MERCREDI sur le cours du dimanche : 400, rien écrit",
+            st == 400 and "message_exceptionnel" not in base.courses.docs[3], (st, d))
+    st, _ = await appel(ECR, "c1", req({"texte": "Mercredi : Marie", "du": _dem}, PROPRIO))
+    st2, _ = await appel(ECR, "c7", req({"texte": "Dimanche : Marie", "du": _dim}, PROPRIO))
+    _m1, _m7 = base.courses.docs[0]["message_exceptionnel"], base.courses.docs[3]["message_exceptionnel"]
+    verifie("T2. mercredi et dimanche : chacun SA date réellement enregistrée",
+            st == 200 and st2 == 200 and (_m1["du"], _m1["au"]) == (_dem, _dem)
+            and (_m7["du"], _m7["au"]) == (_dim, _dim), (_m1, _m7))
+    verifie("T3. réglages classiques du dimanche intacts",
+            base.courses.docs[3]["reminder_rules"] == _reg_dim
+            and base.courses.docs[3]["reminders_enabled"] is True)
+    st, _ = await appel(ECR, "c7", req({"texte": "x", "du": _dim_annule}, PROPRIO))
+    verifie("T4. dimanche ANNULÉ (dates_annulees) : 400", st == 400, st)
+    _per_au = (datetime.strptime(_dim, "%Y-%m-%d").date() + timedelta(days=1)).isoformat()
+    _per_du = datetime.now(timezone.utc).astimezone(ZH).date().isoformat()
+    st, _ = await appel(ECR, "c7", req({"texte": "Dimanche : Marie", "du": _per_du,
+                                        "au": _per_au}, PROPRIO))
+    verifie("T5. période contenant le vrai dimanche : 200", st == 200, st)
+    await appel(ECR, "c7", req({"texte": "Dimanche : Marie", "du": _dim}, PROPRIO))
+
+    # chaque rappel reçoit SON message (même fonction que le moteur)
+    def _instant(jour_iso, hhmm):
+        _h, _m = map(int, hhmm.split(":"))
+        _j = datetime.strptime(jour_iso, "%Y-%m-%d")
+        return datetime(_j.year, _j.month, _j.day, _h, _m, tzinfo=ZH).astimezone(timezone.utc)
+    _c1, _c7 = base.courses.docs[0], base.courses.docs[3]
+    verifie("T6. rappel de la séance du mercredi : message du mercredi",
+            M.message_pour_seance(_c1, _instant(_dem, "18:45"), ZH) == "Mercredi : Marie")
+    verifie("T7. rappel de la séance du dimanche : message du dimanche",
+            M.message_pour_seance(_c7, _instant(_dim, "18:30"), ZH) == "Dimanche : Marie")
+    _dim_suiv = (datetime.strptime(_dim, "%Y-%m-%d").date() + timedelta(days=7)).isoformat()
+    verifie("T8. le dimanche SUIVANT repart sans message",
+            M.message_pour_seance(_c7, _instant(_dim_suiv, "18:30"), ZH) == "")
+    st, _ = await appel(RET, "c1", req({}, PROPRIO))
+    verifie("T9. retrait du mercredi : le dimanche garde son message",
+            st == 200 and "message_exceptionnel" not in base.courses.docs[0]
+            and base.courses.docs[3]["message_exceptionnel"]["texte"] == "Dimanche : Marie", st)
+    verifie("T10. fonction pure : une période sans séance est refusée",
+            not M.periode_contient_seance({"du": "2030-01-01", "au": "2030-01-01"}, ["2030-01-05"])
+            and M.periode_contient_seance({"du": "2030-01-01", "au": "2030-01-07"}, ["2030-01-05"]))
 
 
 boucle(scenarios_routes())

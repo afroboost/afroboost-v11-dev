@@ -67,6 +67,31 @@ export const periodeLisible = (m) => {
     : `du ${dateLisible(m.du)} au ${dateLisible(m.au)}`;
 };
 
+/**
+ * V673d — dates REELLES des seances d'un cours entre `du` et `au` (inclus).
+ * null = inconnu (ni `date` ni `weekday`) : le serveur tranche alors seul.
+ * Jours annules (`dates_annulees`) exclus, comme le moteur des rappels.
+ */
+export const seancesDansPeriode = (cours, du, au) => {
+  const _d1 = versDate(du);
+  const _d2 = versDate(au || du);
+  if (!cours || !_d1 || !_d2 || _d2 < _d1) return [];
+  const _annules = new Set((Array.isArray(cours.dates_annulees) ? cours.dates_annulees : [])
+    .map((x) => String(x).slice(0, 10)));
+  if (cours.date) {
+    const _f = String(cours.date).slice(0, 10);
+    return (_f >= versIso(_d1) && _f <= versIso(_d2) && !_annules.has(_f)) ? [_f] : [];
+  }
+  const _wd = parseInt(cours.weekday, 10);
+  if (Number.isNaN(_wd)) return null;
+  const _res = [];
+  for (let _t = _d1.getTime(); _t <= _d2.getTime(); _t += 86400000) {
+    const _j = new Date(_t);
+    if (_j.getUTCDay() === _wd && !_annules.has(versIso(_j))) _res.push(versIso(_j));
+  }
+  return _res;
+};
+
 const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
   const [edition, setEdition] = useState(false);
   const [texte, setTexte] = useState('');
@@ -79,6 +104,8 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
   const [info, setInfo] = useState('');
   // V673b : crayon = UN cours precis (jamais les autres coches) ; null = nouveau message multi-cours.
   const [cible, setCible] = useState(null);
+  // V673d : plusieurs cours en « une seule seance » -> UNE date PAR cours (sa vraie seance).
+  const [dates, setDates] = useState({});
 
   const aujourdhui = aujourdhuiZurich();
   const avecMessage = useMemo(
@@ -92,6 +119,8 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
     const _m = existant && existant.message_exceptionnel;
     const _du = (_m && _m.du) || prochaineSeance(existant || choisis[0], aujourdhui);
     setCible(existant || null);
+    setDates(existant ? {} : Object.fromEntries(
+      choisis.map((c) => [c.id, prochaineSeance(c, aujourdhui)])));
     setTexte((_m && _m.texte) || '');
     setDu(_du);
     setAu((_m && _m.au) || _du);
@@ -104,13 +133,28 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
 
   const fermer = () => { setEdition(false); setErreur(''); setCible(null); };
 
+  const parCours = !plage && cibles.length > 1;
+  /** Periode envoyee pour CE cours : sa propre date si plusieurs cours, sinon la commune. */
+  const periodeDe = (c) => {
+    if (parCours) { const _d = dates[c.id] || ''; return { du: _d, au: _d }; }
+    return { du, au: plage ? au : du };
+  };
+
   const refus = (() => {
     if (!texte.trim()) return 'Écris le message à transmettre.';
     if (texte.length > MAX_CARACTERES) return `${MAX_CARACTERES} caractères au plus.`;
-    if (!du) return 'Choisis la date de la séance concernée.';
-    const _au = plage ? au : du;
-    if (!_au || _au < du) return 'La date de fin précède la date de début.';
-    if (_au < aujourdhui) return 'Cette date est déjà passée.';
+    for (let _i = 0; _i < cibles.length; _i += 1) {
+      const _p = periodeDe(cibles[_i]);
+      if (!_p.du) return 'Choisis la date de la séance concernée.';
+      if (!_p.au || _p.au < _p.du) return 'La date de fin précède la date de début.';
+      if (_p.au < aujourdhui) return 'Cette date est déjà passée.';
+      const _s = seancesDansPeriode(cibles[_i], _p.du, _p.au);
+      if (_s && _s.length === 0) {
+        return plage
+          ? `Aucune séance de ${libelleCours(cibles[_i])} dans cette période.`
+          : `Le ${dateLisible(_p.du)} n'est pas un jour de ${libelleCours(cibles[_i])}.`;
+      }
+    }
     return '';
   })();
 
@@ -137,9 +181,10 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
 
   const enregistrer = async () => {
     if (refus || envoi) return;
-    const _corps = { texte: texte.trim(), du, au: plage ? au : du };
+    const _texte = texte.trim();
     const _echecs = await executer(cibles, (c) => axios.put(
-      `${API}/coach/courses/${encodeURIComponent(c.id)}/reminder-message`, _corps, entetes));
+      `${API}/coach/courses/${encodeURIComponent(c.id)}/reminder-message`,
+      { texte: _texte, ...periodeDe(c) }, entetes));
     if (_echecs.length) {
       setErreur(`Non enregistré pour : ${_echecs.join(', ')}.`);
     } else {
@@ -244,6 +289,29 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
             {texte.length}/{MAX_CARACTERES}
           </p>
 
+          {/* V673d : plusieurs cours, une seance chacun -> UNE date par cours, lisible. */}
+          {parCours && (
+            <div className="space-y-1.5 text-xs text-white/70" data-testid="crm-dates">
+              <p className="text-white/50">Séance concernée, pour chaque cours :</p>
+              {cibles.map((c) => (
+                <label key={c.id} className="flex flex-wrap items-center gap-2" data-testid={`crm-date-${c.id}`}>
+                  <span className="min-w-0 flex-1 break-words text-white/80">{libelleCours(c)}</span>
+                  <input
+                    type="date" value={dates[c.id] || ''} min={aujourdhui}
+                    onChange={(e) => { const _v = e.target.value; setDates((d) => ({ ...d, [c.id]: _v })); }}
+                    className={classeChamp} style={styleChamp}
+                    aria-label={`Date de la séance de ${libelleCours(c)}`}
+                    data-testid={`crm-du-${c.id}`}
+                  />
+                  <span className="basis-full text-white/45" data-testid={`crm-lisible-${c.id}`}>
+                    {dateLisible(dates[c.id])}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {!parCours && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
             <label className="flex items-center gap-2">
               {plage ? 'Séances du' : 'Séance du'}
@@ -266,6 +334,22 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
               </label>
             )}
           </div>
+          )}
+          {/* V673d : en periode, les VRAIES seances de chaque cours, avant d'enregistrer. */}
+          {plage && (
+            <ul className="text-[11px] text-white/50 space-y-0.5" data-testid="crm-seances">
+              {cibles.map((c) => {
+                const _s = seancesDansPeriode(c, du, au);
+                return (
+                  <li key={c.id} className="break-words" data-testid={`crm-seances-${c.id}`}>
+                    {libelleCours(c)} :{' '}
+                    {_s === null ? 'dates à vérifier'
+                      : (_s.length ? _s.map(dateLisible).join(', ') : 'aucune séance dans cette période')}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
           <button
             type="button"
             onClick={() => { setPlage((p) => !p); setAu(du); }}
@@ -308,7 +392,7 @@ const CourseReminderMessage = ({ choisis, entetes, onMaj }) => {
                 <strong style={accent}>{premier ? (premier.name || 'ton cours') : 'ton cours'}</strong>.
               </p>
               <p className="text-white/80">
-                C&apos;est <strong style={accent}>{dateLisible(du)}{premier && premier.time ? ` à ${premier.time}` : ''}</strong>.
+                C&apos;est <strong style={accent}>{dateLisible(premier ? periodeDe(premier).du : du)}{premier && premier.time ? ` à ${premier.time}` : ''}</strong>.
               </p>
               <div
                 className="rounded-lg px-3 py-2"

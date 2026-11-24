@@ -85,6 +85,19 @@ def valider(corps, aujourd_hui):
     return {"texte": _texte, "du": _du.isoformat(), "au": _au.isoformat()}, None
 
 
+def periode_contient_seance(msg, dates_seances):
+    """V673d — True si au moins une VRAIE seance du cours tombe dans [du, au].
+
+    `dates_seances` : dates ISO « AAAA-MM-JJ » des seances a venir, telles que
+    le moteur les calcule. Sans seance dans la periode, le message ne porterait
+    jamais sur le bon cours : on le refuse plutot que de le garder muet.
+    """
+    _du, _au = (msg or {}).get("du") or "", (msg or {}).get("au") or ""
+    if not _du or not _au:
+        return False
+    return any(isinstance(d, str) and _du <= d[:10] <= _au for d in (dates_seances or []))
+
+
 def message_pour_seance(cours, instant_utc, zurich):
     """Le texte a joindre au rappel de CETTE seance, ou "".
 
@@ -152,5 +165,6 @@ def aujourd_hui_zurich(zurich, maintenant=None):
 
 
 __all__ = ["CHAMP", "MAX_CARACTERES", "MAX_JOURS", "nettoyer_texte", "valider",
+           "periode_contient_seance",
            "message_pour_seance", "extrait_push", "corps_push", "bloc_html",
            "lignes_texte", "aujourd_hui_zurich"]
