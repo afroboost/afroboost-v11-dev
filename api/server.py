@@ -49090,6 +49090,8 @@ async def v673_ecrire_message_exceptionnel(course_id: str, request: Request):
     # V673d — la période doit contenir une VRAIE séance de CE cours (même calcul
     # que le moteur, jours annulés exclus) : jamais un message pour une autre séance.
     _horizon = (datetime.strptime(_msg["au"], "%Y-%m-%d").date() - _auj).days + 1
+    if _horizon > 366:  # borne le calcul : jamais une boucle sur des années
+        raise HTTPException(status_code=400, detail="Date trop lointaine : un an au plus.")
     _seances = [o.get("date") for o in _v184_next_occurrences(_cours, days_ahead=max(_horizon, 0))]
     if not _v673.periode_contient_seance(_msg, _seances):
         raise HTTPException(

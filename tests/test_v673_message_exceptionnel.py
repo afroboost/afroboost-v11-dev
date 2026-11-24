@@ -424,6 +424,9 @@ async def _scenarios_routes():
     verifie("T9. retrait du mercredi : le dimanche garde son message",
             st == 200 and "message_exceptionnel" not in base.courses.docs[0]
             and base.courses.docs[3]["message_exceptionnel"]["texte"] == "Dimanche : Marie", st)
+    st, d = await appel(ECR, "c1", req({"texte": "x", "du": "9999-12-29"}, PROPRIO))
+    verifie("T11. date très lointaine : 400 immédiat (calcul borné à un an)",
+            st == 400 and "lointaine" in d, (st, d))
     verifie("T10. fonction pure : une période sans séance est refusée",
             not M.periode_contient_seance({"du": "2030-01-01", "au": "2030-01-01"}, ["2030-01-05"])
             and M.periode_contient_seance({"du": "2030-01-01", "au": "2030-01-07"}, ["2030-01-05"]))
