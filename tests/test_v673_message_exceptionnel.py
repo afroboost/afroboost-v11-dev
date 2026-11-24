@@ -226,14 +226,47 @@ boucle(scenarios_moteur())
 print("\n--- C : ROUTES RÉELLES (poser / retirer) ---")
 
 
+SECRET_TEST = "secret-de-test-v673c"
+COACHS = ("coach@exemple.com", "autre@exemple.com")      # inscrits dans `coaches`
+
+
+class _Req(H._Requete):
+    """V673c : requête avec EN-TÊTES (l'identité y est lue par la vraie garde)."""
+
+    def __init__(self, corps=None, entetes=None):
+        H._Requete.__init__(self, corps)
+        self.headers = dict(entetes or {})
+
+
+def jeton(email, secret=SECRET_TEST, **extra):
+    import jwt as _pyjwt
+    _p = {"email": email, "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+    _p.update(extra)
+    return _pyjwt.encode(_p, secret, algorithm="HS256")
+
+
+def req(corps=None, email=None, **kw):
+    """Requête portant un VRAI JWT signé pour `email` (aucun en-tête si None)."""
+    return _Req(corps, {"Authorization": "Bearer " + jeton(email, **kw)} if email else {})
+
+
 def charger_routes():
     b, base = H.bac([], cours_docs=[
         {"id": "c1", "name": "Mercredi", "coach_id": "coach@exemple.com",
          "reminders_enabled": True, "reminder_rules": [{"type": "relative", "minutes": 1440}]},
-        {"id": "c9", "name": "Autre", "coach_id": "autre@exemple.com"}])
+        {"id": "c9", "name": "Autre", "coach_id": "autre@exemple.com"},
+        {"id": "c0", "name": "Sans propriétaire"}])
+    base.coaches = H._Coll([{"email": e} for e in COACHS])
+    base.coach_auth = H._Coll([])
     b["api_router"] = type("r", (), {k: staticmethod(lambda *a, **kw: (lambda f: f))
                                      for k in ("get", "put", "delete", "post")})
+    # V673c : plus de faux appelant — les VRAIES gardes du serveur, avec PyJWT.
+    b.pop("_n1b3b2_coach_appelant", None)
     code = "\n\n".join(H.extraire(n) for n in (
+        # les gardes de l'ANCIEN chemin sont chargées aussi (vraies, pas simulées) :
+        # elles ne servent qu'à prouver que les tests S* attrapent l'ancienne faille.
+        "_v263_authenticated_coach", "_n1b3b2_coach_appelant",
+        "_v311_coach_email_from_jwt", "_v309_is_coach_or_admin", "_v309_require_coach_or_admin",
         "_v673_cours_du_coach", "v673_ecrire_message_exceptionnel",
         "v673_retirer_message_exceptionnel"))
     exec(compile(code, "<v673>", "exec"), b)
@@ -248,48 +281,89 @@ async def appel(f, *a):
 
 
 async def scenarios_routes():
+    _ancien_secret = os.environ.get("JWT_SECRET")
+    os.environ["JWT_SECRET"] = SECRET_TEST
+    try:
+        await _scenarios_routes()
+    finally:
+        if _ancien_secret is None:
+            os.environ.pop("JWT_SECRET", None)
+        else:
+            os.environ["JWT_SECRET"] = _ancien_secret
+
+
+async def _scenarios_routes():
     b, base = charger_routes()
-    H.APPELANT[0] = "coach@exemple.com"
+    ECR, RET = b["v673_ecrire_message_exceptionnel"], b["v673_retirer_message_exceptionnel"]
+    PROPRIO, ADMIN = "coach@exemple.com", "admin@exemple.com"
     _dem = (datetime.now(timezone.utc).astimezone(ZH).date() + timedelta(days=1)).isoformat()
     _avant = copy.deepcopy(base.courses.docs[0])
+    _ok = {"texte": "x", "du": _dem}
 
-    st, _ = await appel(b["v673_ecrire_message_exceptionnel"], "c1",
-                        H._Requete({"texte": MESSAGE, "du": _dem}))
+    # ---- V673c : identité (aucun des refus ne doit écrire quoi que ce soit)
+    st, _ = await appel(ECR, "c1", _Req(_ok, {}))
+    verifie("S1. aucune identité : 403", st == 403, st)
+    st, _ = await appel(ECR, "c1", _Req(_ok, {"X-User-Email": PROPRIO}))
+    verifie("S2. X-User-Email SEUL (du vrai propriétaire) : 403", st == 403, st)
+    st, _ = await appel(RET, "c1", _Req({}, {"X-User-Email": ADMIN}))
+    verifie("S3. X-User-Email SEUL du super-admin, en suppression : 403", st == 403, st)
+    st, _ = await appel(ECR, "c1", req(_ok, PROPRIO, secret="faux-secret"))
+    verifie("S4. jeton falsifié (mauvaise signature) : 403", st == 403, st)
+    st, _ = await appel(ECR, "c1", _Req(_ok, {"Authorization": "Bearer " + jeton(
+        "inconnu@exemple.com"), "X-User-Email": PROPRIO}))
+    verifie("S5. JWT d'un inconnu + X-User-Email du propriétaire : 403 (l'en-tête ne compte pas)",
+            st == 403, st)
+    st, _ = await appel(ECR, "c1", req(_ok, PROPRIO, type="subscriber"))
+    verifie("S6. jeton ABONNÉ au nom du propriétaire : 403", st == 403, st)
+    st, _ = await appel(ECR, "c1", req(_ok, PROPRIO, exp=datetime.now(timezone.utc) - timedelta(minutes=1)))
+    verifie("S7. jeton expiré : 403", st == 403, st)
+    verifie("S8. aucun de ces refus n'a écrit sur le cours",
+            "message_exceptionnel" not in base.courses.docs[0])
+    st, _ = await appel(ECR, "c0", req(_ok, PROPRIO))
+    verifie("S9. cours SANS propriétaire, coach authentifié : 403", st == 403, st)
+    st, _ = await appel(RET, "c0", req({}, PROPRIO))
+    verifie("S10. cours SANS propriétaire, suppression par un coach : 403", st == 403, st)
+    st, _ = await appel(ECR, "c0", req(_ok, ADMIN))
+    verifie("S11. cours sans propriétaire, super-admin AVEC JWT : 200", st == 200, st)
+    st, _ = await appel(RET, "c0", req({}, ADMIN))
+    verifie("S12. et le super-admin peut le retirer : 200",
+            st == 200 and "message_exceptionnel" not in base.courses.docs[2], st)
+    st, _ = await appel(ECR, "c9", req(_ok, PROPRIO))
+    verifie("S13. coach authentifié NON propriétaire : 403", st == 403, st)
+    st, _ = await appel(ECR, "c1", req(_ok, "COACH@Exemple.com"))
+    verifie("S14. casse de l'e-mail du jeton : propriétaire reconnu", st == 200, st)
+    await appel(RET, "c1", req({}, PROPRIO))
+
+    st, _ = await appel(ECR, "c1", req({"texte": MESSAGE, "du": _dem}, PROPRIO))
     _doc = base.courses.docs[0]
     verifie("C1. propriétaire : 200 et message enregistré",
             st == 200 and _doc.get("message_exceptionnel", {}).get("texte") == MESSAGE, st)
     verifie("C2. réglages de rappel INTACTS (activation + règles)",
             _doc["reminders_enabled"] == _avant["reminders_enabled"]
             and _doc["reminder_rules"] == _avant["reminder_rules"])
-    st, _ = await appel(b["v673_ecrire_message_exceptionnel"], "c1",
-                        H._Requete({"texte": "Nouveau", "du": _dem}))
+    st, _ = await appel(ECR, "c1", req({"texte": "Nouveau", "du": _dem}, PROPRIO))
     verifie("C3. modification : le message est remplacé",
             st == 200 and base.courses.docs[0]["message_exceptionnel"]["texte"] == "Nouveau")
-    st, _ = await appel(b["v673_ecrire_message_exceptionnel"], "c9",
-                        H._Requete({"texte": "x", "du": _dem}))
+    st, _ = await appel(ECR, "c9", req(_ok, PROPRIO))
     verifie("C4. cours d'un autre coach : 403", st == 403, st)
-    st, _ = await appel(b["v673_ecrire_message_exceptionnel"], "zz",
-                        H._Requete({"texte": "x", "du": _dem}))
+    st, _ = await appel(ECR, "zz", req(_ok, PROPRIO))
     verifie("C5. cours inconnu : 404", st == 404, st)
-    st, d = await appel(b["v673_ecrire_message_exceptionnel"], "c1",
-                        H._Requete({"texte": "", "du": _dem}))
+    st, d = await appel(ECR, "c1", req({"texte": "", "du": _dem}, PROPRIO))
     verifie("C6. message vide : 400 avec motif lisible", st == 400 and "vide" in d, (st, d))
-    st, _ = await appel(b["v673_ecrire_message_exceptionnel"], "c1",
-                        H._Requete({"texte": "x", "du": "2020-01-01"}))
+    st, _ = await appel(ECR, "c1", req({"texte": "x", "du": "2020-01-01"}, PROPRIO))
     verifie("C7. période passée : 400", st == 400, st)
     verifie("C7b. un refus ne touche pas le message en place",
             base.courses.docs[0]["message_exceptionnel"]["texte"] == "Nouveau")
-    st, _ = await appel(b["v673_retirer_message_exceptionnel"], "c9", H._Requete({}))
+    st, _ = await appel(RET, "c9", req({}, PROPRIO))
     verifie("C8. retrait sur le cours d'un autre coach : 403", st == 403, st)
-    st, _ = await appel(b["v673_retirer_message_exceptionnel"], "c1", H._Requete({}))
+    st, _ = await appel(RET, "c1", req({}, PROPRIO))
     verifie("C9. retrait : 200 et champ supprimé, règles intactes",
             st == 200 and "message_exceptionnel" not in base.courses.docs[0]
             and base.courses.docs[0]["reminder_rules"] == _avant["reminder_rules"], st)
-    H.APPELANT[0] = "admin@exemple.com"
-    st, _ = await appel(b["v673_ecrire_message_exceptionnel"], "c9",
-                        H._Requete({"texte": "x", "du": _dem}))
-    verifie("C10. super-admin : peut poser sur tout cours", st == 200, st)
-    H.APPELANT[0] = "coach@exemple.com"
+    st, _ = await appel(ECR, "c9", req(_ok, ADMIN))
+    verifie("C10. super-admin AVEC JWT : peut poser sur tout cours", st == 200, st)
+    st, _ = await appel(RET, "c9", req({}, ADMIN))
+    verifie("C11. super-admin AVEC JWT : peut retirer", st == 200, st)
 
 
 boucle(scenarios_routes())
@@ -302,6 +376,14 @@ verifie("D1. l'édition générique d'un cours ne peut PAS écrire le message",
 _rem = H.extraire("rv3_ecrire_rappels_du_cours")
 verifie("D2. la route des réglages de rappel n'a pas été modifiée par V673",
         "message_exceptionnel" not in _rem and "V673" not in _rem)
+_garde = H.extraire("_v673_cours_du_coach")
+verifie("D4. V673c : la garde ne lit QUE le JWT signé (aucun repli X-User-Email)",
+        "_v309_require_coach_or_admin(request)" in _garde
+        and "_n1b3b2_coach_appelant" not in _garde and "_v263_authenticated_coach" not in _garde
+        and "X-User-Email\")" not in _garde)
+verifie("D5. V673c : la garde partagée des AUTRES routes reste inchangée (repli V265 intact)",
+        "_v263_authenticated_coach(request)" in H.extraire("_n1b3b2_coach_appelant")
+        and "_n1b3b2_coach_appelant(request)" in _rem)
 verifie("D3. le message n'entre dans aucune clé d'anti-doublon",
         "message" not in H.extraire("n1b2_cle") and "message" not in H.extraire("rv2_reserver_canal"))
 

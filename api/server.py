@@ -49053,13 +49053,20 @@ async def rv3_ecrire_rappels_du_cours(course_id: str, request: Request):
 # `api/routes/rappel_message.py`, fonctions pures testées à part.
 # ═══════════════════════════════════════════════════════════════════════════
 async def _v673_cours_du_coach(course_id: str, request: Request):
-    _email = await _n1b3b2_coach_appelant(request)
+    # V673c — SÉCURITÉ. Le message part aux abonnés du cours : l'identité doit
+    # être PROUVÉE. Seul un JWT signé fait foi (`_v309_require_coach_or_admin`,
+    # garde déjà utilisée par 120+ routes du dashboard) ; `X-User-Email` seul ne
+    # prouve plus rien ici -> 403. Ne touche ni le repli V265 des autres routes,
+    # ni `PUT .../reminders`.
+    _email = (await _v309_require_coach_or_admin(request)).strip().lower()
     _cours = await db.courses.find_one(
         {"id": course_id}, {"_id": 0, "id": 1, "name": 1, "coach_id": 1})
     if not _cours:
         raise HTTPException(status_code=404, detail="Cours non trouvé")
     _proprio = (_cours.get("coach_id") or "").strip().lower()
-    if _proprio and _proprio != _email.strip().lower() and not is_super_admin(_email):
+    # V673c — propriété STRICTE : un cours sans propriétaire n'est à personne,
+    # sauf au super-admin (vérifié via le même JWT).
+    if not (is_super_admin(_email) or (_proprio and _proprio == _email)):
         raise HTTPException(status_code=403, detail="Ce cours ne vous appartient pas.")
     return _email, _cours
 
