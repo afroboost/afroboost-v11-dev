@@ -17,7 +17,7 @@
 // rechargement (V358), alors que le correctif etait en ligne depuis longtemps.
 // Bumper CACHE_NAME purge l'ancien cache a l'activation et force tous les appareils
 // a recharger. A BUMPER A CHAQUE VERSION TOUCHANT LE FRONT.
-var CACHE_NAME = 'afroboost-v668'; // V671 : le CTA d essai mene au formulaire (/essai), plus au chat
+var CACHE_NAME = 'afroboost-v669'; // V673 : message exceptionnel joint aux rappels avant cours
                                    // -> sans ce bump, un appareil deja installe garderait l'ancien
                                    // bundle et continuerait d'envoyer l'instant du clic comme date.
 var SW_VERSION = 272;

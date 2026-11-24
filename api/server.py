@@ -2688,7 +2688,10 @@ async def update_course(course_id: str, course_update: dict, request: Request):
     # l'appelant. Ils sont ignorés et non refusés : le tableau de bord renvoie le cours entier.
     update_data = {k: v for k, v in course_update.items() if v is not None}
     for _v646_cle in list(update_data):
-        if _v646_cle in ("id", "_id", "coach_id") or _v646_cle.startswith("owner_"):
+        # V673 : le message exceptionnel ne s'écrit QUE par sa route dédiée —
+        # sinon l'écran de gestion, qui renvoie le cours entier, ressusciterait
+        # un message que le coach vient de retirer.
+        if _v646_cle in ("id", "_id", "coach_id", "message_exceptionnel") or _v646_cle.startswith("owner_"):
             del update_data[_v646_cle]
 
     # M1-GEO1 : meme garde qu'a la creation. « Non classe » se dit en envoyant
@@ -48083,7 +48086,7 @@ def rv2_lien_espace(code) -> str:
 def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
                        heure: str, accent: str,
                        lieu: str = "", lieu_maps: str = "",
-                       lien_espace: str = ""):
+                       lien_espace: str = "", message_coach: str = ""):
     """Rend le triplet (sujet, html, texte) du rappel avant cours.
 
     `heure` vient EXCLUSIVEMENT de `reservations.courseTime`. Si elle est vide,
@@ -48176,6 +48179,18 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
             'Ton QR à présenter à l&rsquo;entrée s&rsquo;y trouve.</p></div>'
             % (_e2_html(_espace, quote=True), accent))
 
+    # V673 — MESSAGE EXCEPTIONNEL DU COACH. Vide (cas normal) : rien n'est
+    # ajouté, l'e-mail reste identique au caractère près. Le texte est ÉCHAPPÉ
+    # par `bloc_html` ; il se place après le lieu, avant le bouton d'espace.
+    _v673_txt = []
+    if message_coach:
+        try:
+            from api.routes import rappel_message as _v673
+            _ligne_ou_html += _v673.bloc_html(message_coach, accent)
+            _v673_txt = _v673.lignes_texte(message_coach)
+        except Exception:  # noqa: BLE001 — le rappel part quand même
+            _v673_txt = []
+
     _corps_html = (
         '<div style="padding:24px;color:#fff;">'
         '<p style="font-size:16px;margin:0 0 12px;">%s</p>'
@@ -48201,6 +48216,7 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
         _lignes.append("C'est au %s." % _lieu)
         if _maps:
             _lignes.append("Itinéraire : %s" % _maps)
+    _lignes += _v673_txt      # V673 : vide sans message exceptionnel
     if _espace:
         _lignes += ["", "Ton espace et ton QR : %s" % _espace]
     _lignes += ["", "À tout de suite, et pense à arriver un peu en avance.",
@@ -48211,7 +48227,8 @@ def rv2_contenu_rappel(prenom: str, course_name: str, date_lisible: str,
 
 def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: str,
                                    heure: str, accent: str, lieu: str = "",
-                                   lieu_maps: str = "", lien_reserver: str = ""):
+                                   lieu_maps: str = "", lien_reserver: str = "",
+                                   message_coach: str = ""):
     """Le rappel destiné à qui n'a PAS encore réservé. Triplet (sujet, html, texte).
 
     POURQUOI UN SECOND GABARIT, ET PAS UN PARAMÈTRE DANS LE PREMIER. Le rappel
@@ -48288,6 +48305,16 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
             'Ta réservation se fait avec les séances de ton abonnement.</p></div>'
             % (_h(_lien, quote=True), accent))
 
+    # V673 — même encadré que le gabarit des inscrits. Vide sans message.
+    _v673_txt = []
+    if message_coach:
+        try:
+            from api.routes import rappel_message as _v673
+            _ligne_ou_html += _v673.bloc_html(message_coach, accent)
+            _v673_txt = _v673.lignes_texte(message_coach)
+        except Exception:  # noqa: BLE001
+            _v673_txt = []
+
     _corps_html = (
         '<div style="padding:24px;color:#fff;">'
         '<p style="font-size:16px;margin:0 0 12px;">%s</p>'
@@ -48310,6 +48337,7 @@ def rv2_contenu_rappel_non_reserve(prenom: str, course_name: str, date_lisible: 
         _lignes.append("C'est au %s." % _lieu_p)
         if _maps:
             _lignes.append("Itinéraire : %s" % _maps)
+    _lignes += _v673_txt      # V673 : vide sans message exceptionnel
     _lignes += ["", "Rejoins-nous pour une session pleine d'énergie."]
     if _lien:
         _lignes += ["", "Réserver ma place : %s" % _lien,
@@ -48423,7 +48451,8 @@ def rvab_push_corps(course_name: str) -> str:
 async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: str,
                                    date_lisible: str, heure: str, accent: str,
                                    lieu: str = "", lieu_maps: str = "",
-                                   lien_espace: str = "", non_reserve: bool = False) -> bool:
+                                   lien_espace: str = "", non_reserve: bool = False,
+                                   message_coach: str = "") -> bool:
     """Envoie le rappel par e-mail. Vrai SEULEMENT si Resend a accepte.
 
     Aucune couche nouvelle : meme transport, meme garde et meme gabarit que les
@@ -48436,8 +48465,12 @@ async def rv2_envoyer_email_rappel(destinataire: str, prenom: str, course_name: 
     # Un seul transport, deux gabarits. `non_reserve` est FAUX par défaut : tout
     # appelant existant garde exactement le message qu'il envoyait.
     _rendu = rv2_contenu_rappel_non_reserve if non_reserve else rv2_contenu_rappel
+    # V673 : `message_coach` n'est transmis QUE s'il existe — sans lui, l'appel
+    # est strictement celui d'avant ce lot.
+    _v673_kw = {"message_coach": message_coach} if message_coach else {}
     _sujet, _html, _texte = _rendu(prenom, course_name, date_lisible,
-                                   heure, accent, lieu, lieu_maps, lien_espace)
+                                   heure, accent, lieu, lieu_maps, lien_espace,
+                                   **_v673_kw)
     try:
         await asyncio.to_thread(_rc.emails("server:rv2_envoyer_email_rappel", critique=False, sdk=resend).send, {
             "from": "Afroboost <notifications@afroboost.com>",
@@ -49008,6 +49041,60 @@ async def rv3_ecrire_rappels_du_cours(course_id: str, request: Request):
                 _cours.get("name"), _email)
     return {"success": True, "id": course_id,
             "reminders_enabled": _actif, "rules": _sures or []}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V673 — MESSAGE EXCEPTIONNEL JOINT AUX RAPPELS D'UN COURS
+#
+# Routes DISTINCTES de `PUT .../reminders` : poser ou retirer un message ne
+# touche ni `reminders_enabled` ni `reminder_rules`, et réciproquement. Même
+# garde d'identité et de propriété que la route des réglages. La logique
+# (validation, période, application à une séance) vit dans
+# `api/routes/rappel_message.py`, fonctions pures testées à part.
+# ═══════════════════════════════════════════════════════════════════════════
+async def _v673_cours_du_coach(course_id: str, request: Request):
+    _email = await _n1b3b2_coach_appelant(request)
+    _cours = await db.courses.find_one(
+        {"id": course_id}, {"_id": 0, "id": 1, "name": 1, "coach_id": 1})
+    if not _cours:
+        raise HTTPException(status_code=404, detail="Cours non trouvé")
+    _proprio = (_cours.get("coach_id") or "").strip().lower()
+    if _proprio and _proprio != _email.strip().lower() and not is_super_admin(_email):
+        raise HTTPException(status_code=403, detail="Ce cours ne vous appartient pas.")
+    return _email, _cours
+
+
+@api_router.put("/coach/courses/{course_id}/reminder-message")
+async def v673_ecrire_message_exceptionnel(course_id: str, request: Request):
+    """Pose (ou remplace) le message exceptionnel d'UN cours pour une période."""
+    from zoneinfo import ZoneInfo as _ZI
+    from api.routes import rappel_message as _v673
+    _email, _cours = await _v673_cours_du_coach(course_id, request)
+    try:
+        _body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps de requête illisible")
+    _msg, _refus = _v673.valider(
+        _body, _v673.aujourd_hui_zurich(_ZI("Europe/Zurich")))
+    if _refus:
+        raise HTTPException(status_code=400, detail=_refus)
+    _msg["maj"] = datetime.now(timezone.utc).isoformat()
+    _msg["par"] = _email.strip().lower()
+    await db.courses.update_one({"id": course_id}, {"$set": {_v673.CHAMP: _msg}})
+    logger.info("[V673] message exceptionnel posé sur %s (%s) du %s au %s",
+                course_id, _cours.get("name"), _msg["du"], _msg["au"])
+    return {"success": True, "id": course_id, _v673.CHAMP: _msg}
+
+
+@api_router.delete("/coach/courses/{course_id}/reminder-message")
+async def v673_retirer_message_exceptionnel(course_id: str, request: Request):
+    """Retire le message : les rappels suivants repartent comme d'habitude."""
+    from api.routes import rappel_message as _v673
+    _email, _cours = await _v673_cours_du_coach(course_id, request)
+    await db.courses.update_one({"id": course_id}, {"$unset": {_v673.CHAMP: ""}})
+    logger.info("[V673] message exceptionnel retiré de %s (%s)",
+                course_id, _cours.get("name"))
+    return {"success": True, "id": course_id, _v673.CHAMP: None}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -50641,7 +50728,8 @@ async def cron_reservation_reminders():
                      "reminders_enabled": 1, "reminder_rules": 1,
                      "locationName": 1, "mapsUrl": 1,
                      "weekday": 1, "date": 1, "time": 1, "agenda_abonne": 1,
-                     "dates_annulees": 1})   # V610
+                     "dates_annulees": 1,    # V610
+                     "message_exceptionnel": 1})   # V673 — même lecture, zéro requête de plus
             except Exception as _e:
                 logger.warning("[RV3] cours %s illisible : %s", _cid, _e)
             _cache_cours[_cid] = _c
@@ -50801,6 +50889,27 @@ async def cron_reservation_reminders():
         _e2_code = (str(r.get("promoCode") or r.get("discountCode") or "")).strip()
         _e2_espace = (rv2_lien_espace(_e2_code)
                       if _e2_code.upper() in _codes_valides else "")
+        # === V673 — MESSAGE EXCEPTIONNEL DU COACH ===
+        # Lu sur le cours DÉJÀ en cache, pour la date LOCALE de CETTE séance.
+        # Il n'entre dans AUCUNE clé d'envoi : un rappel déjà parti n'est jamais
+        # renvoyé parce que le message change, et un rappel pas encore parti lit
+        # le message tel qu'il est au moment de partir.
+        _v673_msg = ""
+        try:
+            from api.routes.rappel_message import message_pour_seance as _v673_pour
+            _v673_msg = _v673_pour(_cache_cours.get(str(r.get("courseId") or "")),
+                                   _instant, _zurich)
+        except Exception as _v673_err:  # noqa: BLE001 — jamais bloquant
+            logger.warning("[V673] message exceptionnel ignoré (%s)", type(_v673_err).__name__)
+            _v673_msg = ""
+        _v673_kw = {"message_coach": _v673_msg} if _v673_msg else {}
+        _corps_push = n1b2_corps(_cle_regle, course_name, course_time)
+        if _v673_msg:
+            try:
+                from api.routes.rappel_message import corps_push as _v673_corps
+                _corps_push = _v673_corps(_corps_push, _v673_msg)
+            except Exception:  # noqa: BLE001
+                pass
         # Un marqueur herite est une chaine : aucun sous-champ ne peut y etre
         # cree. On le convertit AVANT de reserver quoi que ce soit.
         try:
@@ -50831,7 +50940,7 @@ async def cron_reservation_reminders():
                     ok = await send_push_by_email(
                         email,
                         n1b2_titre(_cle_regle, course_time),
-                        n1b2_corps(_cle_regle, course_name, course_time),
+                        _corps_push,   # V673 : = n1b2_corps(...) sans message
                         # PUSH-UI : l'apparence voyage avec le message. Le tag
                         # par cours evite qu'un rappel de 07:00 et un de 09:30
                         # s'empilent — le second REMPLACE le premier.
@@ -50879,7 +50988,7 @@ async def cron_reservation_reminders():
                 else:
                     ok = await rv2_envoyer_email_rappel(
                         email, _prenom, course_name, _date_lisible, course_time,
-                        _accent, _e2_lieu, _e2_maps, _e2_espace)
+                        _accent, _e2_lieu, _e2_maps, _e2_espace, **_v673_kw)
             except Exception as e:
                 logger.warning(f"[REMINDER-V183] résa {_rid} ({_canal}): {e}")
                 ok = False
@@ -51346,6 +51455,15 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
                     # a sa préférence, et le marqueur ne tient que si AU MOINS un
                     # canal est réellement parti.
                     _lien = rv2_lien_espace(_codes_par_mail.get(_mail, ""))
+                    # V673 : message exceptionnel de CETTE séance, ou "".
+                    _v673_msg = ""
+                    try:
+                        from api.routes.rappel_message import (
+                            message_pour_seance as _v673_pour, corps_push as _v673_corps)
+                        _v673_msg = _v673_pour(_c, _instant, zurich)
+                    except Exception:  # noqa: BLE001 — jamais bloquant
+                        _v673_msg = ""
+                    _v673_kw = {"message_coach": _v673_msg} if _v673_msg else {}
                     _ok_mail = _ok_push = False
                     try:
                         if await rv2_canal_autorise(_mail, RV2_CANAL_EMAIL) and rv2_email_valide(_mail):
@@ -51353,14 +51471,15 @@ async def _rvab_passage(now, zurich, demi, horizon, instant_du_cours, lire_cours
                                 _mail, "", _c.get("name") or "ton cours",
                                 rv2_date_lisible(_instant.astimezone(zurich)),
                                 _c.get("time") or "", _accent_ab, "", "",
-                                _lien, non_reserve=True)
+                                _lien, non_reserve=True, **_v673_kw)
                     except Exception as _err:
                         logger.warning("%s e-mail impossible (%s)", RVAB_PREFIXE, type(_err).__name__)
                     try:
                         if await rv2_canal_autorise(_mail, RV2_CANAL_PUSH):
                             _ok_push = await send_push_by_email(
                                 _mail, rvab_push_titre(_cle, _c.get("time") or ""),
-                                rvab_push_corps(_c.get("name") or ""),
+                                (_v673_corps(rvab_push_corps(_c.get("name") or ""), _v673_msg)
+                                 if _v673_msg else rvab_push_corps(_c.get("name") or "")),
                                 {"type": "course_reminder_not_booked",
                                  "url": _lien or "/", "course_id": _cid,
                                  # PUSH-UI : meme apparence que le rappel

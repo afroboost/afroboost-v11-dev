@@ -5,6 +5,7 @@ import {
   MAX_REGLES, DELAIS, HEURES_JOUR_MEME, JOUR_MEME_DEFAUT,
   valeurMoment, refusDeConfig, libelleCours
 } from './reminderMoments';
+import CourseReminderMessage from './CourseReminderMessage';   // V673
 
 /**
  * Rappels avant cours — le coach choisit COURS PAR COURS.
@@ -452,6 +453,10 @@ const CourseRemindersCard = ({ coachEmail }) => {
                         {(c.offres || []).some((o) => o.publique)
                           ? ' • vendu'
                           : ' • non réservable'}
+                        {/* V673 : un message exceptionnel est posé sur ce cours. */}
+                        {c.message_exceptionnel && c.message_exceptionnel.texte
+                          ? <span style={{ color: 'var(--primary-color, #D91CD2)' }} data-testid={`cr-message-${c.id}`}> • message exceptionnel</span>
+                          : null}
                       </span>
                     </span>
                     {/* L'ETAT REEL DE CHAQUE COURS, LISIBLE SANS RIEN OUVRIR.
@@ -667,6 +672,17 @@ const CourseRemindersCard = ({ coachEmail }) => {
 
           {erreur && (
             <p className="text-white/60 text-xs mt-2 break-words" data-testid="cr-erreur">{erreur}</p>
+          )}
+
+          {/* V673 — message exceptionnel des cours cochés. Composant à part :
+              il n'écrit ni l'activation ni les règles ci-dessus. */}
+          {coursIds.length > 0 && (
+            <CourseReminderMessage
+              choisis={choisis}
+              entetes={entetes}
+              onMaj={(id, message) => setCours((prec) => prec.map((c) => (
+                c.id === id ? { ...c, message_exceptionnel: message } : c)))}
+            />
           )}
         </>
       )}
